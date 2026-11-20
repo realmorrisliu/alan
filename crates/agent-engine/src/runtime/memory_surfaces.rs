@@ -6,7 +6,10 @@ use tokio::io::AsyncWriteExt;
 use tracing::warn;
 
 use crate::agent_machine::AgentMachine;
+use crate::redact_secret_tokens;
 use crate::tape::Message;
+
+pub mod project_summary;
 
 const MAX_INLINE_TEXT_CHARS: usize = 280;
 const MAX_RECENT_MESSAGE_ITEMS: usize = 6;
@@ -25,10 +28,20 @@ struct RenderedMemorySurfaces {
     daily_entry: String,
 }
 
+#[cfg(test)]
 pub(crate) async fn refresh_turn_memory_surfaces(
     machine: &AgentMachine,
     memory_dir: Option<&Path>,
     process_path: &str,
+) -> Result<()> {
+    refresh_turn_memory_surfaces_for_project(machine, memory_dir, process_path, None).await
+}
+
+pub(crate) async fn refresh_turn_memory_surfaces_for_project(
+    machine: &AgentMachine,
+    memory_dir: Option<&Path>,
+    process_path: &str,
+    project_cwd: Option<&str>,
 ) -> Result<()> {
     let Some(memory_dir) = memory_dir else {
         return Ok(());
@@ -53,6 +66,7 @@ pub(crate) async fn refresh_turn_memory_surfaces(
     )
     .await?;
     append_text_file(&daily_note_path(memory_dir, now), &rendered.daily_entry).await?;
+    project_summary::refresh_project_summary_from_turn(memory_dir, machine, project_cwd)?;
 
     Ok(())
 }
@@ -63,7 +77,27 @@ pub(crate) async fn refresh_turn_memory_surfaces_best_effort(
     process_path: &str,
     context: &'static str,
 ) {
-    if let Err(err) = refresh_turn_memory_surfaces(machine, memory_dir, process_path).await {
+    refresh_turn_memory_surfaces_for_project_best_effort(
+        machine,
+        memory_dir,
+        process_path,
+        None,
+        context,
+    )
+    .await;
+}
+
+pub(crate) async fn refresh_turn_memory_surfaces_for_project_best_effort(
+    machine: &AgentMachine,
+    memory_dir: Option<&Path>,
+    process_path: &str,
+    project_cwd: Option<&str>,
+    context: &'static str,
+) {
+    if let Err(err) =
+        refresh_turn_memory_surfaces_for_project(machine, memory_dir, process_path, project_cwd)
+            .await
+    {
         warn!(error = %err, context, "Failed to refresh memory surfaces");
     }
 }
@@ -113,10 +147,10 @@ fn render_memory_surfaces(
     );
 
     RenderedMemorySurfaces {
-        working_memory,
-        handoff,
-        episodic_record,
-        daily_entry,
+        working_memory: redact_secret_tokens(&working_memory),
+        handoff: redact_secret_tokens(&handoff),
+        episodic_record: redact_secret_tokens(&episodic_record),
+        daily_entry: redact_secret_tokens(&daily_entry),
     }
 }
 

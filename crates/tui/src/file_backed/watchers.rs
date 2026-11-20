@@ -83,22 +83,35 @@ impl AgentWatchers {
                 if self.root_agent_pid == Some(pid)
                     && (app.skills.owner.is_empty() || app.model.owner.is_empty()) =>
             {
-                // Repin unknown projections, then hydrate off the terminal loop.
+                // Repin only the unpinned projection(s), then hydrate off the terminal loop.
                 let owner = format!("/agent/{pid}");
-                app.apply_skills(&owner, None);
-                app.model.apply(&owner, None);
-                app.reconcile_model_chooser();
-                self.pid_refresh_failed = tx
-                    .try_send(FileBackedEvent::SkillsChanged {
-                        owner: owner.clone(),
-                    })
-                    .is_err()
-                    || tx
+                let need_skills = app.skills.owner.is_empty();
+                let need_model = app.model.owner.is_empty();
+                if need_skills {
+                    app.apply_skills(&owner, None);
+                }
+                if need_model {
+                    app.model.apply(&owner, None);
+                    app.reconcile_model_chooser();
+                }
+                let skills_err = need_skills
+                    && tx
+                        .try_send(FileBackedEvent::SkillsChanged {
+                            owner: owner.clone(),
+                        })
+                        .is_err();
+                let model_err = need_model
+                    && tx
                         .try_send(FileBackedEvent::ModelChanged { owner })
                         .is_err();
+                self.pid_refresh_failed = skills_err || model_err;
                 if self.pid_refresh_failed {
-                    app.invalidate_skill_owner();
-                    app.invalidate_model_owner();
+                    if need_skills {
+                        app.invalidate_skill_owner();
+                    }
+                    if need_model {
+                        app.invalidate_model_owner();
+                    }
                 }
                 false
             }
@@ -109,8 +122,10 @@ impl AgentWatchers {
                     app.fence_project_control();
                 }
                 let pending_count = pending_turns.len();
-                // Tape history outlives the local pending-input lock.
-                let history_restored = if let Some((_, tape)) = &self.recovery {
+                // Tape history outlives the local pending-input lock, except during explicit rollout switch.
+                let history_restored = if app.rollout_switching {
+                    false
+                } else if let Some((_, tape)) = &self.recovery {
                     previous_input::restore_tape_history(app, tape, app.tape_consumed_offset).await
                 } else {
                     false

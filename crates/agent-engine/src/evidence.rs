@@ -196,6 +196,68 @@ pub(crate) fn redact_durable_evidence_text(text: &str) -> RedactedEvidence {
     }
 }
 
+/// Scrub secret key/value pairs, bearer tokens, URL query secrets, and common bare API token
+/// prefixes (`sk-...`, `AIza...`, `ghp_...`, `github_pat_...`, `xox...`, `AKIA...`) from text.
+pub fn redact_secret_tokens(text: &str) -> String {
+    let base = redact_durable_evidence_text(text).text;
+    scrub_bare_secret_tokens(&base)
+}
+
+fn scrub_bare_secret_tokens(text: &str) -> String {
+    const PREFIXES: &[(&str, usize)] = &[
+        ("github_pat_", 16),
+        ("sk-proj-", 14),
+        ("sk-ant-", 14),
+        ("sk-", 11),
+        ("AIza", 12),
+        ("ghp_", 12),
+        ("gho_", 12),
+        ("ghu_", 12),
+        ("ghs_", 12),
+        ("ghr_", 12),
+        ("xoxb-", 12),
+        ("xoxp-", 12),
+        ("xoxa-", 12),
+        ("xoxr-", 12),
+        ("xoxs-", 12),
+        ("AKIA", 16),
+    ];
+
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+
+    while cursor < text.len() {
+        let rest = &text[cursor..];
+        let at_word_start =
+            cursor == 0 || !bytes[cursor - 1].is_ascii_alphanumeric() && bytes[cursor - 1] != b'_';
+        if at_word_start
+            && let Some((prefix, min_len)) = PREFIXES
+                .iter()
+                .find(|(prefix, _)| rest.starts_with(prefix))
+                .copied()
+        {
+            let token_len = rest
+                .bytes()
+                .take_while(|b| b.is_ascii_alphanumeric() || matches!(*b, b'-' | b'_' | b'.'))
+                .count();
+            let trimmed_len = rest[..token_len].trim_end_matches('.').len();
+            if trimmed_len >= min_len.max(prefix.len() + 4) {
+                out.push_str("[REDACTED]");
+                cursor += trimmed_len;
+                continue;
+            }
+        }
+        let Some(ch) = rest.chars().next() else {
+            break;
+        };
+        out.push(ch);
+        cursor += ch.len_utf8();
+    }
+
+    out
+}
+
 pub(crate) fn redaction_markers_in_text(text: &str) -> Vec<EvidenceRedactionMarker> {
     let mut markers = Vec::new();
     for reason in ["secret_key", "credential_token"] {

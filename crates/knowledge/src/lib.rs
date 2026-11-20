@@ -6,6 +6,10 @@
 //! file surfaces; `machine/tape`, memory, and context remain file views above
 //! this store.
 
+pub mod recall;
+
+pub use recall::{Bm25Config, IndexedDoc, Ranker, SearchHit, excerpt_around_match, tokenize_terms};
+
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -286,6 +290,11 @@ impl KnowledgeStore {
             .get(name)
             .cloned()
             .ok_or_else(|| KnowledgeError::UnknownRoot(name.to_string()))
+    }
+
+    /// Iterate over every currently bound namespace root.
+    pub fn bound_roots(&self) -> impl Iterator<Item = &BoundRoot> {
+        self.roots.values()
     }
 
     /// Authorize by root hash only if that hash is already reachable through a

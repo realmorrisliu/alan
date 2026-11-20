@@ -1,5 +1,9 @@
 use super::*;
-use crate::MessageRole;
+use crate::{Message, MessageRole, ToolCall, ToolDefinition};
+use axum::{Router, routing::post};
+use serde_json::{Value, json};
+use std::sync::{Arc, Mutex};
+use tokio::net::TcpListener;
 
 #[test]
 fn anthropic_messages_url_appends_v1_when_missing() {
@@ -39,6 +43,7 @@ fn test_message_request_serialization() {
             role: "user".to_string(),
             content: vec![ContentBlockInput::Text {
                 text: "Hello".to_string(),
+                cache_control: None,
             }],
         }],
         max_tokens: 1024,
@@ -47,6 +52,7 @@ fn test_message_request_serialization() {
         tools: None,
         stream: None,
         thinking: None,
+        output_config: None,
     };
 
     let json = serde_json::to_string(&request).unwrap();
@@ -141,7 +147,7 @@ fn test_message_user_text() {
     assert_eq!(msg.role, "user");
     assert_eq!(msg.content.len(), 1);
     match &msg.content[0] {
-        ContentBlockInput::Text { text } => assert_eq!(text, "Hello"),
+        ContentBlockInput::Text { text, .. } => assert_eq!(text, "Hello"),
         _ => panic!("Expected Text variant"),
     }
 }
@@ -184,10 +190,11 @@ fn test_tool_definition_new() {
 fn test_content_block_input_text() {
     let block = ContentBlockInput::Text {
         text: "Hello".to_string(),
+        cache_control: None,
     };
 
     match block {
-        ContentBlockInput::Text { text } => assert_eq!(text, "Hello"),
+        ContentBlockInput::Text { text, .. } => assert_eq!(text, "Hello"),
         _ => panic!("Expected Text variant"),
     }
 }
@@ -198,10 +205,13 @@ fn test_content_block_input_tool_use() {
         id: "call-123".to_string(),
         name: "my_tool".to_string(),
         input: serde_json::json!({"arg": "value"}),
+        cache_control: None,
     };
 
     match block {
-        ContentBlockInput::ToolUse { id, name, input } => {
+        ContentBlockInput::ToolUse {
+            id, name, input, ..
+        } => {
             assert_eq!(id, "call-123");
             assert_eq!(name, "my_tool");
             assert_eq!(input["arg"], "value");
@@ -216,6 +226,7 @@ fn test_content_block_input_tool_result() {
         tool_use_id: "call-456".to_string(),
         content: "Result".to_string(),
         is_error: Some(false),
+        cache_control: None,
     };
 
     match block {
@@ -223,6 +234,7 @@ fn test_content_block_input_tool_result() {
             tool_use_id,
             content,
             is_error,
+            ..
         } => {
             assert_eq!(tool_use_id, "call-456");
             assert_eq!(content, "Result");
@@ -255,6 +267,7 @@ fn test_message_serialization() {
         role: "assistant".to_string(),
         content: vec![ContentBlockInput::Text {
             text: "Hi!".to_string(),
+            cache_control: None,
         }],
     };
 
@@ -317,7 +330,7 @@ fn test_message_assistant() {
     let msg = AnthropicMessagesMessage::assistant_text("Hello from assistant");
     assert_eq!(msg.role, "assistant");
     match &msg.content[0] {
-        ContentBlockInput::Text { text } => assert_eq!(text, "Hello from assistant"),
+        ContentBlockInput::Text { text, .. } => assert_eq!(text, "Hello from assistant"),
         _ => panic!("Expected Text variant"),
     }
 }
@@ -340,7 +353,9 @@ fn test_convert_messages_for_anthropic_keeps_assistant_tool_use() {
     assert_eq!(converted[0].role, "assistant");
     assert_eq!(converted[0].content.len(), 1);
     match &converted[0].content[0] {
-        ContentBlockInput::ToolUse { id, name, input } => {
+        ContentBlockInput::ToolUse {
+            id, name, input, ..
+        } => {
             assert_eq!(id, "toolu_123");
             assert_eq!(name, "web_search");
             assert_eq!(input["query"], "laptop");
@@ -376,7 +391,7 @@ fn test_convert_messages_for_anthropic_empty_tool_call_id_falls_back_to_text() {
     assert_eq!(converted[0].role, "user");
     assert_eq!(converted[0].content.len(), 1);
     match &converted[0].content[0] {
-        ContentBlockInput::Text { text } => assert_eq!(text, "tool output"),
+        ContentBlockInput::Text { text, .. } => assert_eq!(text, "tool output"),
         _ => panic!("Expected Text variant"),
     }
 }
@@ -399,7 +414,7 @@ fn test_convert_messages_for_anthropic_unknown_tool_call_id_falls_back_to_text()
     assert_eq!(converted[1].role, "user");
     assert_eq!(converted[1].content.len(), 1);
     match &converted[1].content[0] {
-        ContentBlockInput::Text { text } => assert_eq!(text, "{\"ok\":true}"),
+        ContentBlockInput::Text { text, .. } => assert_eq!(text, "{\"ok\":true}"),
         _ => panic!("Expected Text fallback for unknown tool_use_id"),
     }
 }
@@ -419,7 +434,7 @@ fn test_build_thinking_params_adjusts_max_tokens_and_temperature() {
 
     assert!(thinking.is_some());
     assert_eq!(temperature, Some(1.0));
-    assert_eq!(max_tokens, 1025);
+    assert_eq!(max_tokens, 1024 + THINKING_OUTPUT_HEADROOM_TOKENS);
 }
 
 #[test]
@@ -429,7 +444,59 @@ fn test_build_thinking_params_maps_reasoning_effort_to_budget() {
 
     assert_eq!(thinking.unwrap().budget_tokens, 8192);
     assert_eq!(temperature, Some(1.0));
-    assert_eq!(max_tokens, 8193);
+    assert_eq!(max_tokens, 8192 + THINKING_OUTPUT_HEADROOM_TOKENS);
+}
+
+#[test]
+fn test_build_thinking_params_caps_at_known_model_limit_and_preserves_headroom() {
+    // Unknown model gets unconstrained budget + 4096 headroom when caller max_tokens is small.
+    let (_, _, max_tokens) = build_thinking_params_for_model(
+        "claude-sonnet-4-5",
+        Some(ReasoningEffort::High),
+        Some(0.3),
+        2048,
+    )
+    .unwrap();
+    assert_eq!(max_tokens, 8192 + 4096);
+
+    // Caller max_tokens above known model limit (claude-opus-4 = 32_000) is capped cleanly.
+    let (_, _, capped) = build_thinking_params_for_model(
+        "claude-opus-4-20250514",
+        Some(ReasoningEffort::High),
+        Some(0.3),
+        100_000,
+    )
+    .unwrap();
+    assert_eq!(capped, 32_000);
+
+    // Non-thinking Claude 3.5 clamps default 16_384 down to 8_192.
+    let (thinking, _, claude35_cap) =
+        build_thinking_params_for_model("claude-3-5-sonnet-20241022", None, Some(0.3), 16_384)
+            .unwrap();
+    assert!(thinking.is_none());
+    assert_eq!(claude35_cap, 8_192);
+}
+
+#[test]
+fn test_context_role_projects_to_user_messages_not_system_prompt() {
+    let messages = vec![
+        Message::user("first question"),
+        Message::assistant("first answer"),
+        Message::user("follow up"),
+        Message::context("ephemeral recall and cwd"),
+    ];
+
+    let (converted, system) =
+        convert_messages_for_anthropic_messages(messages, Some("Static base prompt".to_string()))
+            .unwrap();
+
+    assert_eq!(system.as_deref(), Some("Static base prompt"));
+    assert_eq!(converted.len(), 4);
+    assert_eq!(converted[3].role, "user");
+    match &converted[3].content[0] {
+        ContentBlockInput::Text { text, .. } => assert_eq!(text, "ephemeral recall and cwd"),
+        _ => panic!("expected text block for context message"),
+    }
 }
 
 #[test]
@@ -460,6 +527,7 @@ fn test_build_request_headers_adds_files_beta_for_file_sources() {
             }),
             title: Some("Spec".to_string()),
             citations: None,
+            cache_control: None,
         }],
     }];
     let mut extra_params = HashMap::new();
@@ -482,6 +550,9 @@ fn test_convert_usage_extracts_cached_prompt_tokens() {
     let token_usage = convert_usage(usage);
     assert_eq!(token_usage.prompt_tokens, 150);
     assert_eq!(token_usage.cached_prompt_tokens, Some(30));
+    assert_eq!(token_usage.cache_creation_tokens, Some(20));
+    assert_eq!(token_usage.completion_tokens, 50);
+    assert_eq!(token_usage.total_tokens, 200);
 }
 
 #[test]
@@ -519,7 +590,7 @@ fn test_convert_messages_for_anthropic_preserves_thinking_signature_and_redacted
         _ => panic!("Expected RedactedThinking block"),
     }
     match &converted[0].content[2] {
-        ContentBlockInput::Text { text } => {
+        ContentBlockInput::Text { text, .. } => {
             assert_eq!(text, "done");
         }
         _ => panic!("Expected Text block"),
@@ -531,4 +602,181 @@ fn rejects_unqualified_extended_reasoning_efforts() {
     for effort in [ReasoningEffort::Max, ReasoningEffort::Ultra] {
         assert!(anthropic_budget_for_effort(effort).is_err());
     }
+}
+
+#[test]
+fn empty_model_defaults_to_claude_sonnet_4_5() {
+    let client = AnthropicMessagesClient::with_params("k", "https://api.anthropic.com/v1", "");
+    assert_eq!(client.model, DEFAULT_ANTHROPIC_MESSAGES_MODEL);
+    assert_eq!(DEFAULT_ANTHROPIC_MESSAGES_MODEL, "claude-sonnet-4-5");
+}
+
+fn count_cache_controls(value: &Value) -> usize {
+    match value {
+        Value::Object(map) => {
+            usize::from(map.contains_key("cache_control"))
+                + map.values().map(count_cache_controls).sum::<usize>()
+        }
+        Value::Array(items) => items.iter().map(count_cache_controls).sum(),
+        _ => 0,
+    }
+}
+
+#[tokio::test]
+async fn generate_emits_prompt_cache_breakpoints_and_parses_cache_usage() {
+    let captured = Arc::new(Mutex::new(None::<Value>));
+    let captured_handler = Arc::clone(&captured);
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+
+    let app = Router::new().route(
+        "/v1/messages",
+        post(move |axum::Json(body): axum::Json<Value>| {
+            let captured_handler = Arc::clone(&captured_handler);
+            async move {
+                *captured_handler.lock().unwrap() = Some(body);
+                axum::Json(json!({
+                    "id": "msg_cache_1",
+                    "type": "message",
+                    "content": [{"type": "text", "text": "cached reply"}],
+                    "stop_reason": "end_turn",
+                    "usage": {
+                        "input_tokens": 40,
+                        "cache_creation_input_tokens": 120,
+                        "cache_read_input_tokens": 800,
+                        "output_tokens": 25
+                    }
+                }))
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let mut client = AnthropicMessagesClient::with_params("sk-ant-test", &url, "");
+    let mut request = GenerationRequest::new()
+        .with_system_prompt("You are Alan.")
+        .with_tool(ToolDefinition::new("read_file", "Read a file"))
+        .with_tool(ToolDefinition::new("write_file", "Write a file"));
+    request.messages.push(Message::user("first turn"));
+    request.messages.push(Message::assistant("first answer"));
+    request.messages.push(Message::user("second turn"));
+    request.messages.push(Message::assistant_with_tools(
+        "",
+        vec![ToolCall::new("read_file", json!({"path": "a.rs"})).with_id("toolu_1")],
+    ));
+    request
+        .messages
+        .push(Message::tool("toolu_1", "fn main() {}"));
+
+    let response = client.generate(request).await.unwrap();
+    server.abort();
+
+    let sent = captured.lock().unwrap().clone().unwrap();
+    let ephemeral = json!({"type": "ephemeral"});
+    assert_eq!(sent["model"], "claude-sonnet-4-5");
+    assert_eq!(count_cache_controls(&sent), 4);
+    assert_eq!(
+        sent["system"],
+        json!([{"type": "text", "text": "You are Alan.", "cache_control": {"type": "ephemeral"}}])
+    );
+    assert!(sent["tools"][0].get("cache_control").is_none());
+    assert_eq!(sent["tools"][1]["cache_control"], ephemeral);
+    assert!(
+        sent["messages"][0]["content"][0]
+            .get("cache_control")
+            .is_none()
+    );
+    assert_eq!(
+        sent["messages"][2]["content"][0]["cache_control"],
+        ephemeral
+    );
+    assert_eq!(
+        sent["messages"][4]["content"][0]["cache_control"],
+        ephemeral
+    );
+
+    assert_eq!(response.content, "cached reply");
+    assert_eq!(
+        response.usage,
+        Some(TokenUsage {
+            prompt_tokens: 960,
+            cached_prompt_tokens: Some(800),
+            completion_tokens: 25,
+            total_tokens: 985,
+            reasoning_tokens: None,
+            cache_creation_tokens: Some(120),
+            cost_usd: None,
+        })
+    );
+}
+
+#[tokio::test]
+async fn generate_stream_emits_prompt_cache_breakpoints_and_parses_cache_usage() {
+    let captured = Arc::new(Mutex::new(None::<Value>));
+    let captured_handler = Arc::clone(&captured);
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+
+    let app = Router::new().route(
+        "/v1/messages",
+        post(move |axum::Json(body): axum::Json<Value>| {
+            let captured_handler = Arc::clone(&captured_handler);
+            async move {
+                *captured_handler.lock().unwrap() = Some(body);
+                let sse = concat!(
+                    "event: message_start\n",
+                    "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_s1\",\"usage\":{\"input_tokens\":50,\"cache_creation_input_tokens\":90,\"cache_read_input_tokens\":600,\"output_tokens\":0}}}\n\n",
+                    "event: content_block_delta\n",
+                    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n",
+                    "event: message_delta\n",
+                    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":15}}\n\n",
+                    "event: message_stop\n",
+                    "data: {\"type\":\"message_stop\"}\n\n"
+                );
+                (
+                    [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                    sse,
+                )
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let mut client = AnthropicMessagesClient::with_params("sk-ant-test", &url, "claude-sonnet-4-5");
+    let request = GenerationRequest::new()
+        .with_system_prompt("System")
+        .with_user_message("Hello");
+    let mut rx = client.generate_stream(request).await.unwrap();
+
+    let mut chunks = Vec::new();
+    while let Some(chunk) = rx.recv().await {
+        chunks.push(chunk);
+    }
+    server.abort();
+
+    let sent = captured.lock().unwrap().clone().unwrap();
+    assert_eq!(sent["stream"], json!(true));
+    assert_eq!(count_cache_controls(&sent), 2);
+    assert_eq!(
+        sent["system"][0]["cache_control"],
+        json!({"type": "ephemeral"})
+    );
+    assert_eq!(
+        sent["messages"][0]["content"][0]["cache_control"],
+        json!({"type": "ephemeral"})
+    );
+
+    let terminal = chunks.iter().find(|chunk| chunk.is_finished).unwrap();
+    assert_eq!(
+        terminal.usage,
+        Some(TokenUsage {
+            prompt_tokens: 740,
+            cached_prompt_tokens: Some(600),
+            completion_tokens: 15,
+            total_tokens: 755,
+            reasoning_tokens: None,
+            cache_creation_tokens: Some(90),
+            cost_usd: None,
+        })
+    );
 }

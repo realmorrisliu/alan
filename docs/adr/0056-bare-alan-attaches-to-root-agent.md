@@ -1,9 +1,15 @@
 # Bare `alan` owns a foreground instance and renders its Root Agent
 
+Amendment 2026-11-19 ([ADR-0061](0061-terminal-native-os-boundary-quartermaster-and-first-party-providers.md)):
+the lifecycle applies to every ordinary POSIX/VT terminal (Ghostty, iTerm2, Kitty,
+WezTerm, Terminal.app, tmux, SSH). No terminal host is required, detected or used as
+an acceptance harness; a view detach that retains the native process stays distinct
+from actual Alan exit.
+
 Status: accepted 2026-09-27; foreground lifetime and explicit recovery shipped.
 Current delivery note updated 2026-10-14; broader qualification is not implied.
 
-The user selected one independent foreground Alan invocation per Herdr
+The user selected one independent foreground Alan invocation per
 terminal session, with recovery only after explicit user selection. Ordinary
 terminals follow the same model. This supersedes the channel-wide background
 Host premise in [ADR-0044](0044-one-system-level-alan-os-instance-per-channel.md)
@@ -36,9 +42,10 @@ Implementation evidence: PR [#1009](https://github.com/realmorrisliu/alan/pull/1
 ships CLI-only foreground startup; PR
 [#1011](https://github.com/realmorrisliu/alan/pull/1011) verifies independent
 simultaneous endpoints, input streams, shutdown, and Tool Process cwd bindings.
-Both are merged. PR #1032 records the subsequent explicit recovery, Herdr
+Both are merged. PR #1032 records the subsequent explicit recovery, terminal
 view-detach, revocation and no-repeat acceptance; broader or different host/authority
-matrices require their own evidence. The [personal continuity plan](../../openspec/changes/restore-project-continuity/)
+matrices require their own evidence, gathered through standard-terminal PTY
+acceptance. The [personal continuity plan](../../openspec/changes/restore-project-continuity/)
 adds discovery and summaries without reopening background lifetime.
 
 Normative lifecycle behavior lives in the

@@ -1,6 +1,6 @@
 # Testing Strategy
 
-> Baseline update (2026-09-20): Desktop source and Apple UI tests have been removed (ADR-0054). New terminal and mixed-Machine work must add its own focused acceptance tests; no Herdr/Jev end-to-end qualification is claimed by this guide.
+> Baseline update (2026-09-20): Desktop source and Apple UI tests have been removed (ADR-0054). New terminal and mixed-Machine work must add its own focused acceptance tests; no Jev or host-specific end-to-end qualification is claimed by this guide.
 
 Alan tests each ownership boundary at the narrowest useful layer, then verifies
 the assembled products.
@@ -61,6 +61,16 @@ Harness runners live under `scripts/harness/` and write evidence to
 `target/harness/<suite>/latest/`. Current suites cover effect deduplication,
 recovery governance, compaction, repo-coding, coding-steward behavior, and
 self-evaluation. See [the harness guide](harness/README.md).
+
+## Terminal acceptance
+
+Alan is standard-terminal-native (ADR-0061), so no terminal-host harness is required.
+Terminal behavior is verified with a real Unix PTY (`openpty`) driving the built
+binary and a terminal-state model (`vt100`): startup frame, resize reflow,
+bracketed paste, wide/CJK text, Ctrl+C/Ctrl+D/Esc handling, modal exit and
+scrollback. Renderer layout is additionally covered by ratatui `TestBackend`
+tests. tmux and SSH are exercised as ordinary terminals when a change touches
+detach or remote behavior. A view detach is distinct from process exit.
 
 ## Live providers
 

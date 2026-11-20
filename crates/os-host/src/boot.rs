@@ -3,7 +3,8 @@
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use alan_agent_engine::{
-    AgentProcessConfig, Config, LlmClient, ProcessDescriptor, ProcessFileTree, ToolRegistry,
+    AgentProcessConfig, Config, LlmClient, MemoryDomain, ProcessDescriptor, ProcessFileTree,
+    ToolRegistry,
 };
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
@@ -17,7 +18,13 @@ use crate::paths::{HostStorePaths, SystemStorePaths};
 use crate::{SecretStore, apply_profile_to_config};
 
 /// Host-supplied adapters and durable bindings needed by Service Manager.
-pub struct HostBootConfig(ServiceManagerConfig);
+pub struct HostBootConfig {
+    service_manager: ServiceManagerConfig,
+    /// Keep this invocation's Root rollout out of `metadata/root-rollout`.
+    pub ephemeral_rollout: bool,
+    saved_grants: Vec<String>,
+    saved_grant_store_path: Option<std::path::PathBuf>,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProductLlmClientFactory {
@@ -100,42 +107,83 @@ impl LlmClientFactory for ProductLlmClientFactory {
         let Some(profile_id) = selected_profile else {
             return Ok(client);
         };
-        if connections
-            .resolve_profile(Some(profile_id))?
-            .credential_kind
-            != alan_service_manager::CredentialKind::SecretString
-        {
+        let resolved = connections.resolve_profile(Some(profile_id))?;
+        if resolved.credential_kind != alan_service_manager::CredentialKind::SecretString {
             return Ok(client);
         }
+        let credential_id = resolved.credential_id;
+        let initial_secret = match credential_id.as_deref() {
+            Some(id) => SecretStore::from_directory(&self.credentials_dir)?.load(id)?,
+            None => None,
+        };
+        let provider_name = client.provider_name();
+        let generation = client.supports_generation();
+        let evaluation = client.supports_choice_evaluation();
         Ok(LlmClient::new(LiveSecretProvider {
             factory: self.clone(),
             base_config: base_config.clone(),
             profile_id: profile_id.to_string(),
+            credential_id,
             connections: connections.clone(),
-            provider_name: client.provider_name(),
-            generation: client.supports_generation(),
-            evaluation: client.supports_choice_evaluation(),
+            provider_name,
+            generation,
+            evaluation,
+            cached: Some(CachedSecretClient {
+                secret: initial_secret,
+                client,
+            }),
         }))
     }
 }
 
-// Keep Process profile settings fixed while resolving the owning Host credential store at
-// each request boundary. In-flight requests retain their original authorization.
-// ponytail: rebuild secret-backed clients per request; add versioned reuse if setup costs matter.
+struct CachedSecretClient {
+    secret: Option<String>,
+    client: LlmClient,
+}
+
+// Keep Process profile settings fixed while checking the owning Host credential store at
+// each request boundary. Reuse the built `LlmClient` (and its underlying HTTP client/pool)
+// across requests while the resolved secret is unchanged; invalidate immediately on rotation
+// or revocation. In-flight requests retain their original authorization.
 struct LiveSecretProvider {
     factory: ProductLlmClientFactory,
     base_config: Config,
     profile_id: String,
+    credential_id: Option<String>,
     connections: ConnectionsFile,
     provider_name: &'static str,
     generation: bool,
     evaluation: bool,
+    cached: Option<CachedSecretClient>,
 }
 
 impl LiveSecretProvider {
-    fn client(&self) -> Result<LlmClient> {
-        self.factory
-            .resolve(&self.base_config, Some(&self.profile_id), &self.connections)
+    fn client_mut(&mut self) -> Result<&mut LlmClient> {
+        let current_secret = match self.credential_id.as_deref() {
+            Some(id) => SecretStore::from_directory(&self.factory.credentials_dir)?.load(id)?,
+            None => None,
+        };
+        let cache_hit = self
+            .cached
+            .as_ref()
+            .is_some_and(|cached| cached.secret == current_secret);
+        if !cache_hit {
+            self.cached = None;
+            let client = self.factory.resolve(
+                &self.base_config,
+                Some(&self.profile_id),
+                &self.connections,
+            )?;
+            self.cached = Some(CachedSecretClient {
+                secret: current_secret,
+                client,
+            });
+        }
+        Ok(&mut self
+            .cached
+            .as_mut()
+            .expect("cached LLM client initialized")
+            .client)
     }
 }
 
@@ -151,22 +199,22 @@ impl LlmProvider for LiveSecretProvider {
         &mut self,
         request: alan_llm::ChoiceEvaluationRequest,
     ) -> Result<alan_llm::ChoiceEvaluationResponse> {
-        self.client()?.evaluate_choice(request).await
+        self.client_mut()?.evaluate_choice(request).await
     }
 
     async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
-        self.client()?.generate(request).await
+        self.client_mut()?.generate(request).await
     }
 
     async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
-        self.client()?.chat(system, user).await
+        self.client_mut()?.chat(system, user).await
     }
 
     async fn generate_stream(
         &mut self,
         request: GenerationRequest,
     ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        self.client()?.generate_stream(request).await
+        self.client_mut()?.generate_stream(request).await
     }
 
     fn provider_name(&self) -> &'static str {
@@ -199,18 +247,26 @@ impl HostBootConfig {
             _installation_access: Some(installation_access),
         });
 
-        Ok(Self(ServiceManagerConfig {
-            process,
-            resume_root,
-            input_shadow: None,
-            launch_context,
-            connection_store: Some(connection_store),
-            package_store: Some(system_store.packages()?),
-            in_memory_stores: false,
-            llm_factory,
-            host_mount_adapter: Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
-            tools,
-        }))
+        Ok(Self {
+            service_manager: ServiceManagerConfig {
+                process,
+                resume_root,
+                resume_rollout_id: None,
+                ephemeral_rollout: false,
+                input_shadow: None,
+                launch_context,
+                connection_store: Some(connection_store),
+                package_store: Some(system_store.packages()?),
+                in_memory_stores: false,
+                llm_factory,
+                host_mount_adapter: Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
+                tools,
+                include_builtin_skills: true,
+            },
+            ephemeral_rollout: false,
+            saved_grants: Vec::new(),
+            saved_grant_store_path: None,
+        })
     }
 
     /// Explicit test-only inputs. Product callers never select this implicitly.
@@ -226,13 +282,75 @@ impl HostBootConfig {
             tools,
         );
         config.host_mount_adapter = Arc::new(crate::host_mounts::NativeHostMountExportAdapter);
-        Self(config)
+        Self {
+            service_manager: config,
+            ephemeral_rollout: false,
+            saved_grants: Vec::new(),
+            saved_grant_store_path: None,
+        }
+    }
+
+    /// Configure explicit invocation-only trust posture (`Governed`, `ConfinedTrusted`,
+    /// or `HostAccountTrusted`). Never read from repo configuration files.
+    pub fn with_trust_posture(mut self, trust_posture: alan_agent_engine::TrustPosture) -> Self {
+        self.service_manager.process.trust_posture = trust_posture;
+        self
+    }
+
+    /// Active explicit invocation trust posture.
+    pub fn trust_posture(&self) -> alan_agent_engine::TrustPosture {
+        self.service_manager.process.trust_posture
+    }
+
+    /// Configure a dedicated Connection profile for Guardian escalation reviews.
+    pub fn with_guardian_profile(mut self, profile: impl Into<String>) -> Result<Self> {
+        let profile = profile.into();
+        anyhow::ensure!(
+            !profile.trim().is_empty(),
+            "guardian profile must not be empty"
+        );
+        self.service_manager
+            .process
+            .agent_config
+            .set_guardian_profile_override(Some(profile));
+        Ok(self)
+    }
+
+    /// Explicitly restore a specific Root Agent rollout id (`--resume <id>`).
+    pub fn with_root_resume_id(mut self, rollout_id: Option<String>) -> Self {
+        self.service_manager = self.service_manager.with_resume_rollout_id(rollout_id);
+        self
+    }
+
+    /// Activate saved System Store Host Mount grant ids onto the Root Agent at boot.
+    pub fn with_saved_grants(mut self, grant_ids: Vec<String>) -> Self {
+        self.saved_grants = grant_ids;
+        self
+    }
+
+    /// Override the saved-grant store path (intended for isolated host/CLI tests).
+    pub fn with_saved_grant_store_path(mut self, path: std::path::PathBuf) -> Self {
+        self.saved_grant_store_path = Some(path);
+        self
     }
 
     /// Explicitly restore the selected Root Agent rollout for this invocation.
     pub fn with_root_resume(mut self) -> Self {
-        self.0.resume_root = true;
+        self.service_manager.resume_root = true;
         self
+    }
+
+    /// Keep this invocation's Root rollout out of `metadata/root-rollout`: the run neither reads
+    /// the selected rollout nor becomes the selection for earlier or later invocations.
+    pub fn with_ephemeral_rollout(mut self, ephemeral: bool) -> Self {
+        self.ephemeral_rollout = ephemeral;
+        self.service_manager.ephemeral_rollout = ephemeral;
+        self
+    }
+
+    /// Whether this invocation is excluded from the selected-rollout channel.
+    pub fn ephemeral_rollout(&self) -> bool {
+        self.ephemeral_rollout
     }
 
     /// Select an advice-only evaluator for this invocation's Root Agent input.
@@ -241,7 +359,7 @@ impl HostBootConfig {
         profile: impl Into<String>,
         surface: alan_agent_engine::runtime::EvaluationSurface,
     ) -> Self {
-        self.0.input_shadow = Some(alan_service_manager::InputShadowSelection {
+        self.service_manager.input_shadow = Some(alan_service_manager::InputShadowSelection {
             profile: profile.into(),
             surface,
         });
@@ -251,21 +369,66 @@ impl HostBootConfig {
     /// Boot an independent in-process instance without a listener or background launcher.
     /// The caller owns the returned manager and must shut it down before exiting.
     pub async fn boot_foreground(self) -> Result<ServiceManager> {
-        ServiceManager::boot(self.0).await
+        self.boot_service_manager().await
     }
 
-    pub(crate) fn into_service_manager(self) -> ServiceManagerConfig {
-        self.0
+    pub(crate) async fn boot_service_manager(mut self) -> Result<ServiceManager> {
+        self.service_manager.ephemeral_rollout = self.ephemeral_rollout;
+        let saved_grants = std::mem::take(&mut self.saved_grants);
+        let store_path = self.saved_grant_store_path.take();
+        let manager = ServiceManager::boot(self.service_manager).await?;
+        if !saved_grants.is_empty() {
+            let store = match store_path {
+                Some(path) => {
+                    crate::host_mounts::saved_grants::SavedProjectGrantStore::from_path(path)
+                }
+                None => match crate::host_mounts::saved_grants::SavedProjectGrantStore::system() {
+                    Ok(store) => store,
+                    Err(err) => {
+                        let _ = manager.shutdown().await;
+                        return Err(err);
+                    }
+                },
+            };
+            let root_pid = manager.root_pid();
+            let host_mount = manager.host_mount();
+            for grant_id in &saved_grants {
+                if let Err(err) = store.activate_grant_for_process(grant_id, &host_mount, root_pid)
+                {
+                    let _ = manager.shutdown().await;
+                    return Err(err);
+                }
+            }
+        }
+        Ok(manager)
     }
 }
 
 pub(crate) fn prepare_system_store_launch(
     system_store: &SystemStorePaths,
-    mut namespace: Namespace,
+    namespace: Namespace,
     process: &mut AgentProcessConfig,
     definition_override: Option<ProcessFileTree>,
 ) -> Result<ProcessLaunchContext> {
-    let memory_store_backing = system_store.memory_stores()?.join("default");
+    prepare_system_store_launch_for_domain(
+        system_store,
+        namespace,
+        process,
+        definition_override,
+        &MemoryDomain::Default,
+    )
+}
+
+/// Bind an explicit domain-partitioned Memory Store (`default`, `personal`, `continuity`,
+/// `app:<id>`, `project:<slug>`) into `/memory` for one System Store launch.
+pub(crate) fn prepare_system_store_launch_for_domain(
+    system_store: &SystemStorePaths,
+    mut namespace: Namespace,
+    process: &mut AgentProcessConfig,
+    definition_override: Option<ProcessFileTree>,
+    memory_domain: &MemoryDomain,
+) -> Result<ProcessLaunchContext> {
+    let memory_store_backing = system_store.memory_store_for_domain(memory_domain)?;
     std::fs::create_dir_all(&memory_store_backing)
         .context("failed to prepare Memory Store backing")?;
     let memory_store =
@@ -322,7 +485,7 @@ pub(crate) fn prepare_system_store_launch(
 fn product_tool_registry(core_config: Arc<Config>) -> ToolRegistry {
     let mut tools = ToolRegistry::with_config(core_config);
     alan_tools::register_builtin_tool_catalog(&mut tools);
-    for tool in alan_tools::create_core_tools() {
+    for tool in alan_tools::create_all_tools() {
         tools.register_boxed(tool);
     }
     tools
@@ -406,7 +569,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn product_root_agent_has_only_the_existing_core_tool_set() {
+    fn product_root_agent_has_all_seven_builtin_tools() {
         let tools = product_tool_registry(Arc::new(Config::default()));
         let names = tools
             .list_tools()
@@ -414,18 +577,22 @@ mod tests {
             .map(str::to_string)
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(
-            names,
-            ["bash", "edit_file", "read_file", "write_file"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
-        );
-        for tool in ["bash", "edit_file", "read_file", "write_file"] {
+        let expected: BTreeSet<String> = [
+            "bash",
+            "edit_file",
+            "glob",
+            "grep",
+            "list_dir",
+            "read_file",
+            "write_file",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        assert_eq!(names, expected);
+        for tool in &expected {
             assert!(tools.has_tool_factory(tool), "missing Tool factory: {tool}");
-        }
-        for tool in ["glob", "grep", "list_dir"] {
-            assert!(!tools.has(tool), "unexpected exploration Tool: {tool}");
+            assert!(tools.has(tool), "missing registered Tool: {tool}");
         }
     }
 

@@ -3,6 +3,7 @@ name = "alan-agent-protocol"
 description = "Protocol definitions for the alan agent (Op/Event)"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 chrono.workspace = true

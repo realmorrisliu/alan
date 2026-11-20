@@ -18,21 +18,48 @@ pub(super) enum RootRolloutState {
     Durable(PathBuf),
 }
 
+#[cfg(test)]
 pub(super) fn select(
     config: &mut AgentProcessConfig,
     resume_previous: bool,
+    current_rollout: &mut RootRolloutState,
+) -> Result<()> {
+    select_with_rollout_id(config, resume_previous, None, None, current_rollout)
+}
+
+pub(super) fn select_with_rollout_id(
+    config: &mut AgentProcessConfig,
+    resume_previous: bool,
+    resume_rollout_id: Option<&str>,
+    scope: Option<&super::history_discovery::HistoryProjectScope>,
     current_rollout: &mut RootRolloutState,
 ) -> Result<()> {
     if config.recovery_rollout_path.is_some() {
         return Ok(());
     }
     let Some(stores) = config.store_bindings.as_ref() else {
+        if resume_rollout_id.is_some() {
+            bail!("explicit --resume requires durable Root Agent store bindings");
+        }
         return Ok(());
     };
     let pin_instance_state = matches!(current_rollout, RootRolloutState::NotStarted);
     let path = match current_rollout {
         RootRolloutState::Durable(path) => path.clone(),
         RootRolloutState::NoDurableRollout => return Ok(()),
+        RootRolloutState::NotStarted if resume_rollout_id.is_some() => {
+            let requested = resume_rollout_id.expect("checked is_some");
+            let fallback_scope = super::history_discovery::HistoryProjectScope::from_cwd(Some(
+                &config.namespace_cwd.to_string_lossy(),
+            ));
+            let active_scope = scope.unwrap_or(&fallback_scope);
+            let (resolved_path, _) = super::history_discovery::resolve_authorized_rollout_file(
+                stores,
+                active_scope,
+                requested,
+            )?;
+            resolved_path
+        }
         RootRolloutState::NotStarted if !resume_previous => return Ok(()),
         RootRolloutState::NotStarted => {
             let name = match fs::read_to_string(stores.metadata.join(CURRENT)) {
@@ -50,11 +77,10 @@ pub(super) fn select(
         .strip_prefix(&stores.rollouts)
         .context("Root Agent recovery rollout store mismatch")?;
     validate_filename(name)?;
+    let meta = fs::symlink_metadata(&path).context("selected Root Agent rollout is unavailable")?;
     ensure!(
-        fs::metadata(&path)
-            .context("selected Root Agent rollout is unavailable")?
-            .is_file(),
-        "selected Root Agent rollout is not a file"
+        !meta.file_type().is_symlink() && meta.file_type().is_file(),
+        "selected Root Agent rollout is not a regular file"
     );
     config.recovery_rollout_path = Some(path.clone());
     if pin_instance_state {
@@ -536,5 +562,67 @@ mod tests {
                 usize::from(!missing)
             );
         }
+    }
+    #[tokio::test]
+    async fn ephemeral_rollout_never_reads_or_overwrites_the_selector() {
+        use alan_agent_engine::{LlmClient, RolloutRecorder, tools::ToolRegistry};
+        let temp = tempfile::tempdir().unwrap();
+        let stores = alan_agent_engine::AgentRuntimeStoreBindings {
+            rollouts: temp.path().join("rollouts"),
+            metadata: temp.path().join("metadata"),
+            checkpoints: temp.path().join("checkpoints"),
+            cache: temp.path().join("cache"),
+            tmp: temp.path().join("tmp"),
+        };
+        fs::create_dir_all(&stores.rollouts).unwrap();
+        let config = AgentProcessConfig {
+            store_bindings: Some(stores.clone()),
+            ..Default::default()
+        };
+        let selected = RolloutRecorder::new_in_dir("/proc/old", "mock", &stores.rollouts)
+            .await
+            .unwrap();
+        selected
+            .record_tape_message(&alan_agent_engine::tape::Message::user("selected session"))
+            .await
+            .unwrap();
+        publish(&config, Some(selected.path())).unwrap();
+        let before = fs::read_to_string(stores.metadata.join(CURRENT)).unwrap();
+
+        let manager_config = crate::ServiceManagerConfig::ephemeral(
+            config.clone(),
+            crate::ProcessLaunchContext::root(),
+            LlmClient::new(alan_llm::MockLlmProvider::new()),
+            ToolRegistry::new(),
+        )
+        .with_ephemeral_rollout(true);
+        let manager = crate::ServiceManager::boot(manager_config).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(stores.metadata.join(CURRENT)).unwrap(),
+            before,
+            "an ephemeral run must not overwrite the selected rollout"
+        );
+        manager.shutdown().await.unwrap();
+
+        let mut resuming = crate::ServiceManagerConfig::ephemeral(
+            config,
+            crate::ProcessLaunchContext::root(),
+            LlmClient::new(alan_llm::MockLlmProvider::new()),
+            ToolRegistry::new(),
+        )
+        .with_ephemeral_rollout(true);
+        resuming.resume_root = true;
+        let error = match crate::ServiceManager::boot(resuming).await {
+            Ok(manager) => {
+                manager.shutdown().await.unwrap();
+                panic!("ephemeral rollout must not combine with resume");
+            }
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("ephemeral Root rollout cannot also resume"));
+        assert_eq!(
+            fs::read_to_string(stores.metadata.join(CURRENT)).unwrap(),
+            before
+        );
     }
 }

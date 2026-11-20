@@ -59,6 +59,8 @@ pub struct ChildRunRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_ref: Option<crate::skills::DelegatedSkillOutputRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_target: Option<String>,
@@ -97,6 +99,7 @@ impl ChildRunRecord {
             parent_process_path,
             child_process_path,
             agent_path,
+            role: None,
             state_ref: None,
             launch_target,
             status: ChildRunStatus::Starting,
@@ -120,6 +123,14 @@ impl ChildRunRecord {
         decision: alan_agent_protocol::DelegatedCapabilityDecision,
     ) -> Self {
         self.delegation_capability_decision = Some(decision);
+        self
+    }
+
+    pub fn with_role(mut self, role: impl Into<String>) -> Self {
+        let trimmed = role.into().trim().to_string();
+        if !trimmed.is_empty() {
+            self.role = Some(trimmed);
+        }
         self
     }
 
@@ -147,6 +158,27 @@ impl ChildRunRegistry {
             .expect("child run registry poisoned")
             .get(child_run_id)
             .cloned()
+    }
+
+    /// Return a snapshot of all registered child run records ordered by creation time.
+    #[allow(
+        dead_code,
+        reason = "Retained as public registry snapshot helper for callers and test inspection"
+    )]
+    pub fn list(&self) -> Vec<ChildRunRecord> {
+        let mut records = self
+            .inner
+            .read()
+            .expect("child run registry poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| {
+            left.created_at_ms
+                .cmp(&right.created_at_ms)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        records
     }
 
     pub fn mark_running(&self, child_run_id: &str) {

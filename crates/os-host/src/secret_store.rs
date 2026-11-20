@@ -203,10 +203,28 @@ pub fn apply_profile_to_config(
     config: &mut Config,
 ) -> anyhow::Result<ResolvedConnectionProfile> {
     let resolved = connections.apply_profile_metadata_to_config(profile_id, config)?;
-    if matches!(
-        resolved.provider,
-        LlmProvider::Chatgpt | LlmProvider::GoogleGeminiGenerateContent
-    ) {
+    if matches!(resolved.provider, LlmProvider::Chatgpt) {
+        return Ok(resolved);
+    }
+    if resolved.provider == LlmProvider::GoogleGeminiGenerateContent {
+        if let Some(credential_id) = resolved.credential_id.as_deref() {
+            let api_key = secret_store.load(credential_id)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Credential `{credential_id}` for profile `{}` is missing a secret",
+                    resolved.profile_id
+                )
+            })?;
+            config.google_gemini_generate_content_api_key = Some(api_key);
+        }
+        return Ok(resolved);
+    }
+    if resolved.provider == LlmProvider::Magpie {
+        if let Some(credential_id) = resolved.credential_id.as_deref() {
+            config.magpie_api_key = secret_store
+                .load(credential_id)?
+                .map(|key| key.trim().to_string())
+                .filter(|key| !key.is_empty());
+        }
         return Ok(resolved);
     }
     let Some(credential_id) = resolved.credential_id.as_deref() else {
@@ -229,7 +247,9 @@ pub fn apply_profile_to_config(
         }
         LlmProvider::OpenRouter => config.openrouter_api_key = Some(api_key),
         LlmProvider::AnthropicMessages => config.anthropic_messages_api_key = Some(api_key),
-        LlmProvider::Chatgpt | LlmProvider::GoogleGeminiGenerateContent => unreachable!(),
+        LlmProvider::Chatgpt | LlmProvider::GoogleGeminiGenerateContent | LlmProvider::Magpie => {
+            unreachable!()
+        }
     }
     Ok(resolved)
 }
@@ -477,6 +497,81 @@ mod tests {
         assert_eq!(
             config.openrouter_app_categories,
             vec!["cli-agent", "devtool"]
+        );
+    }
+
+    #[test]
+    fn host_projection_supports_magpie_optional_key_and_vertex_express_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SecretStore::from_directory(temp.path()).unwrap();
+        store.save("vertex-express", "vk-secret").unwrap();
+        let connections = ConnectionsFile {
+            credentials: BTreeMap::from([(
+                "vertex-express".to_string(),
+                ConnectionCredential {
+                    kind: CredentialKind::SecretString,
+                    provider_family: LlmProvider::GoogleGeminiGenerateContent,
+                    label: "Vertex Express".to_string(),
+                    backend: default_credential_backend(CredentialKind::SecretString).to_string(),
+                },
+            )]),
+            profiles: BTreeMap::from([
+                (
+                    "magpie-local".to_string(),
+                    ConnectionProfile {
+                        provider: LlmProvider::Magpie,
+                        label: None,
+                        credential_id: None,
+                        created_at: "2026-01-01T00:00:00Z".parse().unwrap(),
+                        updated_at: "2026-01-01T00:00:00Z".parse().unwrap(),
+                        source: "managed".to_string(),
+                        settings: BTreeMap::new(),
+                    },
+                ),
+                (
+                    "vertex-express".to_string(),
+                    ConnectionProfile {
+                        provider: LlmProvider::GoogleGeminiGenerateContent,
+                        label: None,
+                        credential_id: Some("vertex-express".to_string()),
+                        created_at: "2026-01-01T00:00:00Z".parse().unwrap(),
+                        updated_at: "2026-01-01T00:00:00Z".parse().unwrap(),
+                        source: "managed".to_string(),
+                        settings: BTreeMap::new(),
+                    },
+                ),
+            ]),
+            ..ConnectionsFile::default()
+        };
+
+        let mut magpie_config = Config::default();
+        apply_profile_to_config(
+            &connections,
+            Some("magpie-local"),
+            &store,
+            &mut magpie_config,
+        )
+        .unwrap();
+        assert_eq!(magpie_config.llm_provider, LlmProvider::Magpie);
+        assert_eq!(magpie_config.magpie_api_key, None);
+
+        let mut vertex_config = Config::default();
+        apply_profile_to_config(
+            &connections,
+            Some("vertex-express"),
+            &store,
+            &mut vertex_config,
+        )
+        .unwrap();
+        assert_eq!(
+            vertex_config.llm_provider,
+            LlmProvider::GoogleGeminiGenerateContent
+        );
+        assert_eq!(
+            vertex_config
+                .google_gemini_generate_content_api_key
+                .as_deref(),
+            Some("vk-secret")
         );
     }
 }

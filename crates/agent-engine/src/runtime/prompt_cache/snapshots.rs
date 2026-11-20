@@ -226,6 +226,13 @@ impl CachedDefinitionPersona {
 #[derive(Debug, Clone)]
 pub(super) struct CachedMemoryStore {
     pub(super) memory_dir: PathBuf,
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "tracked_paths stays populated at session bootstrap for fingerprint tests"
+        )
+    )]
     pub(super) tracked_paths: Vec<PathFingerprint>,
     pub(super) rendered_section: String,
 }
@@ -247,14 +254,6 @@ impl CachedMemoryStore {
             tracked_paths,
             rendered_section,
         }
-    }
-
-    pub(super) fn is_current_for(&self, memory_dir: &Path) -> bool {
-        self.memory_dir == memory_dir
-            && self
-                .tracked_paths
-                .iter()
-                .all(PathFingerprint::matches_current)
     }
 }
 

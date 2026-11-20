@@ -165,6 +165,7 @@
             parts: vec![ContentPart::text("test input")],
             context: Some(alan_agent_protocol::TurnContext {
                 reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::High),
+                ..alan_agent_protocol::TurnContext::default()
             }),
         };
 
@@ -518,4 +519,166 @@
             .expect("expected persisted runtime confirmation checkpoint");
         assert_eq!(checkpoint.choice.as_deref(), Some("rejected"));
         assert!(checkpoint.knowledge_root.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_session_tool_allowlist_allows_matching_escalation_for_process_lifetime_only() {
+        use crate::agent_machine::NormalizedToolCall;
+        use crate::runtime::tool_authorization::{
+            ToolAuthorizationOutcome, ToolAuthorizationRequest, authorize_tool_call,
+        };
+
+        let mut state = create_test_state();
+        let (environment, _shell) = namespace_environment_with_live_process_for_test().await;
+        state.environment = environment;
+        let cancel = CancellationToken::new();
+        let args_same = json!({"command": "curl https://example.com"});
+        let args_same_pattern = json!({"command": "curl https://example.com/status"});
+        let args_other = json!({"command": "wget https://other.example"});
+
+        let call_1 = NormalizedToolCall {
+            id: "call_net_1".to_string(),
+            name: "bash".to_string(),
+            arguments: args_same.clone(),
+        };
+        let events = std::sync::Mutex::new(Vec::new());
+        let mut emit = |event: Event| {
+            events.lock().unwrap().push(event);
+            async {}
+        };
+
+        let first = authorize_tool_call(
+            super::super::transition::tool_authorization_runtime(&mut state),
+            ToolAuthorizationRequest {
+                explicit_command: true,
+                tool_call: &call_1,
+                tool_arguments: &args_same,
+                tool_capability: alan_agent_protocol::ToolCapability::Network,
+                current_tool_cwd: None,
+                allow_approved_tool_escalation_execution: false,
+                cancel: &cancel,
+            },
+            &mut emit,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(first, ToolAuthorizationOutcome::PauseTurn));
+
+        let pending = state
+            .machine
+            .pending_confirmation()
+            .expect("expected confirmation for network escalation");
+        assert!(
+            pending.options.contains(&"allow_session".to_string()),
+            "expected allow_session option in {:?}",
+            pending.options
+        );
+
+        let yielded_request_id = events
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                Event::Yield { request_id, .. } => Some(request_id.clone()),
+                _ => None,
+            })
+            .expect("expected Yield event for network escalation");
+
+        let resume = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Resume {
+                request_id: yielded_request_id,
+                content: vec![ContentPart::structured(json!({"choice": "allow_session"}))],
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(
+                resume,
+                RuntimeOpAction::ReplayApprovedToolCall {
+                    approved_tool_escalation_call_id: Some(ref id),
+                    ..
+                } if id == "call_net_1"
+            ),
+            "unexpected resume: {resume:?}, events: {:?}",
+            events.lock().unwrap()
+        );
+
+        let call_2 = NormalizedToolCall {
+            id: "call_net_2".to_string(),
+            name: "bash".to_string(),
+            arguments: args_same_pattern.clone(),
+        };
+        let second = authorize_tool_call(
+            super::super::transition::tool_authorization_runtime(&mut state),
+            ToolAuthorizationRequest {
+                explicit_command: true,
+                tool_call: &call_2,
+                tool_arguments: &args_same_pattern,
+                tool_capability: alan_agent_protocol::ToolCapability::Network,
+                current_tool_cwd: None,
+                allow_approved_tool_escalation_execution: false,
+                cancel: &cancel,
+            },
+            &mut emit,
+        )
+        .await
+        .unwrap();
+        match second {
+            ToolAuthorizationOutcome::Authorized { audit } => {
+                assert_eq!(audit.policy_source, "session_allowlist");
+            }
+            other => panic!("expected session allowlist auto-allow, got {other:?}"),
+        }
+
+        let call_3 = NormalizedToolCall {
+            id: "call_net_3".to_string(),
+            name: "bash".to_string(),
+            arguments: args_other.clone(),
+        };
+        let different = authorize_tool_call(
+            super::super::transition::tool_authorization_runtime(&mut state),
+            ToolAuthorizationRequest {
+                explicit_command: true,
+                tool_call: &call_3,
+                tool_arguments: &args_other,
+                tool_capability: alan_agent_protocol::ToolCapability::Network,
+                current_tool_cwd: None,
+                allow_approved_tool_escalation_execution: false,
+                cancel: &cancel,
+            },
+            &mut emit,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(different, ToolAuthorizationOutcome::PauseTurn),
+            "different command must not match prior session pattern: {different:?}"
+        );
+
+        // Fresh AgentMachine (new Process) must start with an empty session allowlist.
+        let mut fresh_state = create_test_state();
+        let after_restart = authorize_tool_call(
+            super::super::transition::tool_authorization_runtime(&mut fresh_state),
+            ToolAuthorizationRequest {
+                explicit_command: true,
+                tool_call: &call_1,
+                tool_arguments: &args_same,
+                tool_capability: alan_agent_protocol::ToolCapability::Network,
+                current_tool_cwd: None,
+                allow_approved_tool_escalation_execution: false,
+                cancel: &cancel,
+            },
+            &mut emit,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(after_restart, ToolAuthorizationOutcome::PauseTurn),
+            "session allowlist must never persist to a fresh Process: {after_restart:?}"
+        );
     }

@@ -3,6 +3,7 @@ name = "alan-agent-engine"
 description = "Core runtime for the alan agent"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 alan-ap = { path = "../ap" }
@@ -37,9 +38,8 @@ rand.workspace = true
 # SSE streaming
 eventsource-stream.workspace = true
 futures-core.workspace = true
-pin-utils.workspace = true
-tree-sitter = "0.27"
-tree-sitter-bash = "0.25.1"
+tree-sitter = { version = "0.27", optional = true }
+tree-sitter-bash = { version = "0.25.1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
@@ -51,7 +51,7 @@ libc.workspace = true
 alan-kernel = { path = "../kernel" }
 tracing-subscriber.workspace = true
 tempfile.workspace = true
-alan-llm = { workspace = true, features = ["mock"] }
+alan-llm = { workspace = true, features = ["mock", "all-providers"] }
 alan-agentfs = { path = "../agentfs" }
 alan-llmfs = { path = "../llmfs" }
 alan-routefs.workspace = true
@@ -60,5 +60,6 @@ alan-shell = { path = "../shell" }
 tokio = { workspace = true, features = ["test-util"] }
 
 [features]
-default = []
+default = ["tree-sitter-sandbox"]
+tree-sitter-sandbox = ["dep:tree-sitter", "dep:tree-sitter-bash"]
 mock = ["alan-llm/mock"]

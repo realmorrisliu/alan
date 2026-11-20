@@ -13,8 +13,12 @@ pub(crate) use submission::{
 mod namespace_environment;
 pub(crate) use namespace_environment::read_action_evidence;
 pub(crate) mod owner_work;
+mod parallel_read_tools;
+mod parallel_subagents;
 mod turn_execution;
+mod virtual_dispatch;
 use turn_execution::finalize_replayed_tool_end_turn_best_effort;
+pub use turn_execution::validate_response_schema;
 
 pub(crate) use accepted_submission::{accepts_inband_submissions, advance_accepted_submission};
 #[cfg(test)]
@@ -29,8 +33,8 @@ pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
     NamespaceGeneration, NamespaceHostMountRequests, NamespaceOperationCleanup,
     NamespaceOperationUncertainty, NamespaceProcessFiles, NamespaceTapeWriter,
-    NamespaceToolActionEvidence, NamespaceToolExecution, NamespaceToolProcessError,
-    PendingActionPublication,
+    NamespaceToolActionEvidence, NamespaceToolAuthorization, NamespaceToolExecution,
+    NamespaceToolProcessError, PendingActionPublication,
 };
 pub use namespace_environment::{
     NamespaceActionRecord, NamespaceEvaluation, NamespaceEvaluationFailure,
@@ -76,6 +80,10 @@ use super::turn_input::TurnInputBroker;
 use super::turn_support::{
     cancel_current_task, emit_streaming_chunks, normalize_tool_calls, split_text_for_typing,
 };
+#[allow(
+    unused_imports,
+    reason = "Re-exported into transition submodules via super::VirtualToolOutcome"
+)]
 use super::virtual_tool::VirtualToolOutcome;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DeferredRuntimeActionExit {
@@ -156,6 +164,10 @@ impl RuntimeLoopState {
 
     pub(crate) fn tool_execution(&self) -> NamespaceToolExecution {
         self.environment.tool_execution()
+    }
+
+    pub(crate) fn tool_authorization(&self) -> NamespaceToolAuthorization {
+        self.environment.tool_authorization()
     }
 }
 
@@ -259,87 +271,21 @@ pub(super) async fn dispatch_virtual_tool_call<E, F>(
     task_cancel: &CancellationToken,
     allow_approved_tool_escalation_execution: bool,
     emit: &mut E,
-) -> Result<super::virtual_tool::VirtualToolOutcome>
+) -> Result<VirtualToolOutcome>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let agent_files = state.agent_files();
-    let host_mount_requests = state.environment.host_mount_requests();
-    if task_cancel.is_cancelled()
-        && super::turn_support::check_turn_cancelled(
-            &mut state.machine,
-            &agent_files,
-            &host_mount_requests,
-            emit,
-            task_cancel,
-        )
-        .await?
-    {
-        return Ok(super::virtual_tool::VirtualToolOutcome::EndTurn);
-    }
-
-    match tool_call.name.as_str() {
-        "request_confirmation" => {
-            let runtime = agent_interaction_runtime(state);
-            super::interaction_tools::handle_request_confirmation(
-                runtime,
-                tool_call,
-                tool_arguments,
-                emit,
-            )
-            .await
-        }
-        "request_mount" => {
-            let runtime = mount_request_runtime(state);
-            super::mount_request_tool::handle_request_mount(
-                runtime,
-                tool_call,
-                tool_arguments,
-                emit,
-            )
-            .await
-        }
-        "request_user_input" => {
-            let runtime = agent_interaction_runtime(state);
-            super::interaction_tools::handle_request_user_input(
-                runtime,
-                tool_call,
-                tool_arguments,
-                emit,
-            )
-            .await
-        }
-        "update_plan" => {
-            let runtime = agent_interaction_runtime(state);
-            super::interaction_tools::handle_update_plan(runtime, tool_call, tool_arguments, emit)
-                .await
-        }
-        "invoke_delegated_skill" => {
-            let runtime = delegated_skill_runtime(state);
-            super::delegated_skill_tool::handle_invoke_delegated_skill(
-                runtime,
-                tool_call,
-                tool_arguments,
-                cancel,
-                task_cancel,
-                emit,
-            )
-            .await
-        }
-        "terminate_child_run" => {
-            let runtime = child_run_termination_runtime(state);
-            super::child_run_termination_tool::handle_terminate_child_run(
-                runtime,
-                tool_call,
-                tool_arguments,
-                allow_approved_tool_escalation_execution,
-                emit,
-            )
-            .await
-        }
-        _ => Ok(super::virtual_tool::VirtualToolOutcome::NotVirtual),
-    }
+    virtual_dispatch::dispatch_virtual_tool_call(
+        state,
+        tool_call,
+        tool_arguments,
+        cancel,
+        task_cancel,
+        allow_approved_tool_escalation_execution,
+        emit,
+    )
+    .await
 }
 
 pub(super) fn tool_resolution_runtime(
@@ -354,6 +300,7 @@ pub(super) fn tool_authorization_runtime(
 ) -> super::tool_authorization::ToolAuthorizationRuntime<'_> {
     let generation = state.namespace_generation();
     let agent_files = state.agent_files();
+    let authority = state.tool_authorization();
     let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
     super::tool_authorization::ToolAuthorizationRuntime::new(
         &mut state.machine,
@@ -363,6 +310,11 @@ pub(super) fn tool_authorization_runtime(
         agent_files,
         llm_request_timeout_secs,
     )
+    .with_trust_posture(state.runtime_config.trust_posture)
+    .with_guardian_profile(state.runtime_config.guardian_profile.as_deref())
+    .with_guardian_config(state.runtime_config.guardian.clone())
+    .with_authority(authority)
+    .with_tool_policy_hook(state.runtime_config.tool_policy_hook.clone())
 }
 
 pub(super) fn tool_execution_runtime(
@@ -391,6 +343,10 @@ pub(super) fn turn_memory_runtime(
         .then(|| state.core_config.memory.store_dir.clone())
         .flatten();
     let process_path = state.process_path();
+    let project_cwd = state
+        .tool_execution()
+        .default_cwd()
+        .map(|cwd| cwd.to_string_lossy().into_owned());
     let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
     super::turn_memory::TurnMemoryRuntime::new(
         &mut state.machine,
@@ -398,6 +354,7 @@ pub(super) fn turn_memory_runtime(
         process_path,
         llm_request_timeout_secs,
     )
+    .with_project_cwd(project_cwd)
 }
 
 #[cfg(test)]
@@ -520,7 +477,7 @@ where
         let operation_emit = &mut *emit;
         let result = budget
             .run(inputs.cancel, |stop| async move {
-                orchestrate_tool_call_inner(
+                Box::pin(orchestrate_tool_call_inner(
                     loop_guard,
                     operation_state,
                     tool_call,
@@ -534,7 +491,7 @@ where
                     ),
                     inputs.cancel,
                     operation_emit,
-                )
+                ))
                 .await
             })
             .await;
@@ -557,7 +514,7 @@ where
         }
         result
     } else {
-        orchestrate_tool_call_inner(
+        Box::pin(orchestrate_tool_call_inner(
             loop_guard,
             state,
             tool_call,
@@ -568,7 +525,7 @@ where
             ),
             inputs.cancel,
             emit,
-        )
+        ))
         .await
     }
 }
@@ -613,7 +570,7 @@ where
         return Ok(ToolOrchestratorOutcome::EndTurn);
     }
 
-    match dispatch_virtual_tool_call(
+    match Box::pin(dispatch_virtual_tool_call(
         state,
         tool_call,
         &tool_arguments,
@@ -621,7 +578,7 @@ where
         task_cancel,
         allow_approved_tool_escalation_execution,
         emit,
-    )
+    ))
     .await?
     {
         VirtualToolOutcome::NotVirtual => {}
@@ -657,18 +614,23 @@ where
         allow_approved_tool_escalation_execution,
         cancel: inputs.cancel,
     };
-    let tool_audit =
-        match authorize_tool_call(authorization_runtime, authorization_request, emit).await? {
-            ToolAuthorizationOutcome::Authorized { audit } => Some(audit),
-            ToolAuthorizationOutcome::Completed => {
-                return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-                    refresh_context: false,
-                });
-            }
-            ToolAuthorizationOutcome::PauseTurn => {
-                return Ok(ToolOrchestratorOutcome::PauseTurn);
-            }
-        };
+    let tool_audit = match Box::pin(authorize_tool_call(
+        authorization_runtime,
+        authorization_request,
+        emit,
+    ))
+    .await?
+    {
+        ToolAuthorizationOutcome::Authorized { audit } => Some(audit),
+        ToolAuthorizationOutcome::Completed => {
+            return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+                refresh_context: false,
+            });
+        }
+        ToolAuthorizationOutcome::PauseTurn => {
+            return Ok(ToolOrchestratorOutcome::PauseTurn);
+        }
+    };
 
     let execution_runtime = tool_execution_runtime(state);
     let execution_request = ToolExecutionRequest {
@@ -688,7 +650,13 @@ where
         allow_approved_unknown_effect_execution,
         cancel: inputs.cancel,
     };
-    match execute_allowed_tool_call(execution_runtime, execution_request, emit).await? {
+    match Box::pin(execute_allowed_tool_call(
+        execution_runtime,
+        execution_request,
+        emit,
+    ))
+    .await?
+    {
         ToolExecutionOutcome::Completed => Ok(ToolOrchestratorOutcome::ContinueToolBatch {
             refresh_context: false,
         }),
@@ -714,12 +682,57 @@ where
         approved_call_indices;
     let mut refresh_context = false;
 
-    for (idx, tool_call) in tool_calls.iter().enumerate() {
+    let mut idx = 0;
+    while idx < tool_calls.len() {
+        if let Some(step) = Box::pin(parallel_subagents::try_run_parallel_prefix(
+            loop_guard,
+            state,
+            tool_calls,
+            idx,
+            approved_call_indices,
+            inputs,
+            emit,
+        ))
+        .await?
+        {
+            match step {
+                parallel_subagents::ParallelBatchStep::Advanced {
+                    next_idx,
+                    refresh_context: batch_refresh,
+                } => {
+                    idx = next_idx;
+                    refresh_context |= batch_refresh;
+                    if handle_queued_steering_inputs(
+                        &mut state.machine,
+                        &state.environment,
+                        writer,
+                        inputs.cancel,
+                        &tool_calls[idx..],
+                        inputs.steering_broker,
+                        emit,
+                    )
+                    .await?
+                    {
+                        return Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop {
+                            refresh_context: true,
+                        });
+                    }
+                    continue;
+                }
+                parallel_subagents::ParallelBatchStep::EndTurn => {
+                    return Ok(ToolBatchOrchestratorOutcome::EndTurn {
+                        surfaces_refreshed: false,
+                    });
+                }
+            }
+        }
+
+        let tool_call = &tool_calls[idx];
         let allow_approved_unknown_effect_execution =
             approved_unknown_effect_call_index.is_some_and(|approved_index| approved_index == idx);
         let allow_approved_tool_escalation_execution =
             approved_tool_escalation_call_index.is_some_and(|approved_index| approved_index == idx);
-        let result = orchestrate_tool_call(
+        let result = Box::pin(orchestrate_tool_call(
             loop_guard,
             state,
             tool_call,
@@ -727,7 +740,7 @@ where
             allow_approved_unknown_effect_execution,
             allow_approved_tool_escalation_execution,
             emit,
-        )
+        ))
         .await;
         let outcome = match result {
             Err(error) if error.is::<crate::agent_machine::task_budget::InheritedExhaustion>() => {
@@ -782,12 +795,13 @@ where
                 refresh_context: call_refresh,
             } => {
                 refresh_context |= call_refresh;
+                idx += 1;
                 if handle_queued_steering_inputs(
                     &mut state.machine,
                     &state.environment,
                     writer,
                     inputs.cancel,
-                    &tool_calls[idx + 1..],
+                    &tool_calls[idx..],
                     inputs.steering_broker,
                     emit,
                 )

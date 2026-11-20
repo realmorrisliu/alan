@@ -19,7 +19,7 @@ async fn terminal_receipt_refreshes_hint_in_either_queue_event_order() {
                         Some(UiQueueSnapshot {
                             known: true,
                             revision: 1,
-                            active_submission_ids: vec!["q".into()],
+                            pending_submission_ids: vec!["q".into()],
                             ..Default::default()
                         }),
                     );
@@ -30,7 +30,7 @@ async fn terminal_receipt_refreshes_hint_in_either_queue_event_order() {
                     } else {
                         app.refresh_local_input_hint("q", &owner);
                     }
-                    assert!(app.notice.as_ref().unwrap().contains("active"));
+                    assert!(app.notice.as_ref().unwrap().contains("queued"));
                     app.composer.set_text("new draft 🧭");
                     let mut pending = VecDeque::from([PendingRootAgentTurn {
                         input: "body".into(),

@@ -62,10 +62,20 @@ async fn managed_none_catalog_exact_restore_preserves_full_authority() {
             profile: "managed".into(),
             namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
             evaluator: None,
+            guardian_profile: None,
         };
         let captured = authority.capture_initial().await.unwrap().unwrap();
         assert!(captured.config.effective_model_info().is_none());
-        assert!(authority.catalog().await.is_err());
+        let has_static_catalog = matches!(
+            provider,
+            ProviderId::GoogleGeminiGenerateContent | ProviderId::AnthropicMessages
+        );
+        if has_static_catalog {
+            let static_catalog = authority.catalog().await.unwrap();
+            assert!(!static_catalog["models"].as_array().unwrap().is_empty());
+        } else {
+            assert!(authority.catalog().await.is_err());
+        }
         assert!(
             authority
                 .capture(Some("arbitrary-new-model"))
@@ -81,7 +91,11 @@ async fn managed_none_catalog_exact_restore_preserves_full_authority() {
             captured.identity,
             "unchanged managed {provider:?} capture must restore"
         );
-        assert!(authority.catalog().await.is_err());
+        if has_static_catalog {
+            assert!(authority.catalog().await.is_ok());
+        } else {
+            assert!(authority.catalog().await.is_err());
+        }
         for field in ["model", "provider", "credential", "revision", "profile"] {
             let mut wrong = captured.identity.clone();
             match field {
@@ -151,6 +165,7 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
         profile: "injected".into(),
         namespace: ns.clone(),
         evaluator: None,
+        guardian_profile: None,
     };
     let captured = injected.capture_initial().await.unwrap().unwrap();
     assert_eq!(captured.identity.revision, "injected-namespace-callable");
@@ -174,6 +189,7 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
         profile: "missing".into(),
         namespace: ns.clone(),
         evaluator: None,
+        guardian_profile: None,
     };
     assert!(missing.capture_initial().await.unwrap().is_none());
     assert!(missing.capture(None).await.is_err());
@@ -210,6 +226,7 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
         profile: "main".into(),
         namespace: ns,
         evaluator: None,
+        guardian_profile: None,
     };
     let captured = managed.capture_initial().await.unwrap().unwrap();
     assert_ne!(captured.identity.revision, "injected-namespace-callable");
@@ -301,6 +318,7 @@ async fn catalog_observes_published_authority_without_recapturing_on_idle_polls(
         profile: "main".into(),
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
+        guardian_profile: None,
     };
     let published = authority.catalog().await.unwrap();
     let bytes = std::fs::read(&bindings.metadata_path).unwrap();
@@ -496,6 +514,7 @@ async fn evaluation_capture_checks_callable_capability_and_preserves_generation_
                 profile: "main".into(),
                 namespace: namespace.clone(),
                 evaluator: None,
+                guardian_profile: None,
             };
             assert!(authority.capture_evaluation("eval").await.is_err());
             let granted = ProcessConnection {

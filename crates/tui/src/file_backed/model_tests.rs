@@ -381,7 +381,7 @@ fn quiet_composer_discloses_only_relevant_context_and_attention() {
     app.namespace_cwd = "/mnt/project/src".into();
     assert_eq!(
         app.context_line(80).to_string(),
-        "alan · read-only · gpt-6.1-sol / high"
+        "● alan · read-only · gpt-6.1-sol / high"
     );
     assert!(super::layout::attention_line(&app, 0).is_none());
     app.handle_command("/status");
@@ -398,7 +398,7 @@ fn quiet_composer_discloses_only_relevant_context_and_attention() {
     app.last_input_failed = true;
     assert_eq!(
         super::layout::attention_line(&app, 0).unwrap().to_string(),
-        "Failed"
+        "● Failed"
     );
     app.last_input_failed = false;
     app.queue.apply("/agent/1", None);

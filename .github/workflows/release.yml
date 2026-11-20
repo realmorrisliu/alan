@@ -1,0 +1,421 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to verify/package (e.g. v0.1.0; defaults to v<Cargo workspace version>)"
+        type: string
+        required: false
+        default: ""
+      dry_run:
+        description: "Run build, manifest, and checksum checks without publishing a GitHub Release"
+        type: boolean
+        required: true
+        default: true
+      sign_macos:
+        description: "Sign and notarize macOS binaries during a dry-run (always required for tag pushes and published releases)"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  prepare:
+    name: Validate Version & Tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      should_publish: ${{ steps.meta.outputs.should_publish }}
+      should_sign_macos: ${{ steps.meta.outputs.should_sign_macos }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve and validate release metadata
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_SIGN_MACOS: ${{ inputs.sign_macos }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import tomllib
+
+          cargo = tomllib.loads(pathlib.Path("Cargo.toml").read_text(encoding="utf-8"))
+          version = cargo["workspace"]["package"]["version"].strip()
+          if not version or version.startswith("v"):
+              raise SystemExit(f"Invalid Cargo.toml workspace.package.version: {version!r}")
+
+          expected_tag = f"v{version}"
+          event_name = os.environ["EVENT_NAME"]
+          ref = os.environ["REF"]
+          ref_name = os.environ["REF_NAME"]
+          input_tag = os.environ.get("INPUT_TAG", "").strip()
+          dry_run = os.environ.get("INPUT_DRY_RUN", "true").lower() == "true"
+          sign_macos_input = os.environ.get("INPUT_SIGN_MACOS", "false").lower() == "true"
+
+          if event_name == "push" and ref.startswith("refs/tags/v"):
+              tag = ref_name
+              should_publish = True
+              should_sign_macos = True
+          elif event_name == "workflow_dispatch":
+              if input_tag:
+                  tag = input_tag
+              elif ref.startswith("refs/tags/v"):
+                  tag = ref_name
+              else:
+                  tag = expected_tag
+              should_publish = not dry_run
+              should_sign_macos = should_publish or sign_macos_input
+          else:
+              raise SystemExit(f"Unsupported trigger event/ref: {event_name} {ref}")
+
+          if tag != expected_tag:
+              raise SystemExit(
+                  f"Version/tag mismatch: resolved tag {tag!r} != expected {expected_tag!r} from Cargo.toml"
+              )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"version={version}\n")
+              fh.write(f"tag={tag}\n")
+              fh.write(f"should_publish={'true' if should_publish else 'false'}\n")
+              fh.write(f"should_sign_macos={'true' if should_sign_macos else 'false'}\n")
+          print(
+              f"Resolved release version={version} tag={tag} "
+              f"should_publish={should_publish} should_sign_macos={should_sign_macos}"
+          )
+          PY
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            platform: macos
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            platform: macos
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            platform: linux
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            platform: linux
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Require Apple signing and notarization secrets
+        if: matrix.platform == 'macos' && needs.prepare.outputs.should_sign_macos == 'true'
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_P12_PASSWORD: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in MACOS_CERT_P12_BASE64 MACOS_CERT_P12_PASSWORD APPLE_TEAM_ID ASC_API_KEY_P8 ASC_API_KEY_ID ASC_API_ISSUER_ID; do
+            eval "value=\${$name-}"
+            if [ -z "$value" ]; then
+              echo "missing secret: $name" >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+          cache-bin: false
+
+      - name: Install Linux ARM64 cross-compiler
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Build, sign, notarize, and package (macOS)
+        if: matrix.platform == 'macos' && needs.prepare.outputs.should_sign_macos == 'true'
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_P12_PASSWORD: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alan-signing"
+          mkdir -p "$work"
+          keychain="$work/signing.keychain-db"
+          p12="$work/cert.p12"
+          p8="$work/AuthKey.p8"
+          pass="$(openssl rand -base64 32)"
+          cleanup() {
+            security delete-keychain "$keychain" >/dev/null 2>&1 || true
+            rm -f "$p12" "$p8" "$work/import.err"
+          }
+          trap cleanup EXIT
+
+          printf '%s' "$MACOS_CERT_P12_BASE64" | tr -d '[:space:]' | base64 --decode > "$p12"
+          magic="$(xxd -p -l 1 "$p12" || true)"
+          if [ "$magic" != "30" ]; then
+            echo "MACOS_CERT_P12_BASE64 did not decode to a PKCS#12 certificate" >&2
+            exit 1
+          fi
+
+          if printf '%s' "$ASC_API_KEY_P8" | grep -q "BEGIN "; then
+            printf '%s\n' "$ASC_API_KEY_P8" > "$p8"
+          else
+            printf '%s' "$ASC_API_KEY_P8" | tr -d '[:space:]' | base64 --decode > "$p8"
+          fi
+          if ! grep -q "PRIVATE KEY" "$p8"; then
+            echo "ASC_API_KEY_P8 is not a PEM private key" >&2
+            exit 1
+          fi
+          chmod 600 "$p12" "$p8"
+
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          set +e
+          security import "$p12" -k "$keychain" -P "$MACOS_CERT_P12_PASSWORD" -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security >/dev/null 2>"$work/import.err"
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            trimmed="$(printf '%s' "$MACOS_CERT_P12_PASSWORD" | sed -e 's/[[:space:]]*$//')"
+            security import "$p12" -k "$keychain" -P "$trimmed" -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security >/dev/null 2>"$work/import.err"
+            status=$?
+          fi
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "could not import MACOS_CERT_P12_BASE64 with MACOS_CERT_P12_PASSWORD" >&2
+            exit 1
+          fi
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pass" "$keychain" >/dev/null
+
+          existing_keychains=()
+          while IFS= read -r kc; do
+            [ -n "$kc" ] && existing_keychains+=("$kc")
+          done < <(security list-keychains -d user | tr -d '"' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+          security list-keychains -d user -s "$keychain" "${existing_keychains[@]}"
+
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n 1)"
+          if [ -z "$identity" ]; then
+            echo "no Developer ID Application identity in the imported certificate" >&2
+            exit 1
+          fi
+          echo "signing identity: $identity"
+          if ! printf '%s' "$identity" | grep -q "($APPLE_TEAM_ID)"; then
+            echo "imported identity is not for APPLE_TEAM_ID" >&2
+            exit 1
+          fi
+
+          export ALAN_TARGET="$RELEASE_TARGET"
+          export ALAN_RELEASE_VERSION="$RELEASE_VERSION"
+          export ALAN_RELEASE_OUT_DIR="$PWD/dist"
+          export ALAN_SIGN_IDENTITY="$identity"
+          export ALAN_SIGN_KEYCHAIN="$keychain"
+          export ALAN_NOTARY_KEY="$p8"
+          export ALAN_NOTARY_KEY_ID="$ASC_API_KEY_ID"
+          export ALAN_NOTARY_ISSUER="$ASC_API_ISSUER_ID"
+          export ALAN_SIGN_PROOF_OUT="$PWD/dist/signing-proof-${RELEASE_TARGET}.txt"
+          export ALAN_NOTARY_JSON_OUT="$PWD/dist/notary-${RELEASE_TARGET}.json"
+          export ALAN_REQUIRE_NOTARIZE=1
+          ./scripts/assemble-cli-release.sh
+
+      - name: Build and package (unsigned / Linux)
+        if: matrix.platform != 'macos' || needs.prepare.outputs.should_sign_macos != 'true'
+        env:
+          ALAN_TARGET: ${{ matrix.target }}
+          ALAN_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          ALAN_RELEASE_OUT_DIR: ${{ github.workspace }}/dist
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+        run: ./scripts/assemble-cli-release.sh
+
+      - name: Verify notarization acceptance (macOS)
+        if: matrix.platform == 'macos' && needs.prepare.outputs.should_sign_macos == 'true'
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          proof="dist/signing-proof-${RELEASE_TARGET}.txt"
+          notary="dist/notary-${RELEASE_TARGET}.json"
+          test -f "$proof"
+          test -f "$notary"
+          grep -F -q "signed=true" "$proof"
+          grep -F -q "notarized=true" "$proof"
+          python3 - "$notary" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          raw = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+          data = json.loads(raw[raw.find("{"):])
+          print("notary id=" + str(data.get("id")))
+          print("notary status=" + str(data.get("status")))
+          if data.get("status") != "Accepted":
+              sys.exit(1)
+          PY
+
+      - name: Verify packaged archive and checksum
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          asset="alan-${RELEASE_VERSION}-${RELEASE_TARGET}.tar.gz"
+          test -f "dist/${asset}"
+          test -f "dist/${asset}.sha256"
+          if command -v shasum >/dev/null 2>&1; then
+            (cd dist && shasum -a 256 -c "${asset}.sha256")
+          else
+            (cd dist && sha256sum -c "${asset}.sha256")
+          fi
+          listing="$(tar -tzf "dist/${asset}")"
+          echo "$listing"
+          printf '%s\n' "$listing" | grep -F -q "./alan"
+          printf '%s\n' "$listing" | grep -F -q "./manifest.json"
+          if printf '%s\n' "$listing" | grep -Eq 'alan-dev|alan-os-host'; then
+            echo "forbidden legacy executable found in archive" >&2
+            exit 1
+          fi
+          if [ "${RELEASE_TARGET}" = "x86_64-unknown-linux-gnu" ] || [ "${RELEASE_TARGET}" = "aarch64-apple-darwin" ]; then
+            smoke_dir="$(mktemp -d)"
+            tar -xzf "dist/${asset}" -C "$smoke_dir" ./alan
+            "$smoke_dir/alan" --version
+            rm -rf "$smoke_dir"
+          fi
+
+      - name: Upload target release artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: warn
+
+  release:
+    name: Manifest & Publish Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download built target artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: dist-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate latest.json and checksums.txt
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          REPO: ${{ github.repository }}
+          SHOULD_SIGN_MACOS: ${{ needs.prepare.outputs.should_sign_macos }}
+        run: |
+          set -euo pipefail
+          extra_flags=()
+          if [ "$SHOULD_SIGN_MACOS" = "true" ]; then
+            extra_flags+=(--require-apple-notarized)
+          fi
+          python3 scripts/generate-release-manifest.py \
+            --assets-dir release-assets \
+            --version "$VERSION" \
+            --tag "$TAG" \
+            --repo "$REPO" \
+            --verify-archives \
+            "${extra_flags[@]}"
+          (cd release-assets && sha256sum -c checksums.txt)
+          cat release-assets/latest.json
+          cat release-assets/checksums.txt
+
+      - name: Upload combined release bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: alan-${{ needs.prepare.outputs.tag }}-release-bundle
+          path: release-assets/
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: needs.prepare.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(
+            release-assets/alan-"${VERSION}"-*.tar.gz
+            release-assets/alan-"${VERSION}"-*.tar.gz.sha256
+            release-assets/latest.json
+            release-assets/checksums.txt
+            release-assets/signing-proof-*.txt
+            release-assets/notary-*.json
+          )
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No release assets found to publish" >&2
+            exit 1
+          fi
+          prerelease_flags=()
+          edit_prerelease_flags=(--prerelease=false)
+          if [[ "$VERSION" == *-* ]]; then
+            prerelease_flags+=(--prerelease)
+            edit_prerelease_flags=(--prerelease=true)
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            gh release edit "$TAG" --draft=false "${edit_prerelease_flags[@]}"
+          else
+            create_flags=(--title "$TAG" --generate-notes)
+            if [ "$EVENT_NAME" = "push" ]; then
+              create_flags+=(--verify-tag)
+            else
+              create_flags+=(--target "$TARGET_SHA")
+            fi
+            gh release create "$TAG" "${assets[@]}" "${create_flags[@]}" "${prerelease_flags[@]}"
+          fi

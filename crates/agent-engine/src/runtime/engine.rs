@@ -34,58 +34,15 @@ mod model_controls;
 mod model_status;
 #[path = "engine_queue_controls.rs"]
 mod queue_controls;
+#[path = "engine_session_controls.rs"]
+mod session_controls;
+use queue_controls::{
+    push_submission_ahead_of_deferred, requeue_leftover_inband_submissions,
+    should_requeue_deferred_action,
+};
 
 #[path = "engine_monitor.rs"]
 mod monitor;
-
-/// Return unconsumed steering input to the Machine-owned ordinary queue.
-async fn requeue_leftover_inband_submissions(
-    broker: &TurnInputBroker,
-    machine: &mut AgentMachine,
-    queued_submissions: &Arc<Mutex<MachineInputQueue>>,
-) -> usize {
-    let broker_drained = broker.drain().await;
-    let turn_drained = machine.drain_buffered_inband_submissions();
-    let count = broker_drained.len() + turn_drained.len();
-    for submission in turn_drained {
-        push_submission_ahead_of_deferred(
-            &mut queued_submissions
-                .lock()
-                .expect("input queue poisoned")
-                .pending,
-            submission,
-        );
-    }
-    for submission in broker_drained {
-        push_submission_ahead_of_deferred(
-            &mut queued_submissions
-                .lock()
-                .expect("input queue poisoned")
-                .pending,
-            submission,
-        );
-    }
-    count
-}
-
-/// Ordinary inputs precede deferred housekeeping without changing FIFO order.
-fn push_submission_ahead_of_deferred(
-    outer_queue: &mut VecDeque<QueuedRuntimeItem>,
-    submission: Submission,
-) {
-    let insertion_index = outer_queue
-        .iter()
-        .position(|item| matches!(item, QueuedRuntimeItem::Deferred(_)))
-        .unwrap_or(outer_queue.len());
-    outer_queue.insert(insertion_index, QueuedRuntimeItem::Submission(submission));
-}
-
-fn should_requeue_deferred_action(
-    requeue_requested: bool,
-    exit: DeferredRuntimeActionExit,
-) -> bool {
-    requeue_requested && matches!(exit, DeferredRuntimeActionExit::Cancelled)
-}
 
 async fn read_pending_namespace_resume_submission(
     state: &RuntimeLoopState,
@@ -403,6 +360,7 @@ fn spawn_with_prepared_runtime_environment(
             host_capabilities,
         );
     prompt_cache.set_fixed_definition_persona_section(resolved_agent_definition.persona_context);
+    prompt_cache.set_system_prompt_mode(runtime_config.system_prompt_mode.clone());
     prompt_cache.set_memory_store_dir(
         core_config
             .memory
@@ -436,7 +394,8 @@ fn spawn_with_prepared_runtime_environment(
                 return;
             }
         };
-        let startup = match initialize_agent_machine(
+        let initial_reasoning_effort = machine_request_controls.reasoning_effort();
+        let startup = match Box::pin(initialize_agent_machine(
             AgentMachineLaunchContext {
                 process_path: &process_path,
                 agent_path: &agent_path,
@@ -447,7 +406,7 @@ fn spawn_with_prepared_runtime_environment(
             runtime_config.durability_required,
             Some(rollout_cwd.as_path()),
             machine_request_controls,
-        )
+        ))
         .await
         {
             Ok(startup) => startup,
@@ -487,7 +446,9 @@ fn spawn_with_prepared_runtime_environment(
             return;
         }
         let _ = runtime_recorder.set(machine.recorder());
-        let environment = environment.with_action_recorder(machine.recorder());
+        let environment = environment
+            .with_action_recorder(machine.recorder())
+            .with_trust_posture(runtime_config.trust_posture);
         let completed_directory_ids = match recovery_rollout_path.as_ref() {
             Some(path) => match environment.agent_files().restore_actions(path).await {
                 Ok(ids) => ids,
@@ -498,7 +459,6 @@ fn spawn_with_prepared_runtime_environment(
             },
             None => HashSet::new(),
         };
-
         let mut state = RuntimeLoopState {
             machine,
             environment,
@@ -506,6 +466,10 @@ fn spawn_with_prepared_runtime_environment(
             runtime_config,
             prompt_cache,
         };
+        let initial_knowledge = state.environment.read_project_knowledge_section().await;
+        state
+            .prompt_cache
+            .set_project_knowledge_section(initial_knowledge);
         let queue_paused = state
             .machine
             .input_queue()
@@ -531,7 +495,6 @@ fn spawn_with_prepared_runtime_environment(
             let _ = ready_tx.send(Err(format!("restore task budget wait: {error:#}")));
             return;
         }
-
         if let Err(error) = super::task_budget::publish_inherited_wait(&mut state).await {
             let _ = ready_tx.send(Err(format!("restore inherited budget wait: {error:#}")));
             return;
@@ -678,6 +641,18 @@ fn spawn_with_prepared_runtime_environment(
                     {
                         continue;
                     }
+                    if Box::pin(queues.handle_session_controls(
+                        &mut state,
+                        &submission,
+                        rollouts_dir.as_deref(),
+                        Some(rollout_cwd.as_path()),
+                        &model,
+                        initial_reasoning_effort,
+                    ))
+                    .await
+                    {
+                        continue;
+                    }
                     if queues
                         .outer_queue
                         .lock()
@@ -778,17 +753,17 @@ fn spawn_with_prepared_runtime_environment(
                     let broker_for_submission = queues.active_turn_broker.clone();
                     let namespace_control = state.agent_files();
                     let namespace_heartbeat = state.agent_files();
-                    let submission_fut = advance_accepted_submission(
+                    let submission_fut = Box::pin(advance_accepted_submission(
                         &mut state,
                         submission,
                         &broker_for_submission,
                         &cancel,
-                    );
+                    ));
                     let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(5));
                     heartbeat_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
                     let monitor_stop = CancellationToken::new();
-                    let observer = async {
+                    let observer = Box::pin(async {
                         loop {
                             queues.publish_directory_actions(&namespace_control).await;
                             queues.observe_models().await;
@@ -848,7 +823,7 @@ fn spawn_with_prepared_runtime_environment(
                                 }
                             }
                         }
-                    };
+                    });
                     let outcome =
                         monitor::drive_with_monitor(submission_fut, observer, &monitor_stop).await;
                     let terminal_ui_result = match &outcome.result {
@@ -908,11 +883,12 @@ fn spawn_with_prepared_runtime_environment(
                     let mut requeue_if_cancelled = false;
                     let cancel = CancellationToken::new();
                     let namespace_control = state.agent_files();
-                    let action_fut =
-                        run_deferred_runtime_action_with_cancel(&mut state, action, &cancel);
+                    let action_fut = Box::pin(run_deferred_runtime_action_with_cancel(
+                        &mut state, action, &cancel,
+                    ));
 
                     let monitor_stop = CancellationToken::new();
-                    let observer = async {
+                    let observer = Box::pin(async {
                         loop {
                             queues.publish_directory_actions(&namespace_control).await;
                             queues.observe_models().await;
@@ -965,7 +941,7 @@ fn spawn_with_prepared_runtime_environment(
                                 }
                             }
                         }
-                    };
+                    });
                     let exit =
                         monitor::drive_with_monitor(action_fut, observer, &monitor_stop).await;
                     queues.deferred_model = None;

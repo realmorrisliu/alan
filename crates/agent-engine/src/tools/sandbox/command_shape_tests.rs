@@ -17,10 +17,11 @@ async fn quoted_search_filter_works_with_read_only_mount_without_enabling_shell_
         host_path: temp.path().to_path_buf(),
         access: ReifiedMountAccess::ReadOnly,
     }]);
-    for sandbox in [
-        Sandbox::from_spec(spec.clone()),
-        Sandbox::from_spec_with_backend(spec, crate::tools::SandboxBackendKind::HostMountPathGuard),
-    ] {
+    let path_guard = Sandbox::from_spec_with_backend(
+        spec.clone(),
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
+    );
+    for sandbox in [Sandbox::from_spec(spec.clone()), path_guard.clone()] {
         let found = sandbox
             .exec_with_timeout_and_capability(
                 "find . -name '*.rs'",
@@ -32,16 +33,31 @@ async fn quoted_search_filter_works_with_read_only_mount_without_enabling_shell_
             .unwrap();
         assert_eq!(found.exit_code, 0, "{}", found.stderr);
         assert_eq!(found.stdout.trim(), "./fixture.rs");
-        let rejected = sandbox
+    }
+    let rejected = path_guard
+        .exec_with_timeout_and_capability(
+            "find . -name *.rs",
+            temp.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap_err();
+    assert!(rejected.to_string().contains("glob expansion"));
+    if cfg!(target_os = "macos") {
+        let seatbelt =
+            Sandbox::from_spec_with_backend(spec, crate::tools::SandboxBackendKind::Seatbelt);
+        let globbed = seatbelt
             .exec_with_timeout_and_capability(
-                "find . -name *.rs",
+                "echo *.rs",
                 temp.path(),
                 None,
                 Some(alan_agent_protocol::ToolCapability::Read),
             )
             .await
-            .unwrap_err();
-        assert!(rejected.to_string().contains("glob expansion"));
+            .unwrap();
+        assert_eq!(globbed.exit_code, 0, "{}", globbed.stderr);
+        assert_eq!(globbed.stdout.trim(), "fixture.rs");
     }
 }
 

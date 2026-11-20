@@ -75,6 +75,8 @@ pub(crate) struct PromptAssemblyCache {
     definition_persona_dirs: Vec<PathBuf>,
     fixed_definition_persona_section: Option<String>,
     memory_store_dir: Option<PathBuf>,
+    project_knowledge_section: Option<String>,
+    system_prompt_mode: crate::SystemPromptMode,
     host_capabilities: SkillHostCapabilities,
     pub(crate) skill_publication: alan_agent_protocol::UiSkillSnapshot,
     skills_snapshot: Option<CachedSkillsRegistry>,
@@ -92,6 +94,8 @@ impl PromptAssemblyCache {
             definition_persona_dirs,
             fixed_definition_persona_section: None,
             memory_store_dir: None,
+            project_knowledge_section: None,
+            system_prompt_mode: crate::SystemPromptMode::Append,
             host_capabilities: SkillHostCapabilities::default(),
             skill_publication: Default::default(),
             skills_snapshot: None,
@@ -127,6 +131,8 @@ impl PromptAssemblyCache {
             definition_persona_dirs,
             fixed_definition_persona_section: None,
             memory_store_dir: None,
+            project_knowledge_section: None,
+            system_prompt_mode: crate::SystemPromptMode::Append,
             host_capabilities,
             skill_publication: Default::default(),
             skills_snapshot: None,
@@ -145,6 +151,24 @@ impl PromptAssemblyCache {
             self.memory_store_dir = memory_store_dir;
             self.memory_store_snapshot = None;
         }
+    }
+
+    pub(crate) fn set_project_knowledge_section(&mut self, section: Option<String>) {
+        self.project_knowledge_section = section;
+    }
+
+    pub(crate) fn set_system_prompt_mode(&mut self, mode: crate::SystemPromptMode) {
+        self.system_prompt_mode = mode;
+    }
+
+    /// Return the current cached `## Memory Store Bootstrap` section without rebuilding skills.
+    pub(crate) fn current_memory_bootstrap_section(&mut self) -> Option<String> {
+        self.memory_store_section_with_cache().0
+    }
+
+    /// Clear the session-bootstrapped Memory Store snapshot so the next session reloads it.
+    pub(crate) fn reset_memory_bootstrap(&mut self) {
+        self.memory_store_snapshot = None;
     }
 
     #[cfg(test)]
@@ -183,10 +207,12 @@ impl PromptAssemblyCache {
         let (domain_prompt, active_skills, skills_cache_hit) =
             self.domain_prompt_with_cache(user_input);
         let (context_sections, persona_cache_hit) = self.process_context_sections_with_cache();
-        let system_prompt = prompts::build_agent_system_prompt_with_sections(
+        let system_prompt = prompts::build_agent_system_prompt_with_mode(
+            &self.system_prompt_mode,
             &domain_prompt,
             context_sections.definition_persona_section.as_deref(),
             context_sections.memory_store_section.as_deref(),
+            self.project_knowledge_section.as_deref(),
         );
 
         self.metrics
@@ -221,10 +247,12 @@ impl PromptAssemblyCache {
         let (domain_prompt, active_skills, skills_cache_hit) =
             self.domain_prompt_with_active_skills_cache(active_skills, user_input);
         let (context_sections, persona_cache_hit) = self.process_context_sections_with_cache();
-        let system_prompt = prompts::build_agent_system_prompt_with_sections(
+        let system_prompt = prompts::build_agent_system_prompt_with_mode(
+            &self.system_prompt_mode,
             &domain_prompt,
             context_sections.definition_persona_section.as_deref(),
             context_sections.memory_store_section.as_deref(),
+            self.project_knowledge_section.as_deref(),
         );
 
         self.metrics
@@ -415,10 +443,13 @@ impl PromptAssemblyCache {
             return (None, true);
         }
 
+        // Keep the session's initial Memory Store Bootstrap snapshot static across turns
+        // so turn-end writes to `handoffs/LATEST.md` and `daily/*.md` do not bust the
+        // system prompt prefix cache; dynamic recall handles mid-session updates instead.
         let cache_hit = self
             .memory_store_snapshot
             .as_ref()
-            .is_some_and(|snapshot| snapshot.is_current_for(memory_dir));
+            .is_some_and(|snapshot| snapshot.memory_dir == memory_dir);
         if !cache_hit {
             self.memory_store_snapshot = Some(CachedMemoryStore::load(memory_dir));
         }

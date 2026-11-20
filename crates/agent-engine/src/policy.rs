@@ -7,6 +7,12 @@ use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
+pub mod delegation;
+pub mod trust;
+
+pub use delegation::{GitPushDelegationScope, is_destructive_push_flag, match_git_push_delegation};
+pub use trust::{TrustPosture, TrustPostureError};
+
 /// Policy decision action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

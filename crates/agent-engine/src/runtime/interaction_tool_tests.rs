@@ -71,7 +71,10 @@ fn test_parse_confirmation_request_default_options() {
 
     let pending = result.unwrap();
     assert_eq!(pending.checkpoint_id, "call_1");
-    assert_eq!(pending.options, vec!["approve", "modify", "reject"]);
+    assert_eq!(
+        pending.options,
+        vec!["approve", "allow_session", "modify", "reject"]
+    );
 }
 
 #[test]

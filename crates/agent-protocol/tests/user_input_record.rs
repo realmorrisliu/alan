@@ -57,6 +57,25 @@ fn invalid_records_never_fall_back_to_legacy_prose() {
 }
 
 #[test]
+fn records_preserve_attachment_parts_even_with_empty_body() {
+    use alan_agent_protocol::ContentPart;
+    let attachment = ContentPart::Attachment {
+        hash: "deadbeef".to_string(),
+        mime_type: "image/png".to_string(),
+        metadata: serde_json::json!({ "data": "aGVsbG8=" }),
+    };
+    for body in ["describe this", ""] {
+        let record = UserInputRecord::new(InputIntent::Agent, InputMode::FollowUp, body)
+            .with_parts(vec![attachment.clone()]);
+        let encoded = record.encode_payload().unwrap();
+        assert_eq!(
+            UserInputRecord::decode_payload(&encoded).unwrap(),
+            Some(record)
+        );
+    }
+}
+
+#[test]
 fn submission_intent_round_trips_and_legacy_submissions_default_to_agent() {
     use alan_agent_protocol::{ContentPart, Op, Submission};
     let mut submission = Submission::new(Op::Input {

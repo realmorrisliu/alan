@@ -101,6 +101,10 @@ async fn hydrated_runtime_error_keeps_history_without_a_duplicate_footer() {
 fn queue_completion_preserves_runtime_notice_with_identical_text() {
     use alan_agent_protocol::{InputIntent, UiNoticeKind, UiNoticeSnapshot, UiQueueSnapshot};
     let mut app = FileBackedApp::new("/agent/1".into());
+    app.queue.apply("/agent/1", None);
+    app.track_local_input("q", "/agent/1".into(), "body".into(), InputIntent::Agent);
+    app.show_submission_sent("q");
+    let text = app.notice.as_deref().unwrap().to_owned();
     app.queue.apply(
         "/agent/1",
         Some(UiQueueSnapshot {
@@ -110,9 +114,6 @@ fn queue_completion_preserves_runtime_notice_with_identical_text() {
             ..Default::default()
         }),
     );
-    app.track_local_input("q", "/agent/1".into(), "body".into(), InputIntent::Agent);
-    app.show_submission_sent("q");
-    let text = app.notice.as_deref().unwrap().to_owned();
     app.apply_ui_notice_snapshot(UiNoticeSnapshot::new(UiNoticeKind::Warning, &text));
     app.refresh_local_input_hint("q", "/agent/1");
     assert_eq!(app.notice.as_ref().unwrap().kind, UiNoticeKind::Warning);
@@ -127,12 +128,13 @@ fn notice_severity_survives_hydration_and_layout_without_role_labels() {
     let mut app = FileBackedApp::new("/agent/1".into());
     app.composer.set_text("draft 中文😀");
     let cursor = app.composer.cursor();
+    let theme = crate::theme::Theme::default();
     for (kind, prefix, color) in [
-        (UiNoticeKind::Error, "Error · ", Color::Red),
-        (UiNoticeKind::Warning, "Warning · ", Color::Yellow),
-        (UiNoticeKind::Compaction, "· ", Color::DarkGray),
-        (UiNoticeKind::Rollback, "· ", Color::DarkGray),
-        (UiNoticeKind::MemoryFlush, "· ", Color::DarkGray),
+        (UiNoticeKind::Error, "Error · ", theme.status_block),
+        (UiNoticeKind::Warning, "Warning · ", theme.status_wait),
+        (UiNoticeKind::Compaction, "· ", theme.muted),
+        (UiNoticeKind::Rollback, "· ", theme.muted),
+        (UiNoticeKind::MemoryFlush, "· ", theme.muted),
     ] {
         app.apply_ui_notice_snapshot(UiNoticeSnapshot::new(kind, "server> ready; a > b"));
         for width in [48, 80, 120] {
@@ -259,7 +261,10 @@ fn paused_status_model_override_owns_narrow_color() {
     let mut app = FileBackedApp::new("/agent/root".into());
     crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
     app.model_chooser.pending = Some(("/agent/1".into(), "B".into()));
-    assert_eq!(attention_line(&app, 0).unwrap().style.fg, Some(Color::Cyan));
+    assert_eq!(
+        attention_line(&app, 0).unwrap().style.fg,
+        Some(crate::theme::Theme::default().accent)
+    );
     for uncertain in [false, true] {
         if uncertain {
             app.model_chooser.uncertain = Some(("/agent/1".into(), "B".into()));
@@ -279,7 +284,10 @@ fn paused_status_model_override_owns_narrow_color() {
             }));
         }
     }
-    assert_eq!(attention_line(&app, 0).unwrap().style.fg, Some(Color::Red));
+    assert_eq!(
+        attention_line(&app, 0).unwrap().style.fg,
+        Some(crate::theme::Theme::default().status_block)
+    );
 }
 
 #[test]

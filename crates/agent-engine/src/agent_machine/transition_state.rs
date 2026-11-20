@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use super::AgentMachine;
+use super::session_allowlist::SessionToolAllowlist;
 use crate::approval::{PendingConfirmation, PendingStructuredInputRequest};
 use crate::skills::ActiveSkillEnvelope;
 use crate::tape::ContentPart;
@@ -116,6 +117,10 @@ pub(super) struct MachineTransitionState {
     /// window of recent review outcomes (true = denied) in the active turn.
     guardian_consecutive_denials: u32,
     guardian_recent_reviews: VecDeque<bool>,
+    /// Number of dedicated-Guardian fallbacks to the main Connection used this turn.
+    guardian_fallbacks_this_turn: usize,
+    /// Strictly Process-local session allow-list populated by `"allow_session"`.
+    session_tool_allowlist: SessionToolAllowlist,
 }
 
 /// Guardian rejection circuit-breaker thresholds (Codex parity).
@@ -267,12 +272,24 @@ impl AgentMachine {
         self.reset_auto_mid_turn_compaction_state();
         self.transition_state.guardian_consecutive_denials = 0;
         self.transition_state.guardian_recent_reviews.clear();
+        self.transition_state.guardian_fallbacks_this_turn = 0;
     }
 
     pub(crate) fn clear_plan_snapshot(&mut self) {
         self.transition_state.plan_snapshot = None;
         self.transition_state.plan_snapshot_turn_start = None;
         self.transition_state.plan_snapshot_message_count = None;
+    }
+
+    /// Reset all session-scoped transition state (used by `Op::ResetSession`).
+    pub(crate) fn reset_session_transition_state(&mut self) {
+        self.reset_turn();
+        self.clear_plan_snapshot();
+        self.transition_state.current_submission_id = None;
+        self.transition_state.related_submission_ids.clear();
+        self.transition_state.submission_cancelled = false;
+        self.transition_state.deferred_runtime_actions.clear();
+        self.transition_state.session_tool_allowlist = SessionToolAllowlist::default();
     }
 
     pub(crate) fn reset_auto_mid_turn_compaction_state(&mut self) {
@@ -585,6 +602,18 @@ impl AgentMachine {
         self.transition_state.compactions_this_turn
     }
 
+    /// Consume one per-turn Guardian fallback slot if within `max_fallbacks`.
+    pub(crate) fn try_consume_guardian_fallback(&mut self, max_fallbacks: usize) -> bool {
+        if self.transition_state.guardian_fallbacks_this_turn >= max_fallbacks {
+            return false;
+        }
+        self.transition_state.guardian_fallbacks_this_turn = self
+            .transition_state
+            .guardian_fallbacks_this_turn
+            .saturating_add(1);
+        true
+    }
+
     #[cfg_attr(
         not(test),
         allow(
@@ -717,6 +746,28 @@ impl AgentMachine {
         let item = self.transition_state.pending.remove(request_id)?;
         remove_key(&mut self.transition_state.pending_order, request_id);
         Some(item)
+    }
+
+    pub(crate) fn is_tool_allowed_for_session(
+        &self,
+        tool_name: &str,
+        capability: &str,
+        arguments: &serde_json::Value,
+    ) -> bool {
+        self.transition_state
+            .session_tool_allowlist
+            .is_allowed(tool_name, capability, arguments)
+    }
+
+    pub(crate) fn allow_tool_for_session(
+        &mut self,
+        tool_name: &str,
+        capability: &str,
+        arguments: &serde_json::Value,
+    ) {
+        self.transition_state
+            .session_tool_allowlist
+            .allow(tool_name, capability, arguments);
     }
 }
 

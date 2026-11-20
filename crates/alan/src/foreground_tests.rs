@@ -59,3 +59,50 @@ fn foreground_history_is_product_store_owned_and_restarts_typed() {
     assert_eq!(load_history(&restarted_path, 1000), entries);
     assert!(load_history(&config(&isolated).history_path.unwrap(), 1000).is_empty());
 }
+
+#[test]
+fn connection_configured_tracks_root_model_presence() {
+    let dir = tempfile::tempdir().unwrap();
+    let product = alan_os_host::SystemStorePaths::from_data_dir(dir.path()).unwrap();
+    let configured = config(&product);
+    assert_eq!(configured.connection_configured, Some(true));
+
+    let unconfigured = interactive_config(
+        alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
+            alan_kernel::Namespace::new(),
+        ))),
+        None,
+        None,
+        &product,
+    )
+    .unwrap();
+    assert_eq!(unconfigured.connection_configured, Some(false));
+}
+
+#[test]
+fn should_auto_mount_cwd_excludes_root_home_and_tmp_roots_but_allows_project_dirs() {
+    assert!(!should_auto_mount_cwd(Path::new("/")));
+    assert!(!should_auto_mount_cwd(Path::new("/tmp")));
+    assert!(!should_auto_mount_cwd(&std::env::temp_dir()));
+    if let Some(home) = dirs::home_dir() {
+        assert!(!should_auto_mount_cwd(&home));
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("my-project");
+    std::fs::create_dir_all(&project).unwrap();
+    assert!(should_auto_mount_cwd(&project));
+    assert!(!should_auto_mount_cwd(&temp.path().join("missing-dir")));
+}
+
+#[test]
+fn interactive_config_defaults_update_notice_to_none_and_passive_check_uses_system_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let product = alan_os_host::SystemStorePaths::from_data_dir(dir.path()).unwrap();
+    let cfg = config(&product);
+    assert!(cfg.update_notice.is_none());
+    assert!(cli::update::prepare_passive_tui_update_notice(&product, false).is_none());
+    assert_eq!(
+        cli::update::passive_check::passive_check_cache_path(&product).unwrap(),
+        product.service("updater").unwrap().join("last-check.json")
+    );
+}

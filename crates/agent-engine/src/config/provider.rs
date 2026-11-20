@@ -2,7 +2,8 @@ use super::{
     Config, LlmProvider, default_anthropic_messages_base_url, default_anthropic_messages_model,
     default_chatgpt_base_url, default_chatgpt_model,
     default_google_gemini_generate_content_location, default_google_gemini_generate_content_model,
-    default_openai_chat_completions_base_url, default_openai_chat_completions_compatible_base_url,
+    default_magpie_base_url, default_magpie_model, default_openai_chat_completions_base_url,
+    default_openai_chat_completions_compatible_base_url,
     default_openai_chat_completions_compatible_model, default_openai_chat_completions_model,
     default_openai_responses_base_url, default_openai_responses_model, default_openrouter_base_url,
     default_openrouter_model,
@@ -11,6 +12,37 @@ use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use std::sync::Arc;
 
 impl Config {
+    pub fn for_magpie(base_url: Option<&str>, api_key: Option<&str>, model: Option<&str>) -> Self {
+        Self {
+            llm_provider: LlmProvider::Magpie,
+            magpie_api_key: api_key
+                .map(str::trim)
+                .filter(|key| !key.is_empty())
+                .map(ToString::to_string),
+            magpie_base_url: base_url
+                .map(ToString::to_string)
+                .unwrap_or_else(default_magpie_base_url),
+            magpie_model: model
+                .map(ToString::to_string)
+                .unwrap_or_else(default_magpie_model),
+            ..Self::default()
+        }
+    }
+
+    pub fn for_google_gemini_express(api_key: &str, model: Option<&str>) -> Self {
+        Self {
+            llm_provider: LlmProvider::GoogleGeminiGenerateContent,
+            google_gemini_generate_content_api_key: Some(api_key.to_string()),
+            google_gemini_generate_content_project_id: None,
+            google_gemini_generate_content_location:
+                default_google_gemini_generate_content_location(),
+            google_gemini_generate_content_model: model
+                .map(ToString::to_string)
+                .unwrap_or_else(default_google_gemini_generate_content_model),
+            ..Self::default()
+        }
+    }
+
     pub fn for_google_gemini_generate_content(
         project_id: &str,
         location: Option<&str>,
@@ -139,8 +171,18 @@ impl Config {
         }
     }
 
+    pub fn has_magpie_config(&self) -> bool {
+        !self.magpie_base_url.trim().is_empty() && !self.magpie_model.trim().is_empty()
+    }
+
     pub fn has_google_gemini_generate_content_config(&self) -> bool {
-        self.google_gemini_generate_content_project_id.is_some()
+        self.google_gemini_generate_content_project_id
+            .as_deref()
+            .is_some_and(|project| !project.trim().is_empty())
+            || self
+                .google_gemini_generate_content_api_key
+                .as_deref()
+                .is_some_and(|key| !key.trim().is_empty())
     }
 
     pub fn has_openai_responses_config(&self) -> bool {
@@ -165,6 +207,7 @@ impl Config {
 
     pub fn has_llm_config(&self) -> bool {
         match self.llm_provider {
+            LlmProvider::Magpie => self.has_magpie_config(),
             LlmProvider::TypesafeEvaluation => self.typesafe_api_key.is_some(),
             LlmProvider::GoogleGeminiGenerateContent => {
                 self.has_google_gemini_generate_content_config()
@@ -182,6 +225,7 @@ impl Config {
 
     pub fn effective_model(&self) -> &str {
         match self.llm_provider {
+            LlmProvider::Magpie => &self.magpie_model,
             LlmProvider::TypesafeEvaluation => &self.typesafe_model,
             LlmProvider::GoogleGeminiGenerateContent => &self.google_gemini_generate_content_model,
             LlmProvider::Chatgpt => &self.chatgpt_model,
@@ -198,6 +242,7 @@ impl Config {
     pub fn set_effective_model(&mut self, model: impl Into<String>) {
         let model = model.into();
         match self.llm_provider {
+            LlmProvider::Magpie => self.magpie_model = model,
             LlmProvider::TypesafeEvaluation => self.typesafe_model = model,
             LlmProvider::GoogleGeminiGenerateContent => {
                 self.google_gemini_generate_content_model = model;
@@ -246,8 +291,14 @@ impl Config {
                     &self.openai_chat_completions_compatible_model,
                 )
             }
-            LlmProvider::OpenRouter
-            | LlmProvider::GoogleGeminiGenerateContent
+            LlmProvider::GoogleGeminiGenerateContent => {
+                self.resolved_model_catalog().find_model_info(
+                    ModelCatalogProvider::GoogleGeminiGenerateContent,
+                    &self.google_gemini_generate_content_model,
+                )
+            }
+            LlmProvider::Magpie
+            | LlmProvider::OpenRouter
             | LlmProvider::AnthropicMessages
             | LlmProvider::TypesafeEvaluation => None,
         }
@@ -275,6 +326,20 @@ impl Config {
         use crate::llm::factory::ProviderConfig;
 
         match self.llm_provider {
+            LlmProvider::Magpie => {
+                if self.magpie_model.trim().is_empty() {
+                    anyhow::bail!("Magpie provider requires magpie_model");
+                }
+                let mut config =
+                    ProviderConfig::magpie(&self.magpie_model).with_base_url(&self.magpie_base_url);
+                if let Some(api_key) = &self.magpie_api_key {
+                    config = config.with_api_key(api_key);
+                }
+                if let Some(map) = &self.magpie_thinking_level_map {
+                    config = config.with_thinking_level_map(map.clone());
+                }
+                Ok(config)
+            }
             LlmProvider::TypesafeEvaluation => Ok(ProviderConfig::typesafe_evaluation(
                 self.typesafe_api_key.clone().ok_or_else(|| {
                     anyhow::anyhow!("TypeSafe requires a Host-resolved credential")
@@ -282,12 +347,35 @@ impl Config {
                 &self.typesafe_model,
             )),
             LlmProvider::GoogleGeminiGenerateContent => {
+                if let Some(api_key) = self
+                    .google_gemini_generate_content_api_key
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|key| !key.is_empty())
+                {
+                    let mut config = ProviderConfig::google_gemini_express(
+                        api_key,
+                        &self.google_gemini_generate_content_model,
+                    )
+                    .with_location(&self.google_gemini_generate_content_location);
+                    if let Some(project_id) = self
+                        .google_gemini_generate_content_project_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|project| !project.is_empty())
+                    {
+                        config.project_id = Some(project_id.to_string());
+                    }
+                    return Ok(config);
+                }
                 let project_id = self
                     .google_gemini_generate_content_project_id
-                    .as_ref()
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|project| !project.is_empty())
                     .ok_or_else(|| {
                         anyhow::anyhow!(
-                            "Google Gemini GenerateContent API provider requires google_gemini_generate_content_project_id"
+                            "Google Gemini GenerateContent API provider requires google_gemini_generate_content_project_id (or a Vertex Express API key)"
                         )
                     })?;
                 Ok(ProviderConfig::google_gemini_generate_content(
@@ -418,6 +506,7 @@ impl Config {
 
 fn inferred_context_window_tokens(provider: LlmProvider) -> u32 {
     match provider {
+        LlmProvider::Magpie => 128_000,
         LlmProvider::TypesafeEvaluation => 32_768,
         LlmProvider::GoogleGeminiGenerateContent => 1_048_576,
         LlmProvider::AnthropicMessages => 200_000,

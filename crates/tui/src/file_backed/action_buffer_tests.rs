@@ -37,9 +37,10 @@ async fn production_detail_buffers_preserve_diff_command_file_and_pages() {
                 && rendered.contains("       context literal"),
             "{rendered}"
         );
+        let theme = crate::theme::Theme::default();
         for (needle, color) in [
-            ("added literal", Color::Green),
-            ("removed literal", Color::Red),
+            ("added literal", theme.status_run),
+            ("removed literal", theme.status_block),
             ("context literal", Color::Reset),
         ] {
             let y = (0..24)

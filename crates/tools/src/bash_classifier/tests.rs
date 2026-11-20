@@ -514,3 +514,41 @@ fn test_classify_bash_command_cargo_test_is_write() {
     let cap = classify_bash_command("cargo test -p alan-agent-engine delegated_skill --lib");
     assert_eq!(cap, alan_agent_protocol::ToolCapability::Write);
 }
+
+#[test]
+fn test_classify_project_local_dev_build_format_and_git_commands() {
+    use alan_agent_protocol::ToolCapability;
+    for cmd in [
+        "cargo build",
+        "cargo fmt --check",
+        "cargo +nightly fmt",
+        "cargo run --bin alan",
+        "cargo doc --no-deps",
+        "pnpm check",
+        "pnpm lint",
+        "pnpm build",
+        "pnpm dev",
+        "npm run build",
+        "npm run check",
+        "yarn lint",
+        "bun dev",
+        "just",
+        "just quality",
+        "just fmt",
+        "git add -A",
+        "git commit -m 'wip'",
+    ] {
+        assert_eq!(classify_bash_command(cmd), ToolCapability::Write, "{cmd}");
+    }
+    for cmd in ["git status", "git diff", "git log -n 5"] {
+        assert_eq!(classify_bash_command(cmd), ToolCapability::Read, "{cmd}");
+    }
+    for cmd in [
+        "git push origin main",
+        "cargo install ripgrep",
+        "npm install",
+    ] {
+        assert_ne!(classify_bash_command(cmd), ToolCapability::Write, "{cmd}");
+        assert_ne!(classify_bash_command(cmd), ToolCapability::Read, "{cmd}");
+    }
+}

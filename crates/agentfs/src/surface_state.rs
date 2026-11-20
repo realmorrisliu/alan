@@ -71,6 +71,7 @@ impl State {
                 "plan" => Ok(Node::UiPlan),
                 "thinking" => Ok(Node::UiThinking),
                 "notice" => Ok(Node::UiNotice),
+                "usage" => Ok(Node::UiUsage),
                 "events" => Ok(Node::UiEvents),
                 _ => Err(ErrorCode::NotFound),
             },
@@ -123,7 +124,7 @@ impl State {
             Node::IoDir => b"input\noutput\nevents".to_vec(),
             Node::MachineDir => b"tape\nstatus\nevaluation\nwork\nctl\nui\ncheckpoints".to_vec(),
             Node::UiDir => {
-                b"activity\nplan\nthinking\nnotice\nevents\nqueue\nmodels\nskills".to_vec()
+                b"activity\nplan\nthinking\nnotice\nusage\nevents\nqueue\nmodels\nskills".to_vec()
             }
             Node::CheckpointsDir => b"current".to_vec(),
             Node::CurrentCheckpoint => format!("{}\n", self.tape_root).into_bytes(),
@@ -137,6 +138,7 @@ impl State {
             Node::UiPlan => self.ui_plan.clone().into_bytes(),
             Node::UiThinking => self.ui_thinking.clone().into_bytes(),
             Node::UiNotice => self.ui_notice.clone().into_bytes(),
+            Node::UiUsage => self.ui_usage.clone().into_bytes(),
             // machine/ctl exposes its accepted commands in-band, so a
             // namespace-native client discovers them by reading the file rather
             // than from external docs (self-describing namespace).
@@ -300,6 +302,7 @@ pub(super) fn is_writable(node: &Node) -> bool {
         | Node::UiThinking
         | Node::UiSkills
         | Node::UiNotice
+        | Node::UiUsage
         | Node::UiEvents
         | Node::RequestsClone
         | Node::ActionsClone
@@ -362,6 +365,7 @@ pub(super) fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::UiPlan => (FileKind::File, "machine/ui/plan".into()),
         Node::UiThinking => (FileKind::File, "machine/ui/thinking".into()),
         Node::UiNotice => (FileKind::File, "machine/ui/notice".into()),
+        Node::UiUsage => (FileKind::File, "machine/ui/usage".into()),
         Node::CurrentCheckpoint => (FileKind::File, "machine/checkpoints/current".into()),
         Node::RequestField(id, field) => (FileKind::File, format!("requests/{id}/{field}")),
         Node::ActionField(id, field) => (FileKind::File, format!("actions/{id}/{field}")),

@@ -60,17 +60,17 @@ and ordering semantics prove they do not consume its result or require its right
 no new concurrent scheduler or blind reordering is implied. If independence cannot
 be proved, preserve the queue ordering. Clarification is distinct from authority.
 
-Qualify a new reviewer profile/policy in no-effect shadow evaluation against
-labeled ordinary work, injection, wrong-resource, revoked-grant, publication and
-uncontainable-action cases. Require zero observed high-impact unauthorized allows;
-freeze false-denial/latency/cost/sample thresholds before formal evaluation.
-Version/identity changes require a new qualification or explicit applicability
-proof. Shadow rejection does not itself block already-authorized real work.
+Under ADR-0061's OS-boundary rule, a separate labeled Guardian shadow-corpus
+classifier gate is obsolete and pruned: inside an active OS sandbox, routine
+contained work skips Guardian entirely, uncontainable or out-of-grant effects hit
+deterministic red-line and authority gates first, Guardian never grants
+authority, and failed or uncertain reviews fail closed to one pending human
+decision.
 
 ## Risks / Trade-offs
 
 - Saved scope becomes stale → bind identity and revision; revoke projections and recheck at admission.
-- Small evaluator misses intent → deterministic authority bounds and labeled shadow qualification.
+- Small evaluator misses intent → deterministic authority bounds, OS-boundary containment, and fail-closed human fallback.
 - Reviewer outage blocks progress → bounded fallback, one request and independent work where valid.
 - Same-account arbitrary code tampers with controls → enforce in confined mode; explicit Host-account successor documents the absence of this guarantee.
 
@@ -81,3 +81,10 @@ current behavior until the new implementation is delivered. Enable saved scope
 only from explicit user actions; invalidate stale reviewer decisions on policy or
 mode changes. Rollback ignores new saved delegation and pauses affected pending
 work rather than automatically executing it under old defaults.
+
+## OS-boundary rule (ADR-0061)
+
+Guardian reviews are reserved for actions whose effects escape or cannot be contained
+by the active confinement. Deterministically delegated and contained routine work
+needs no model review, which reduces permission noise without widening scope. The
+reviewer remains a no-tools evidence source and never a security boundary or grant.

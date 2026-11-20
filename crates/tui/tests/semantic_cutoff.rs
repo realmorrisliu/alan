@@ -207,21 +207,27 @@ fn long_word_wrapped_prose_keeps_byte_and_atom_cursors_aligned() {
 fn late_fence_close_keeps_uncommitted_literal_code() {
     let opts = RenderOpts::new(40, false);
     let mut cell = HistoryCell::Assistant(format!("```diff\n+{}", "a".repeat(77)));
-    assert_eq!(cell.render_lines(opts)[2], format!("+{}", "a".repeat(39)));
+    assert_eq!(cell.render_lines(opts)[2], format!("▎ +{}", "a".repeat(37)));
     cell.trim_rendered_prefix(opts, 3);
     if let HistoryCell::AssistantTail { text, .. } = &mut cell {
         text.push_str("\n``");
     }
     assert_eq!(
-        cell.render_lines(opts).concat(),
-        format!("{}{}", "a".repeat(38), "``")
+        cell.render_lines(opts)
+            .iter()
+            .map(|l| l.strip_prefix("▎ ").unwrap_or(l))
+            .collect::<String>(),
+        format!("{}{}", "a".repeat(40), "``")
     );
     if let HistoryCell::AssistantTail { text, .. } = &mut cell {
         text.push_str("`\n**done**");
     }
     assert_eq!(
-        cell.render_lines(opts).concat(),
-        format!("{}╰──done", "a".repeat(38))
+        cell.render_lines(opts)
+            .iter()
+            .map(|l| l.strip_prefix("▎ ").unwrap_or(l))
+            .collect::<String>(),
+        format!("{}▎done", "a".repeat(40))
     );
 }
 
@@ -230,13 +236,13 @@ fn partial_tab_and_unicode_cluster_have_stable_content_slots() {
     let opts = RenderOpts::new(40, false);
     let mut cell = HistoryCell::Assistant(format!("```\n{}\t界e\u{301}", "a".repeat(38)));
     cell.trim_rendered_prefix(opts, 3);
-    assert_eq!(cell.render_lines(opts).concat(), "  界e\u{301}");
+    assert_eq!(cell.render_lines(opts).concat(), "▎     界e\u{301}");
     if let HistoryCell::AssistantTail { text, .. } = &mut cell {
         text.push_str("\n```\n**ok**");
     }
     assert_eq!(
         cell.render_lines(RenderOpts::new(60, false)).concat(),
-        "  界e\u{301}╰──ok"
+        "▎     界e\u{301}▎ok"
     );
 }
 #[test]

@@ -6,8 +6,9 @@ continue to describe the current contract until reviewed implementation and sync
 
 ## Confirmed scope
 
-- Q1: Prioritize the user's personal macOS + Herdr development, using Alan and
-  one real second project. Retain Linux regressions; qualify additional Linux
+- Q1: Prioritize the user's personal macOS development in a standard terminal
+  (originally recorded through Herdr; withdrawn as a host dependency by ADR-0061),
+  using Alan and one real second project. Retain Linux regressions; qualify additional Linux
   toolchains only when actual project work needs them.
 - Q2: Include an explicit fully trusted option in the design, with its own
   delivery and acceptance. Its precise approval and isolation semantics remain
@@ -93,8 +94,9 @@ pilot plan is a prerequisite; these gates do not authorize unlimited measurement
   overrides promised by `autonomous-review-mode` are implementation gaps.
 - System 1/System 2 remain work modes, not Process types or permission levels
   (ADR-0055). Evaluator output is evidence, not independent grant authority.
-- `expose-agent-rollout-history` and `add-proactive-memory-v2` are parked. Their
-  retained tasks do not authorize background launch or permission learning.
+- `expose-agent-rollout-history` and `add-proactive-memory-v2` were parked and are
+  now retired and archived (2026-11-19). Their retained tasks never authorized
+  background launch or permission learning.
 - Historical development qualification retains 21/30 first passes and 91 model
   attempts. Linux recovery remains assisted and delegation unqualified. A new
   sample must not overwrite those outcomes.

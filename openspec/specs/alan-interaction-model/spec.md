@@ -3,9 +3,7 @@
 ## Purpose
 Define Alan's interactive terminal contract for an inline Agent REPL, including
 transcript order, temporary completion UI, actionable errors, and safe detach.
-
 ## Requirements
-
 ### Requirement: Interactive Alan uses a shell-like inline transcript
 When `alan` runs in an interactive terminal, the renderer SHALL present one
 continuous terminal transcript: accepted user input SHALL appear as a `: ` (Agent) or `! ` (command)
@@ -43,10 +41,9 @@ SHALL return a nonzero exit code.
 #### Scenario: Ctrl-D exits at an empty prompt
 - **WHEN** the user presses Ctrl-D with an empty composer and no pending Agent
   input
-- **THEN** the renderer exits and restores terminal modes
-- **AND** the owning foreground application shuts down its instance and work
-- **AND** completed effects remain completed and uncertain outcomes are not
-  replayed automatically
+- **THEN** the renderer restores terminal modes and the application shuts down its owned instance
+- **AND** pending work is not left executing in a detached Host or replayed automatically
+- **AND** completed effects remain completed and uncertain outcomes are reported truthfully
 
 #### Scenario: Ctrl-D preserves pending Agent input
 - **WHEN** the user presses Ctrl-D while a confirmation or structured-input
@@ -166,3 +163,4 @@ for Alan performing the development work.
 - **WHEN** authorization, editing, build/test execution or recovery cannot be completed through the product flow
 - **THEN** readiness remains unqualified and the specific failed gate is recorded
 - **AND** hidden operator wiring or disabled sandbox protection does not count as passing
+

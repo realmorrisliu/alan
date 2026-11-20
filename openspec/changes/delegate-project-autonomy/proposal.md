@@ -8,7 +8,7 @@ Ordinary project work still suffers repeated or poorly attributed interruptions,
 
 - **BREAKING** Replace the prohibition on saved project delegation with explicit user-authored standing scopes; a one-call approval still never widens future authority.
 - Separate delegated scope, approval posture and actual execution isolation.
-- Reuse Guardian with a configurable dedicated Connection and user-selected policy; qualify its rapid decisions separately from input routing.
+- Reuse Guardian with a configurable dedicated Connection and user-selected policy for uncontainable escalations under ADR-0061's OS-boundary rule.
 - Support bounded main-model fallback and correlated pending requests without blocking provably independent work.
 - Add task budgets and scoped publication delegation; force-push and remote deletion are distinct from ordinary push.
 

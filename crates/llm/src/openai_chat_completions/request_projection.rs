@@ -18,7 +18,8 @@ use super::input_projection::{
 use super::{
     OpenAiChatCompletionsFunctionDefinition, OpenAiChatCompletionsRequest,
     OpenAiChatCompletionsStreamOptions, OpenAiChatCompletionsToolDefinition,
-    OpenAiResponsesReasoning, OpenAiResponsesRequest, OpenAiResponsesToolDefinition,
+    OpenAiResponsesCompactRequest, OpenAiResponsesReasoning, OpenAiResponsesRequest,
+    OpenAiResponsesToolDefinition,
 };
 
 #[cfg(test)]
@@ -98,17 +99,34 @@ pub(crate) fn build_responses_request_for_model(
         temperature,
         max_tokens,
         reasoning,
+        session_key: _,
+        response_schema,
         mut extra_params,
     } = request;
 
     let previous_response_id = take_string_extra_param("previous_response_id", &mut extra_params);
     let background = take_bool_extra_param("background", &mut extra_params);
     let mut store = take_bool_extra_param("store", &mut extra_params);
-    if (matches!(background, Some(true)) || previous_response_id.is_some()) && store.is_none() {
+    if previous_response_id.is_some() {
+        if matches!(store, Some(false)) {
+            debug!(
+                "Forcing Responses store=true because previous_response_id chaining requires server storage"
+            );
+        }
+        store = Some(true);
+    } else if matches!(background, Some(true)) && store.is_none() {
         store = Some(true);
     }
 
     let reasoning = build_openai_responses_reasoning(reasoning.effort, &mut extra_params);
+    let reasoning_active = reasoning
+        .as_ref()
+        .is_some_and(|r| !r.effort.eq_ignore_ascii_case("none"));
+    let temperature = if is_openai_reasoning_model(&model) && reasoning_active {
+        None
+    } else {
+        temperature
+    };
     let include = normalize_responses_include(
         take_string_array_extra_param("include", &mut extra_params),
         should_include_reasoning_encrypted_content(&messages, &tools, reasoning.is_some()),
@@ -130,6 +148,16 @@ pub(crate) fn build_responses_request_for_model(
         max_output_tokens: build_max_completion_tokens(max_tokens, &mut extra_params),
         reasoning,
         stream: Some(stream),
+        text: response_schema.map(|schema| {
+            serde_json::json!({
+                "format": {
+                    "type": "json_schema",
+                    "name": "response",
+                    "strict": true,
+                    "schema": schema,
+                }
+            })
+        }),
         extra_params,
     })
 }
@@ -147,6 +175,8 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
         temperature: _,
         max_tokens: _,
         reasoning,
+        session_key: _,
+        response_schema: _,
         mut extra_params,
     } = request;
 
@@ -161,6 +191,8 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
     extra_params.remove("context_management");
     extra_params.remove("stream");
     extra_params.remove("max_completion_tokens");
+    extra_params.remove("prompt_cache_key");
+    extra_params.remove("prompt_cache_retention");
 
     Ok(OpenAiResponsesInputTokensRequest {
         model,
@@ -169,6 +201,59 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
         tools: response_tools,
         tool_choice,
         reasoning,
+        extra_params,
+    })
+}
+
+pub(crate) fn build_responses_compact_request_for_model(
+    model: String,
+    request: GenerationRequest,
+) -> Result<OpenAiResponsesCompactRequest> {
+    reject_retired_message_overrides(&request)?;
+    let GenerationRequest {
+        system_prompt,
+        messages,
+        tools: _,
+        temperature: _,
+        max_tokens: _,
+        reasoning: _,
+        session_key: _,
+        response_schema: _,
+        mut extra_params,
+    } = request;
+
+    let previous_response_id = take_string_extra_param("previous_response_id", &mut extra_params);
+    let input = if messages.is_empty() {
+        None
+    } else {
+        let converted = convert_messages_for_openai_responses(messages)?;
+        let values = converted
+            .into_iter()
+            .map(serde_json::to_value)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Some(values)
+    };
+
+    // Strip Responses fields that `/v1/responses/compact` rejects.
+    for key in [
+        "background",
+        "store",
+        "include",
+        "context_management",
+        "stream",
+        "max_completion_tokens",
+        "reasoning_effort",
+        "prompt_cache_key",
+        "prompt_cache_retention",
+    ] {
+        extra_params.remove(key);
+    }
+
+    Ok(OpenAiResponsesCompactRequest {
+        model,
+        input,
+        instructions: normalize_responses_instructions(system_prompt),
+        previous_response_id,
         extra_params,
     })
 }
@@ -187,6 +272,8 @@ pub(super) fn build_chat_completions_request_for_model(
         temperature,
         max_tokens,
         reasoning,
+        session_key: _,
+        response_schema,
         mut extra_params,
     } = request;
 
@@ -210,6 +297,14 @@ pub(super) fn build_chat_completions_request_for_model(
 
     let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
     let reasoning_effort = build_reasoning_effort(reasoning.effort, &mut extra_params);
+    let reasoning_active = reasoning_effort
+        .as_deref()
+        .is_some_and(|effort| !effort.eq_ignore_ascii_case("none"));
+    let temperature = if is_openai_reasoning_model(&model) && reasoning_active {
+        None
+    } else {
+        temperature
+    };
     let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
 
     Ok(OpenAiChatCompletionsRequest {
@@ -224,8 +319,30 @@ pub(super) fn build_chat_completions_request_for_model(
         stream_options: stream.then_some(OpenAiChatCompletionsStreamOptions {
             include_usage: true,
         }),
+        response_format: response_schema.map(|schema| {
+            serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response",
+                    "strict": true,
+                    "schema": schema,
+                }
+            })
+        }),
         extra_params,
     })
+}
+
+pub(crate) fn is_openai_reasoning_model(model: &str) -> bool {
+    let lower = model.trim().to_ascii_lowercase();
+    let slug = lower.strip_prefix("openai/").unwrap_or(&lower);
+    slug.starts_with("gpt-5")
+        || slug == "o1"
+        || slug.starts_with("o1-")
+        || slug == "o3"
+        || slug.starts_with("o3-")
+        || slug == "o4"
+        || slug.starts_with("o4-")
 }
 
 fn build_openai_responses_reasoning(

@@ -183,6 +183,7 @@ fn mock_generation_response(content: impl Into<String>) -> GenerationResponse {
             completion_tokens: 5,
             total_tokens: 15,
             reasoning_tokens: None,
+            ..Default::default()
         }),
         finish_reason: None,
         provider_response_id: None,
@@ -454,6 +455,8 @@ mod recovery_boundary;
 mod recovery_ux;
 #[path = "engine_removal_boundary_tests.rs"]
 mod removal_boundary;
+#[path = "engine_session_controls_tests.rs"]
+mod session_controls;
 pub(crate) async fn admit_test_input(
     state: &crate::runtime::transition::RuntimeLoopState,
     input: &Submission,

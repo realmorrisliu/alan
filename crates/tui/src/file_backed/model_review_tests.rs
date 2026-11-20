@@ -121,14 +121,22 @@ fn remaining_running_slash_submit_routes_without_task_admission() {
     assert!(app.transcript.is_empty());
 }
 #[test]
-fn review_bare_enter_requires_explicit_selection() {
+fn bare_enter_in_chooser_selects_highlighted_first_item() {
     let mut app = super::model_tests::ready();
-    app.handle_command("/model");
-    assert!(
-        key(&mut app, KeyCode::Enter).is_none(),
-        "bare Enter silently selected row zero"
-    );
+    app.composer.set_text("/model");
+    assert!(key(&mut app, KeyCode::Enter).is_none());
+    assert!(app.model_chooser.active);
+    assert!(app.composer.text().is_empty());
     assert!(app.model_chooser.pending.is_none());
+    let Some(FileBackedAction::SelectModel {
+        op: alan_agent_protocol::Op::SelectModel { model },
+        ..
+    }) = key(&mut app, KeyCode::Enter)
+    else {
+        panic!("Enter on highlighted first item should select it")
+    };
+    assert_eq!(model, "B");
+    assert!(app.model_chooser.pending.is_some());
 }
 #[test]
 fn review_catalog_reorder_never_sends_invisible_model() {

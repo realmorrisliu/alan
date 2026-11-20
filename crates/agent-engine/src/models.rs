@@ -9,6 +9,7 @@ pub enum ModelCatalogProvider {
     OpenAiResponses,
     OpenAiChatCompletions,
     OpenAiChatCompletionsCompatible,
+    GoogleGeminiGenerateContent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +31,7 @@ pub struct ModelCatalog {
     openai_responses: ProviderCatalog,
     openai_chat_completions: ProviderCatalog,
     openai_chat_completions_compatible: ProviderCatalog,
+    google_gemini_generate_content: ProviderCatalog,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +51,7 @@ struct ModelCatalogToml {
     openai_responses: ProviderCatalogToml,
     openai_chat_completions: ProviderCatalogToml,
     openai_chat_completions_compatible: ProviderCatalogToml,
+    google_gemini_generate_content: ProviderCatalogToml,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,6 +104,10 @@ static BASE_MODEL_CATALOG: LazyLock<ModelCatalog> = LazyLock::new(|| {
         openai_chat_completions_compatible: ProviderCatalog::from_toml(
             ModelCatalogProvider::OpenAiChatCompletionsCompatible,
             catalog.openai_chat_completions_compatible,
+        ),
+        google_gemini_generate_content: ProviderCatalog::from_toml(
+            ModelCatalogProvider::GoogleGeminiGenerateContent,
+            catalog.google_gemini_generate_content,
         ),
     }
 });
@@ -177,6 +184,9 @@ impl ModelCatalog {
             ModelCatalogProvider::OpenAiChatCompletions => &self.openai_chat_completions,
             ModelCatalogProvider::OpenAiChatCompletionsCompatible => {
                 &self.openai_chat_completions_compatible
+            }
+            ModelCatalogProvider::GoogleGeminiGenerateContent => {
+                &self.google_gemini_generate_content
             }
         }
     }

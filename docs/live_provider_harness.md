@@ -102,7 +102,7 @@ Optional:
 
 - `ALAN_LIVE_OPENAI_CHAT_COMPATIBLE_MODEL`
 
-### Anthropic Messages
+### Anthropic Messages (protocol adapter; not a first-party provider, ADR-0061)
 
 Required:
 

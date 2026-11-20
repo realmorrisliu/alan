@@ -465,3 +465,43 @@ async fn reused_process_path_gets_distinct_durable_memory_paths() {
     assert_eq!(first.memory_record_id(), first.rollout_id().unwrap());
     assert_eq!(second.memory_record_id(), second.rollout_id().unwrap());
 }
+
+#[test]
+fn render_memory_surfaces_scrubs_secrets_before_writing() {
+    let mut machine = AgentMachine::new();
+    machine
+        .add_user_message("Use sk-ant-secret1234567890 and AIzaSyDummyKeyValue123456789 to verify");
+    machine.add_assistant_message("Checked Bearer super_secret_bearer_token", None);
+
+    let now = DateTime::parse_from_rfc3339("2026-04-15T15:30:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let rendered = render_memory_surfaces(&machine, "/proc/1", machine.memory_record_id(), now);
+
+    for (idx, surface) in [
+        &rendered.working_memory,
+        &rendered.handoff,
+        &rendered.episodic_record,
+        &rendered.daily_entry,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            !surface.contains("sk-ant-secret1234567890"),
+            "anthropic test fixture leaked into memory surface #{idx}"
+        );
+        assert!(
+            !surface.contains("AIzaSyDummyKeyValue123456789"),
+            "google test fixture leaked into memory surface #{idx}"
+        );
+        assert!(
+            !surface.contains("super_secret_bearer_token"),
+            "bearer test fixture leaked into memory surface #{idx}"
+        );
+        assert!(
+            surface.contains("[REDACTED"),
+            "expected redaction marker in memory surface #{idx}"
+        );
+    }
+}

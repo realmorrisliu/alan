@@ -7,6 +7,7 @@ pub(crate) struct TurnMemoryRuntime<'a> {
     pub(super) machine: &'a mut AgentMachine,
     pub(super) memory_dir: Option<PathBuf>,
     pub(super) process_path: String,
+    pub(super) project_cwd: Option<String>,
     pub(super) llm_request_timeout_secs: u64,
 }
 
@@ -21,7 +22,13 @@ impl<'a> TurnMemoryRuntime<'a> {
             machine,
             memory_dir,
             process_path,
+            project_cwd: None,
             llm_request_timeout_secs,
         }
+    }
+
+    pub(crate) fn with_project_cwd(mut self, project_cwd: Option<String>) -> Self {
+        self.project_cwd = project_cwd;
+        self
     }
 }

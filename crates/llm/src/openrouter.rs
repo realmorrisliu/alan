@@ -2,40 +2,35 @@
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
-use futures::StreamExt;
-#[cfg(test)]
-use tracing::debug;
-
-#[cfg(test)]
-use openrouter_rs::types::UnifiedStreamEvent;
 use openrouter_rs::{
-    api::chat::{
-        ChatCompletionRequest, ChatCompletionRequestBuilder, DebugOptions, Message as OrMessage,
-        Modality, Plugin, StopSequence, StreamOptions, TraceOptions,
-    },
+    api::chat::{ChatCompletionRequest, Message as OrMessage},
     types::{
-        Effort, FinishReason, ProviderPreferences, ReasoningConfig, ResponseFormat, ResponseUsage,
-        Role, Tool as OrTool, ToolCall as OrToolCall, completion::CompletionsResponse,
+        FinishReason, Role, Tool as OrTool, ToolCall as OrToolCall, completion::CompletionsResponse,
     },
 };
-use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, Message, MessageRole, ReasoningEffort,
-    StreamChunk, TokenUsage, ToolCall, ToolCallDelta, ToolDefinition,
+    GenerationRequest, GenerationResponse, LlmProvider, Message, MessageRole, ProviderModel,
+    StreamChunk, ToolCall, ToolDefinition,
 };
 
+mod catalog;
 #[cfg(test)]
 mod completion_tests;
-
+mod extra_params;
 mod input_projection;
+mod streaming;
+mod usage;
 
-use input_projection::convert_messages_for_openrouter;
+use extra_params::{apply_openrouter_extra_params, non_negative_u32, openrouter_effort};
+use streaming::consume_openrouter_raw_stream;
+#[cfg(test)]
+use streaming::{consume_openrouter_stream, consume_router_bytes, tool_delta_from_value};
+use usage::{convert_usage, request_usage_accounting};
 
-pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+pub use crate::provider_meta::OPENROUTER_BASE_URL;
 
 /// alan LLM provider backed by the `openrouter-rs` SDK.
 #[derive(Clone)]
@@ -111,6 +106,7 @@ impl OpenRouterClient {
     ) -> Result<mpsc::Receiver<StreamChunk>> {
         let mut payload = build_openrouter_chat_request_payload(&self.model, request)?;
         payload["stream"] = Value::Bool(true);
+        request_usage_accounting(&mut payload, true);
         let response = self
             .request_builder()?
             .json(&payload)
@@ -131,11 +127,17 @@ impl OpenRouterClient {
     }
 
     fn request_builder(&self) -> Result<reqwest::RequestBuilder> {
-        let mut request = self
+        let request = self
             .http_client
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(&self.api_key);
+        self.apply_app_headers(request)
+    }
 
+    fn apply_app_headers(
+        &self,
+        mut request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder> {
         let x_title = self.metadata.x_title.as_deref().unwrap_or("openrouter-rs");
         request = request
             .header("X-OpenRouter-Title", x_title)
@@ -176,6 +178,10 @@ impl LlmProvider for OpenRouterClient {
         self.generate_chat_stream(request).await
     }
 
+    async fn model_catalog(&self) -> Result<Option<Vec<ProviderModel>>> {
+        self.fetch_model_catalog().await.map(Some)
+    }
+
     fn provider_name(&self) -> &'static str {
         "openrouter"
     }
@@ -192,19 +198,51 @@ pub(crate) fn build_openrouter_chat_request(
         temperature,
         max_tokens,
         reasoning,
+        session_key,
+        response_schema: _,
         mut extra_params,
     } = request;
 
+    let openai_reasoning_model = input_projection::is_openrouter_openai_reasoning_model(model);
+    let system_role = if openai_reasoning_model {
+        Role::Developer
+    } else {
+        Role::System
+    };
+
     let mut projected_messages = Vec::new();
     if let Some(system_prompt) = system_prompt.filter(|value| !value.is_empty()) {
-        projected_messages.push(OrMessage::new(Role::System, system_prompt));
+        projected_messages.push(OrMessage::new(system_role, system_prompt));
     }
-    projected_messages.extend(convert_messages_for_openrouter(messages)?);
+    projected_messages.extend(input_projection::convert_messages_for_openrouter_model(
+        model, messages,
+    )?);
 
     let mut builder = ChatCompletionRequest::builder();
     builder.model(model).messages(projected_messages);
 
-    if let Some(temperature) = temperature {
+    let reasoning_active = reasoning
+        .effort
+        .is_some_and(|effort| effort != crate::ReasoningEffort::None)
+        || extra_params
+            .get("reasoning_effort")
+            .and_then(Value::as_str)
+            .is_some_and(|effort| {
+                let trimmed = effort.trim();
+                !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("none")
+            })
+        || extra_params
+            .get("reasoning")
+            .and_then(|value| value.get("effort"))
+            .and_then(Value::as_str)
+            .is_some_and(|effort| {
+                let trimmed = effort.trim();
+                !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("none")
+            });
+
+    if let Some(temperature) = temperature
+        && !(openai_reasoning_model && reasoning_active)
+    {
         builder.temperature(f64::from(temperature));
     }
     if let Some(max_tokens) = max_tokens {
@@ -213,6 +251,15 @@ pub(crate) fn build_openrouter_chat_request(
     if let Some(effort) = reasoning.effort {
         extra_params.remove("reasoning_effort");
         builder.reasoning_effort(openrouter_effort(effort)?);
+    }
+
+    if let Some(session_key) = session_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        && !extra_params.contains_key("session_id")
+    {
+        builder.session_id(derive_openrouter_session_id(session_key));
     }
 
     let tools = convert_tools_for_openrouter(tools);
@@ -227,7 +274,101 @@ pub(crate) fn build_openrouter_chat_request(
         .context("failed to build OpenRouter chat completion request")
 }
 
+fn is_openrouter_anthropic_claude_model(model: &str) -> bool {
+    model
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("anthropic/claude")
+}
+
+fn derive_openrouter_session_id(session_key: &str) -> String {
+    use std::hash::{DefaultHasher, Hasher};
+
+    let mut words = [0_u64; 2];
+    for (salt, word) in words.iter_mut().enumerate() {
+        let mut hasher = DefaultHasher::new();
+        hasher.write(b"alan-session-affinity");
+        hasher.write_usize(salt);
+        hasher.write(session_key.as_bytes());
+        *word = hasher.finish();
+    }
+    format!("{:016x}{:016x}", words[0], words[1])
+}
+
+fn attach_openrouter_ephemeral_cache_control(message: &mut Value) -> bool {
+    let Some(obj) = message.as_object_mut() else {
+        return false;
+    };
+    let Some(content) = obj.get_mut("content") else {
+        return false;
+    };
+    match content {
+        Value::String(text) => {
+            if text.trim().is_empty() {
+                return false;
+            }
+            let text = std::mem::take(text);
+            *content = serde_json::json!([{
+                "type": "text",
+                "text": text,
+                "cache_control": { "type": "ephemeral" }
+            }]);
+            true
+        }
+        Value::Array(parts) => {
+            let Some(last_obj) = parts.last_mut().and_then(Value::as_object_mut) else {
+                return false;
+            };
+            if last_obj.get("type").and_then(Value::as_str) != Some("text") {
+                return false;
+            }
+            last_obj.insert(
+                "cache_control".to_string(),
+                serde_json::json!({ "type": "ephemeral" }),
+            );
+            true
+        }
+        _ => false,
+    }
+}
+
+fn apply_openrouter_anthropic_prompt_cache(payload: &mut Value) {
+    const MAX_BREAKPOINTS: usize = 4;
+    const MAX_RECENT_TURNS: usize = 2;
+
+    let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    let mut used = 0usize;
+    for message in messages.iter_mut() {
+        if message.get("role").and_then(Value::as_str) == Some("system")
+            && attach_openrouter_ephemeral_cache_control(message)
+        {
+            used += 1;
+            break;
+        }
+    }
+
+    let mut remaining_recent = MAX_BREAKPOINTS.saturating_sub(used).min(MAX_RECENT_TURNS);
+    for message in messages.iter_mut().rev() {
+        if remaining_recent == 0 {
+            break;
+        }
+        let Some(role) = message.get("role").and_then(Value::as_str) else {
+            continue;
+        };
+        if !matches!(role, "user" | "tool") {
+            continue;
+        }
+        if attach_openrouter_ephemeral_cache_control(message) {
+            remaining_recent -= 1;
+        }
+    }
+}
+
 fn build_openrouter_chat_request_payload(model: &str, request: GenerationRequest) -> Result<Value> {
+    let response_schema = request.response_schema.clone();
     let mut alan_messages = Vec::new();
     if let Some(system_prompt) = request
         .system_prompt
@@ -241,7 +382,21 @@ fn build_openrouter_chat_request_payload(model: &str, request: GenerationRequest
     let chat_request = build_openrouter_chat_request(model, request)?;
     let mut payload = serde_json::to_value(chat_request)
         .context("failed to encode OpenRouter chat completion request")?;
+    if let Some(schema) = response_schema {
+        payload["response_format"] = serde_json::json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": "response",
+                "strict": true,
+                "schema": schema,
+            }
+        });
+    }
     preserve_openrouter_reasoning_fields(&mut payload, &alan_messages)?;
+    request_usage_accounting(&mut payload, false);
+    if is_openrouter_anthropic_claude_model(model) {
+        apply_openrouter_anthropic_prompt_cache(&mut payload);
+    }
     Ok(payload)
 }
 
@@ -339,283 +494,6 @@ pub(crate) fn convert_openrouter_response(response: CompletionsResponse) -> Gene
     }
 }
 
-#[cfg(test)]
-async fn consume_openrouter_stream(
-    mut stream: openrouter_rs::types::UnifiedStream,
-    tx: mpsc::Sender<StreamChunk>,
-) {
-    let mut emitted_payload = false;
-    let mut latest_usage = None;
-    let mut latest_response_id = None;
-    let mut latest_finish_reason = None;
-
-    while let Some(event) = stream.next().await {
-        match event {
-            UnifiedStreamEvent::ContentDelta(text) if !text.is_empty() => {
-                emitted_payload = true;
-                let _ = tx.send(stream_text_chunk(text)).await;
-            }
-            UnifiedStreamEvent::ContentDelta(_) => {}
-            UnifiedStreamEvent::ReasoningDelta(thinking) if !thinking.is_empty() => {
-                emitted_payload = true;
-                let _ = tx.send(stream_thinking_chunk(thinking)).await;
-            }
-            UnifiedStreamEvent::ReasoningDelta(_) => {}
-            UnifiedStreamEvent::ReasoningDetailsDelta(details) => {
-                for detail in details {
-                    if let Some(thinking) = detail.content().filter(|value| !value.is_empty()) {
-                        emitted_payload = true;
-                        let _ = tx.send(stream_thinking_chunk(thinking.to_string())).await;
-                    }
-                    if let Some(signature) = detail.signature.filter(|value| !value.is_empty()) {
-                        emitted_payload = true;
-                        let _ = tx.send(stream_thinking_signature_chunk(signature)).await;
-                    }
-                }
-            }
-            UnifiedStreamEvent::ToolDelta(value) => {
-                if let Some(delta) = tool_delta_from_value(value) {
-                    emitted_payload = true;
-                    let _ = tx.send(stream_tool_chunk(delta)).await;
-                }
-            }
-            UnifiedStreamEvent::Done {
-                id,
-                finish_reason,
-                usage,
-                ..
-            } => {
-                latest_response_id = id;
-                latest_finish_reason = finish_reason;
-                latest_usage = usage.map(convert_usage);
-                break;
-            }
-            UnifiedStreamEvent::Error(error) => {
-                debug!(?error, "OpenRouter stream failed");
-                if emitted_payload {
-                    latest_finish_reason = Some("stream_error".to_string());
-                    break;
-                }
-                return;
-            }
-            UnifiedStreamEvent::Raw { .. } => {}
-            _ => {}
-        }
-    }
-
-    let _ = tx
-        .send(StreamChunk {
-            text: None,
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            usage: latest_usage,
-            provider_response_id: latest_response_id,
-            provider_response_status: None,
-            sequence_number: None,
-            tool_call_delta: None,
-            is_finished: true,
-            finish_reason: latest_finish_reason,
-        })
-        .await;
-}
-
-async fn consume_openrouter_raw_stream(
-    response: reqwest::Response,
-    tx: mpsc::Sender<StreamChunk>,
-) -> Result<()> {
-    consume_router_bytes(
-        response.bytes_stream().map(|chunk| {
-            chunk
-                .map(|bytes| bytes.to_vec())
-                .map_err(anyhow::Error::from)
-        }),
-        tx,
-    )
-    .await
-}
-
-async fn consume_router_bytes<S>(mut stream: S, tx: mpsc::Sender<StreamChunk>) -> Result<()>
-where
-    S: futures::Stream<Item = Result<Vec<u8>>> + Unpin,
-{
-    let mut emitted_payload = false;
-    let mut latest_usage = None;
-    let mut latest_response_id = None;
-    let mut latest_finish_reason = None;
-    let mut parser = crate::SseEventParser::new();
-
-    let mut completed = false;
-    loop {
-        let chunk = tokio::select! {
-            _ = tx.closed() => return Ok(()),
-            chunk = stream.next() => match chunk { Some(chunk) => chunk, None => break },
-        };
-        for event in parser.push(&chunk?) {
-            if event.trim() == "[DONE]" {
-                completed = true;
-                break;
-            }
-            let response = serde_json::from_str::<CompletionsResponse>(&event)?;
-            emit_openrouter_stream_response(
-                response,
-                &tx,
-                &mut emitted_payload,
-                &mut latest_response_id,
-                &mut latest_finish_reason,
-                &mut latest_usage,
-            )
-            .await;
-        }
-        if completed {
-            break;
-        }
-    }
-
-    if !completed {
-        for event in parser.finish() {
-            if event.trim() == "[DONE]" {
-                completed = true;
-                break;
-            }
-            let response = serde_json::from_str::<CompletionsResponse>(&event)?;
-            emit_openrouter_stream_response(
-                response,
-                &tx,
-                &mut emitted_payload,
-                &mut latest_response_id,
-                &mut latest_finish_reason,
-                &mut latest_usage,
-            )
-            .await;
-        }
-    }
-    if tx.is_closed() {
-        return Ok(());
-    }
-    if !completed {
-        return Err(crate::failure::StreamClosed.into());
-    }
-
-    let _ = tx
-        .send(StreamChunk {
-            text: None,
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            usage: latest_usage,
-            provider_response_id: latest_response_id,
-            provider_response_status: None,
-            sequence_number: None,
-            tool_call_delta: None,
-            is_finished: true,
-            finish_reason: Some(latest_finish_reason.unwrap_or_else(|| "stop".into())),
-        })
-        .await;
-    Ok(())
-}
-
-async fn emit_openrouter_stream_response(
-    response: CompletionsResponse,
-    tx: &mpsc::Sender<StreamChunk>,
-    emitted_payload: &mut bool,
-    latest_response_id: &mut Option<String>,
-    latest_finish_reason: &mut Option<String>,
-    latest_usage: &mut Option<TokenUsage>,
-) {
-    *latest_response_id = Some(response.id.clone());
-    if let Some(usage) = response.usage {
-        *latest_usage = Some(convert_usage(usage));
-    }
-
-    for choice in &response.choices {
-        if let Some(content) = choice.content().filter(|value| !value.is_empty()) {
-            *emitted_payload = true;
-            let _ = tx.send(stream_text_chunk(content.to_string())).await;
-        }
-        if let Some(reasoning) = choice.reasoning().filter(|value| !value.is_empty()) {
-            *emitted_payload = true;
-            let _ = tx.send(stream_thinking_chunk(reasoning.to_string())).await;
-        }
-        if let Some(details) = choice.reasoning_details() {
-            for detail in details {
-                if let Some(thinking) = detail.content().filter(|value| !value.is_empty()) {
-                    *emitted_payload = true;
-                    let _ = tx.send(stream_thinking_chunk(thinking.to_string())).await;
-                }
-                if let Some(signature) = detail.signature.as_ref().filter(|value| !value.is_empty())
-                {
-                    *emitted_payload = true;
-                    let _ = tx
-                        .send(stream_thinking_signature_chunk(signature.clone()))
-                        .await;
-                }
-            }
-        }
-        if let Some(partials) = choice.partial_tool_calls() {
-            for partial in partials {
-                if let Ok(value) = serde_json::to_value(partial)
-                    && let Some(delta) = tool_delta_from_value(value)
-                {
-                    *emitted_payload = true;
-                    let _ = tx.send(stream_tool_chunk(delta)).await;
-                }
-            }
-        }
-        if let Some(reason) = choice.finish_reason() {
-            *latest_finish_reason = Some(finish_reason_to_string(reason).to_string());
-        }
-    }
-}
-
-fn apply_openrouter_extra_params(
-    builder: &mut ChatCompletionRequestBuilder,
-    extra_params: HashMap<String, Value>,
-) -> Result<()> {
-    for (key, value) in extra_params {
-        match key.as_str() {
-            "max_completion_tokens" => builder.max_completion_tokens(value_as_u32(&key, value)?),
-            "seed" => builder.seed(value_as_u32(&key, value)?),
-            "top_p" => builder.top_p(value_as_f64(&key, value)?),
-            "top_k" => builder.top_k(value_as_u32(&key, value)?),
-            "frequency_penalty" => builder.frequency_penalty(value_as_f64(&key, value)?),
-            "presence_penalty" => builder.presence_penalty(value_as_f64(&key, value)?),
-            "repetition_penalty" => builder.repetition_penalty(value_as_f64(&key, value)?),
-            "logit_bias" => builder.logit_bias(value_as::<HashMap<String, f64>>(&key, value)?),
-            "logprobs" => builder.logprobs(value_as_bool(&key, value)?),
-            "top_logprobs" => builder.top_logprobs(value_as_u32(&key, value)?),
-            "min_p" => builder.min_p(value_as_f64(&key, value)?),
-            "top_a" => builder.top_a(value_as_f64(&key, value)?),
-            "transforms" => builder.transforms(value_as::<Vec<String>>(&key, value)?),
-            "models" => builder.models(value_as::<Vec<String>>(&key, value)?),
-            "route" => builder.route(value_as_string(&key, value)?),
-            "user" => builder.user(value_as_string(&key, value)?),
-            "session_id" => builder.session_id(value_as_string(&key, value)?),
-            "trace" => builder.trace(value_as::<TraceOptions>(&key, value)?),
-            "provider" => builder.provider(value_as::<ProviderPreferences>(&key, value)?),
-            "metadata" => builder.metadata(value_as::<HashMap<String, String>>(&key, value)?),
-            "plugins" => builder.plugins(value_as::<Vec<Plugin>>(&key, value)?),
-            "modalities" => builder.modalities(value_as::<Vec<Modality>>(&key, value)?),
-            "image_config" => {
-                builder.image_config(value_as::<HashMap<String, Value>>(&key, value)?)
-            }
-            "response_format" => builder.response_format(value_as::<ResponseFormat>(&key, value)?),
-            "reasoning" => builder.reasoning(value_as::<ReasoningConfig>(&key, value)?),
-            "reasoning_effort" => builder.reasoning_effort(effort_from_value(&key, value)?),
-            "reasoning_max_tokens" => builder.reasoning_max_tokens(value_as_u32(&key, value)?),
-            "include_reasoning" => builder.include_reasoning(value_as_bool(&key, value)?),
-            "stop" => builder.stop(value_as::<StopSequence>(&key, value)?),
-            "stream_options" => builder.stream_options(value_as::<StreamOptions>(&key, value)?),
-            "debug" => builder.debug(value_as::<DebugOptions>(&key, value)?),
-            "parallel_tool_calls" => builder.parallel_tool_calls(value_as_bool(&key, value)?),
-            unsupported => {
-                bail!("OpenRouter provider does not support extra parameter `{unsupported}`");
-            }
-        };
-    }
-    Ok(())
-}
-
 fn convert_tool_calls_for_openrouter(tool_calls: Vec<ToolCall>) -> Vec<OrToolCall> {
     tool_calls
         .into_iter()
@@ -644,18 +522,6 @@ fn convert_openrouter_tool_call(call: &OrToolCall) -> std::result::Result<ToolCa
         id: Some(call.id().to_string()),
         name: call.name().to_string(),
         arguments,
-    })
-}
-
-fn tool_delta_from_value(value: Value) -> Option<ToolCallDelta> {
-    let partial: openrouter_rs::types::PartialToolCall = serde_json::from_value(value).ok()?;
-    let function = partial.function;
-    Some(ToolCallDelta {
-        index: partial.index.unwrap_or(0) as usize,
-        id: partial.id,
-        name: function.as_ref().and_then(|function| function.name.clone()),
-        arguments_delta: function.and_then(|function| function.arguments),
-        arguments: None,
     })
 }
 
@@ -714,146 +580,6 @@ fn finish_reason_to_string(reason: &FinishReason) -> &'static str {
         FinishReason::Error => "error",
         _ => "unknown",
     }
-}
-
-fn convert_usage(usage: ResponseUsage) -> TokenUsage {
-    TokenUsage {
-        prompt_tokens: usage.prompt_tokens.min(i32::MAX as u32) as i32,
-        cached_prompt_tokens: None,
-        completion_tokens: usage.completion_tokens.min(i32::MAX as u32) as i32,
-        total_tokens: usage.total_tokens.min(i32::MAX as u32) as i32,
-        reasoning_tokens: None,
-    }
-}
-
-fn stream_text_chunk(text: String) -> StreamChunk {
-    StreamChunk {
-        text: Some(text),
-        thinking: None,
-        thinking_signature: None,
-        redacted_thinking: None,
-        usage: None,
-        provider_response_id: None,
-        provider_response_status: None,
-        sequence_number: None,
-        tool_call_delta: None,
-        is_finished: false,
-        finish_reason: None,
-    }
-}
-
-fn stream_thinking_chunk(thinking: String) -> StreamChunk {
-    StreamChunk {
-        text: None,
-        thinking: Some(thinking),
-        thinking_signature: None,
-        redacted_thinking: None,
-        usage: None,
-        provider_response_id: None,
-        provider_response_status: None,
-        sequence_number: None,
-        tool_call_delta: None,
-        is_finished: false,
-        finish_reason: None,
-    }
-}
-
-fn stream_thinking_signature_chunk(thinking_signature: String) -> StreamChunk {
-    StreamChunk {
-        text: None,
-        thinking: None,
-        thinking_signature: Some(thinking_signature),
-        redacted_thinking: None,
-        usage: None,
-        provider_response_id: None,
-        provider_response_status: None,
-        sequence_number: None,
-        tool_call_delta: None,
-        is_finished: false,
-        finish_reason: None,
-    }
-}
-
-fn stream_tool_chunk(tool_call_delta: ToolCallDelta) -> StreamChunk {
-    StreamChunk {
-        text: None,
-        thinking: None,
-        thinking_signature: None,
-        redacted_thinking: None,
-        usage: None,
-        provider_response_id: None,
-        provider_response_status: None,
-        sequence_number: None,
-        tool_call_delta: Some(tool_call_delta),
-        is_finished: false,
-        finish_reason: None,
-    }
-}
-
-fn non_negative_u32(label: &str, value: i32) -> Result<u32> {
-    u32::try_from(value).with_context(|| format!("`{label}` must be a non-negative integer"))
-}
-
-fn value_as<T>(key: &str, value: Value) -> Result<T>
-where
-    T: DeserializeOwned,
-{
-    serde_json::from_value(value).with_context(|| {
-        format!("OpenRouter extra parameter `{key}` has an unsupported value shape")
-    })
-}
-
-fn value_as_string(key: &str, value: Value) -> Result<String> {
-    value
-        .as_str()
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| anyhow::anyhow!("OpenRouter extra parameter `{key}` must be a string"))
-}
-
-fn value_as_bool(key: &str, value: Value) -> Result<bool> {
-    value
-        .as_bool()
-        .ok_or_else(|| anyhow::anyhow!("OpenRouter extra parameter `{key}` must be a boolean"))
-}
-
-fn value_as_u32(key: &str, value: Value) -> Result<u32> {
-    match value.as_u64().and_then(|value| u32::try_from(value).ok()) {
-        Some(value) => Ok(value),
-        None => bail!("OpenRouter extra parameter `{key}` must be an unsigned 32-bit integer"),
-    }
-}
-
-fn value_as_f64(key: &str, value: Value) -> Result<f64> {
-    value
-        .as_f64()
-        .ok_or_else(|| anyhow::anyhow!("OpenRouter extra parameter `{key}` must be a number"))
-}
-
-fn effort_from_value(key: &str, value: Value) -> Result<Effort> {
-    let raw = value_as_string(key, value)?;
-    match raw.as_str() {
-        "xhigh" => Ok(Effort::Xhigh),
-        "high" => Ok(Effort::High),
-        "medium" => Ok(Effort::Medium),
-        "low" => Ok(Effort::Low),
-        "minimal" => Ok(Effort::Minimal),
-        "none" => Ok(Effort::None),
-        _ => bail!("OpenRouter extra parameter `{key}` has unsupported reasoning effort `{raw}`"),
-    }
-}
-
-fn openrouter_effort(effort: ReasoningEffort) -> Result<Effort> {
-    Ok(match effort {
-        ReasoningEffort::None => Effort::None,
-        ReasoningEffort::Minimal => Effort::Minimal,
-        ReasoningEffort::Low => Effort::Low,
-        ReasoningEffort::Medium => Effort::Medium,
-        ReasoningEffort::High => Effort::High,
-        ReasoningEffort::XHigh => Effort::Xhigh,
-        ReasoningEffort::Max | ReasoningEffort::Ultra => {
-            anyhow::bail!("Provider does not support reasoning effort `{effort}`")
-        }
-    })
 }
 
 #[cfg(test)]

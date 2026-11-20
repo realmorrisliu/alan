@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize, de};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+mod guardian;
 mod provider;
+
+pub use guardian::GuardianConfig;
 
 /// Memory configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +41,8 @@ pub struct DurabilityConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum LlmProvider {
+    #[serde(rename = "magpie")]
+    Magpie,
     #[serde(rename = "google_gemini_generate_content")]
     GoogleGeminiGenerateContent,
     #[serde(rename = "chatgpt")]
@@ -64,6 +69,7 @@ impl LlmProvider {
 
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Magpie => "magpie",
             Self::GoogleGeminiGenerateContent => "google_gemini_generate_content",
             Self::Chatgpt => "chatgpt",
             Self::OpenAiResponses => "openai_responses",
@@ -82,6 +88,7 @@ impl<'de> Deserialize<'de> for LlmProvider {
         D: serde::Deserializer<'de>,
     {
         const SUPPORTED: &[&str] = &[
+            "magpie",
             "google_gemini_generate_content",
             "chatgpt",
             "openai_responses",
@@ -94,6 +101,7 @@ impl<'de> Deserialize<'de> for LlmProvider {
 
         let value = String::deserialize(deserializer)?;
         match value.as_str() {
+            "magpie" => Ok(Self::Magpie),
             "google_gemini_generate_content" => Ok(Self::GoogleGeminiGenerateContent),
             "chatgpt" => Ok(Self::Chatgpt),
             "openai_responses" => Ok(Self::OpenAiResponses),
@@ -169,6 +177,14 @@ pub struct Config {
     #[serde(default)]
     pub connection_profile: Option<String>,
 
+    /// Dedicated Connection profile used for Guardian escalation reviews.
+    #[serde(default)]
+    pub guardian_profile: Option<String>,
+
+    /// Guardian escalation budget, custom policy path, and fallback limits.
+    #[serde(default)]
+    pub guardian: GuardianConfig,
+
     // ========================================================================
     // Internal resolved provider configuration
     // ========================================================================
@@ -177,17 +193,40 @@ pub struct Config {
     pub llm_provider: LlmProvider,
 
     // ========================================================================
+    // Magpie Router Configuration
+    // ========================================================================
+    /// Optional API key for Magpie router (empty/None allowed for local routers).
+    #[serde(skip, default)]
+    pub magpie_api_key: Option<String>,
+
+    /// MAGPIE_BASE_URL (default: <http://127.0.0.1:3425/v1>)
+    #[serde(skip, default = "default_magpie_base_url")]
+    pub magpie_base_url: String,
+
+    /// MAGPIE_MODEL (default: default)
+    #[serde(skip, default = "default_magpie_model")]
+    pub magpie_model: String,
+
+    /// Optional explicit canonical-effort → Magpie thinking level map.
+    #[serde(skip, default)]
+    pub magpie_thinking_level_map: Option<alan_llm::ReasoningEffortMap>,
+
+    // ========================================================================
     // Google Gemini GenerateContent API Configuration
     // ========================================================================
-    /// GOOGLE_GEMINI_GENERATE_CONTENT_PROJECT_ID
+    /// Optional Vertex Express Mode API key (`x-goog-api-key`).
+    #[serde(skip, default)]
+    pub google_gemini_generate_content_api_key: Option<String>,
+
+    /// GOOGLE_GEMINI_GENERATE_CONTENT_PROJECT_ID (required for ADC; optional for Express Mode)
     #[serde(skip, default)]
     pub google_gemini_generate_content_project_id: Option<String>,
 
-    /// GOOGLE_GEMINI_GENERATE_CONTENT_LOCATION (default: us-central1)
+    /// GOOGLE_GEMINI_GENERATE_CONTENT_LOCATION (default: global)
     #[serde(skip, default = "default_google_gemini_generate_content_location")]
     pub google_gemini_generate_content_location: String,
 
-    /// GOOGLE_GEMINI_GENERATE_CONTENT_MODEL (default: gemini-2.0-flash)
+    /// GOOGLE_GEMINI_GENERATE_CONTENT_MODEL (default: gemini-2.5-flash)
     #[serde(skip, default = "default_google_gemini_generate_content_model")]
     pub google_gemini_generate_content_model: String,
 
@@ -413,12 +452,20 @@ fn default_chatgpt_model() -> String {
     "gpt-5.3-codex".to_string()
 }
 
+fn default_magpie_base_url() -> String {
+    alan_llm::magpie::MAGPIE_DEFAULT_BASE_URL.to_string()
+}
+
+fn default_magpie_model() -> String {
+    "default".to_string()
+}
+
 fn default_google_gemini_generate_content_location() -> String {
-    "us-central1".to_string()
+    "global".to_string()
 }
 
 fn default_google_gemini_generate_content_model() -> String {
-    "gemini-2.0-flash".to_string()
+    models::default_model_slug(ModelCatalogProvider::GoogleGeminiGenerateContent).to_string()
 }
 
 fn default_openai_chat_completions_compatible_base_url() -> String {
@@ -454,7 +501,7 @@ fn default_anthropic_messages_base_url() -> String {
 }
 
 fn default_anthropic_messages_model() -> String {
-    "claude-3-5-sonnet-latest".to_string()
+    "claude-sonnet-4-5".to_string()
 }
 
 fn default_llm_timeout_secs() -> usize {
@@ -489,7 +536,14 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             connection_profile: None,
+            guardian_profile: None,
+            guardian: GuardianConfig::default(),
             llm_provider: default_llm_provider(),
+            magpie_api_key: None,
+            magpie_base_url: default_magpie_base_url(),
+            magpie_model: default_magpie_model(),
+            magpie_thinking_level_map: None,
+            google_gemini_generate_content_api_key: None,
             google_gemini_generate_content_project_id: None,
             google_gemini_generate_content_location:
                 default_google_gemini_generate_content_location(),
@@ -546,6 +600,11 @@ impl Default for Config {
 impl Config {
     pub fn reset_internal_provider_config(&mut self) {
         self.llm_provider = default_llm_provider();
+        self.magpie_api_key = None;
+        self.magpie_base_url = default_magpie_base_url();
+        self.magpie_model = default_magpie_model();
+        self.magpie_thinking_level_map = None;
+        self.google_gemini_generate_content_api_key = None;
         self.google_gemini_generate_content_project_id = None;
         self.google_gemini_generate_content_location =
             default_google_gemini_generate_content_location();
@@ -581,6 +640,12 @@ impl Config {
 
     fn copy_internal_provider_config_from(&mut self, other: &Self) {
         self.llm_provider = other.llm_provider;
+        self.magpie_api_key = other.magpie_api_key.clone();
+        self.magpie_base_url = other.magpie_base_url.clone();
+        self.magpie_model = other.magpie_model.clone();
+        self.magpie_thinking_level_map = other.magpie_thinking_level_map.clone();
+        self.google_gemini_generate_content_api_key =
+            other.google_gemini_generate_content_api_key.clone();
         self.google_gemini_generate_content_project_id =
             other.google_gemini_generate_content_project_id.clone();
         self.google_gemini_generate_content_location =

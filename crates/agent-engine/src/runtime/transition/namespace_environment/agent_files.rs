@@ -6,13 +6,17 @@ use alan_agent_protocol::{
     ContentPart, InputMode, Op, Submission, UiActivitySnapshot, UiEvent, UiNoticeSnapshot,
     UiPlanSnapshot, UiThinkingSnapshot, UserInputRecord,
 };
-use alan_ap::OpenMode;
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
+#[cfg(test)]
+pub(super) use super::tape_files::tape_record_bytes;
+#[cfg(test)]
+use super::tape_files::write_tape_records;
 use super::{
     NamespaceActionRecord, NamespaceAgentFiles, NamespaceRequestRecord,
-    client::{InputFrame, NamespaceClient, NamespaceFidGuard},
+    client::{InputFrame, NamespaceClient},
+    tape_files::{NamespaceTapeWriter, read_current_tape_checkpoint, write_agent_output},
 };
 use crate::evidence::{
     EvidenceResolutionError, EvidenceResolutionErrorCode, NamespaceEvidenceReference,
@@ -38,8 +42,11 @@ impl PendingActionPublication {
         }
         Self::from_durable_record(record)
     }
-
-    // Durable evidence is already redacted; recovery preserves its exact bytes.
+    pub(crate) fn with_retained_id(record: NamespaceActionRecord, id: String) -> Self {
+        let mut pending = Self::new(record);
+        pending.id = Some(id);
+        pending
+    }
     fn from_durable_record(record: NamespaceActionRecord) -> Self {
         Self {
             record,
@@ -83,11 +90,20 @@ impl NamespaceAgentFiles {
     pub async fn read_next_input_submission(&self, mode: InputMode) -> Result<Submission> {
         let message = self.read_next_input_payload().await?;
         if let Some(record) = UserInputRecord::decode_payload(message.as_bytes())? {
+            if let Some(schema) = record.response_schema {
+                self.submission_response_schemas
+                    .lock()
+                    .expect("submission response schema mutex poisoned")
+                    .insert(record.submission_id.clone(), schema);
+            }
+            let text_part = (!record.body.trim().is_empty() || record.parts.is_empty())
+                .then(|| ContentPart::text(record.body));
+            let parts = text_part.into_iter().chain(record.parts).collect();
             return Ok(Submission {
                 id: record.submission_id,
                 intent: record.intent,
                 op: Op::Input {
-                    parts: vec![ContentPart::text(record.body)],
+                    parts,
                     mode: record.mode,
                 },
             });
@@ -252,7 +268,9 @@ impl NamespaceAgentFiles {
 
     pub async fn begin_tape_generation(&self) -> Result<NamespaceTapeWriter> {
         let client = NamespaceClient::new(self.root.clone());
-        NamespaceTapeWriter::open(client, &self.agent_path).await
+        let agent_path = &self.agent_path;
+        let tape_path = format!("{agent_path}/machine/tape");
+        NamespaceTapeWriter::open(client, &tape_path).await
     }
 
     pub async fn current_tape_checkpoint(&self) -> Result<String> {
@@ -342,6 +360,84 @@ impl NamespaceAgentFiles {
             self.action_recorder.as_ref(),
         )
         .await
+    }
+
+    /// Allocate an `actions/<id>` directory in `"running"` state without writing write-once `output`.
+    pub(crate) async fn start_running_action(
+        &self,
+        mut record: NamespaceActionRecord,
+    ) -> Result<String> {
+        record.output = None;
+        if let Some(result) = record.result.as_mut() {
+            *result = crate::evidence::redact_durable_evidence_text(result).text;
+        }
+        let client = NamespaceClient::new(self.root.clone());
+        let clone_path = format!("{}/actions/clone", self.agent_path);
+        let mut id = None;
+        client
+            .clone_via_open_retained(&clone_path, &mut id)
+            .await
+            .with_context(|| format!("create action through {clone_path}"))?;
+        let id = id.context("actions/clone did not return an action id")?;
+        let action_path = format!("{}/actions/{id}", self.agent_path);
+        for (field, value) in [
+            ("name", Some(record.name.as_str())),
+            ("result", record.result.as_deref()),
+            ("approval", record.approval.as_deref()),
+            ("process", record.process.as_deref()),
+        ] {
+            if let Some(value) = value {
+                client
+                    .write_document(&format!("{action_path}/{field}"), value.as_bytes())
+                    .await?;
+            }
+        }
+        client
+            .write_document(&format!("{action_path}/status"), record.status.as_bytes())
+            .await?;
+        Ok(id)
+    }
+
+    /// Update mutable metadata on an already-started running action without touching `output`.
+    pub(crate) async fn update_running_action(
+        &self,
+        action_id: &str,
+        result: &str,
+        process: Option<&str>,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        let action_path = format!("{}/actions/{action_id}", self.agent_path);
+        let redacted_result = crate::evidence::redact_durable_evidence_text(result).text;
+        if let Some(process) = process {
+            client
+                .write_document(&format!("{action_path}/process"), process.as_bytes())
+                .await?;
+        }
+        client
+            .write_document(&format!("{action_path}/result"), redacted_result.as_bytes())
+            .await?;
+        client
+            .write_document(&format!("{action_path}/status"), b"running")
+            .await?;
+        Ok(())
+    }
+
+    /// Finalize a pre-allocated running action with write-once `output`, rollout evidence, and terminal `status`.
+    pub(crate) async fn finish_action(
+        &self,
+        action_id: &str,
+        record: NamespaceActionRecord,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        let mut pending = PendingActionPublication::with_retained_id(record, action_id.to_string());
+        publish_action_record(
+            &client,
+            &self.agent_path,
+            &mut pending,
+            self.action_recorder.as_ref(),
+        )
+        .await?;
+        Ok(())
     }
 
     pub(crate) async fn restore_actions(
@@ -637,138 +733,6 @@ impl NamespaceAgentFiles {
     }
 }
 
-/// Canonical v1 record appended to `machine/tape`.
-///
-/// This is deliberately small and self-contained so ADR-0027 D1 can later hash
-/// each record without depending on file offsets or mutable tape state.
-#[derive(Serialize)]
-struct TapeRecordV1<'a> {
-    version: u16,
-    kind: &'static str,
-    role: &'a str,
-    content: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    input_intent: Option<alan_agent_protocol::InputIntent>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    submission_id: Option<&'a str>,
-    #[serde(skip_serializing_if = "<[String]>::is_empty")]
-    related_submission_ids: &'a [String],
-}
-
-/// A held GENERATING lease for `machine/tape`.
-pub struct NamespaceTapeWriter {
-    client: NamespaceClient,
-    guard: NamespaceFidGuard,
-}
-
-impl NamespaceTapeWriter {
-    async fn open(client: NamespaceClient, agent_path: &str) -> Result<Self> {
-        let tape_path = format!("{agent_path}/machine/tape");
-        let fid = client.walk_to(&tape_path).await?;
-        let guard = client
-            .open_guarded_fid(fid, OpenMode::Write)
-            .await
-            .with_context(|| format!("open tape writer for {tape_path}"))?;
-        Ok(Self { client, guard })
-    }
-
-    pub async fn append_record(
-        &self,
-        role: &str,
-        content: &str,
-        submission_id: Option<&str>,
-        related_submission_ids: &[String],
-    ) -> Result<()> {
-        let bytes = tape_record_bytes(role, content, submission_id, related_submission_ids, None)?;
-        self.client
-            .write_at(self.guard.fid(), 0, &bytes)
-            .await
-            .context("append tape record")?;
-        Ok(())
-    }
-
-    /// Append an admitted input with its explicit route, preserving the literal body.
-    pub async fn append_input_record(
-        &self,
-        content: &str,
-        submission_id: &str,
-        intent: alan_agent_protocol::InputIntent,
-    ) -> Result<()> {
-        let bytes = tape_record_bytes("user", content, Some(submission_id), &[], Some(intent))?;
-        self.client
-            .write_at(self.guard.fid(), 0, &bytes)
-            .await
-            .context("append input tape record")?;
-        Ok(())
-    }
-
-    pub async fn finish(self) -> Result<()> {
-        self.guard.close().await
-    }
-}
-
-pub(super) async fn write_agent_output(
-    client: &NamespaceClient,
-    agent_path: &str,
-    response: &str,
-) -> Result<()> {
-    let output_path = format!("{agent_path}/io/output");
-    client
-        .write_document(&output_path, response.as_bytes())
-        .await
-        .with_context(|| format!("write assistant output to {output_path}"))
-}
-
-#[cfg(test)]
-pub(super) async fn write_tape_records<'a>(
-    client: &NamespaceClient,
-    agent_path: &str,
-    records: impl IntoIterator<Item = (&'a str, &'a str)>,
-    submission_id: Option<&str>,
-) -> Result<()> {
-    let writer = NamespaceTapeWriter::open(client.clone(), agent_path).await?;
-    for (role, content) in records {
-        writer
-            .append_record(role, content, submission_id, &[])
-            .await?;
-    }
-    writer.finish().await
-}
-
-async fn read_current_tape_checkpoint(
-    client: &NamespaceClient,
-    agent_path: &str,
-) -> Result<String> {
-    let checkpoint_path = format!("{agent_path}/machine/checkpoints/current");
-    let bytes = client
-        .read_file(&checkpoint_path)
-        .await
-        .with_context(|| format!("read current tape checkpoint from {checkpoint_path}"))?;
-    let checkpoint = String::from_utf8(bytes).context("current tape checkpoint is not utf8")?;
-    Ok(checkpoint.trim().to_string())
-}
-
-pub(super) fn tape_record_bytes(
-    role: &str,
-    content: &str,
-    submission_id: Option<&str>,
-    related_submission_ids: &[String],
-    input_intent: Option<alan_agent_protocol::InputIntent>,
-) -> Result<Vec<u8>> {
-    let record = TapeRecordV1 {
-        version: 1,
-        kind: "message",
-        role,
-        content,
-        input_intent,
-        submission_id,
-        related_submission_ids,
-    };
-    let mut bytes = serde_json::to_vec(&record).context("serialize tape record")?;
-    bytes.push(b'\n');
-    Ok(bytes)
-}
-
 fn validate_agent_file_id(id: &str, label: &str) -> Result<()> {
     if id.is_empty() || id.contains('/') || id == "." || id == ".." {
         bail!("invalid {label}: {id:?}");
@@ -844,11 +808,28 @@ fn machine_control_submission(command: &str) -> Option<Submission> {
             })
         });
     }
+    if let Some(turns_raw) = command.strip_prefix("rollback") {
+        let trimmed = turns_raw.trim();
+        if trimmed.is_empty() {
+            return Some(Submission::new(Op::Rollback { turns: 1 }));
+        }
+        return trimmed
+            .parse::<u32>()
+            .ok()
+            .filter(|turns| *turns >= 1)
+            .map(|turns| Submission::new(Op::Rollback { turns }));
+    }
     match command {
         "queue-v1 continue" => Some(Submission::new(Op::ContinueQueue)),
         "queue-v1 discard" => Some(Submission::new(Op::DiscardQueue)),
         "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),
-        "rollback" => Some(Submission::new(Op::Rollback { turns: 1 })),
+        "reset-session" => Some(Submission::new(Op::ResetSession)),
+        "trust-posture governed" => Some(Submission::new(Op::SetTrustPosture {
+            confined_trusted: false,
+        })),
+        "trust-posture confined-trusted" => Some(Submission::new(Op::SetTrustPosture {
+            confined_trusted: true,
+        })),
         // Turn interrupt is agent-runtime control (stop the current turn,
         // keep the agent alive), not kernel process lifecycle:
         // `/proc/<pid>/ctl` interrupt terminates the process, which is the

@@ -58,23 +58,24 @@ async fn command_result(shell: &Shell, id: &str) -> Value {
                     continue;
                 }
                 let base = format!("/agent/root/actions/{action}");
+                let status = shell.cat(&format!("{base}/status")).await.unwrap();
+                if status != b"completed" && status != b"failed" {
+                    continue;
+                }
                 let bytes = shell.cat(&format!("{base}/result")).await.unwrap();
                 let Ok(mut result) = serde_json::from_slice::<Value>(&bytes) else {
                     continue;
                 };
                 if result["call_id"] == id {
-                    let status = shell.cat(&format!("{base}/status")).await.unwrap();
-                    if status == b"completed" || status == b"failed" {
-                        result["process"] = json!(
-                            String::from_utf8(shell.cat(&format!("{base}/process")).await.unwrap())
-                                .unwrap()
-                        );
-                        result["output"] = serde_json::from_slice(
-                            &shell.cat(&format!("{base}/output")).await.unwrap(),
-                        )
-                        .unwrap_or(Value::Null);
-                        return result;
-                    }
+                    result["process"] = json!(
+                        String::from_utf8(shell.cat(&format!("{base}/process")).await.unwrap())
+                            .unwrap()
+                    );
+                    result["output"] = serde_json::from_slice(
+                        &shell.cat(&format!("{base}/output")).await.unwrap(),
+                    )
+                    .unwrap_or(Value::Null);
+                    return result;
                 }
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -432,7 +433,7 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
     wait_input(&shell, &read).await;
     assert_eq!(
         command_result(&shell, "read-native").await["output"]["content"],
-        "native"
+        "1| native"
     );
     assert_eq!(
         command_result(&shell, "search-native").await["output"]["total"],

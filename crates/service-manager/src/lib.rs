@@ -14,6 +14,7 @@ mod control_fs;
 mod flat_fs;
 mod host_mount;
 mod local_entry;
+pub mod manpages;
 mod package;
 mod process_launch;
 mod process_runner;
@@ -27,11 +28,13 @@ pub use boot_unit::{
 };
 pub use connection::{
     ConnectionService, NativeConnectionAction, NativeConnectionRequest, NativeConnectionResponse,
+    provider_packages,
 };
 pub use connection_profile::{
     ConnectionCredential, ConnectionProfile, ConnectionStoreBindings, ConnectionsFile,
     CredentialKind, ProviderDescriptor, ResolvedConnectionProfile, default_credential_backend,
-    normalize_profile_settings, provider_catalog, sanitize_identifier, validate_profile_settings,
+    first_party_provider_catalog, normalize_profile_settings, provider_catalog,
+    sanitize_identifier, validate_profile_settings,
 };
 pub use control_fs::{
     ManagerState, RestartDecision, ServiceManagerFs, SystemStatus, UnitSnapshot, UnitStatus,
@@ -43,12 +46,17 @@ pub use host_mount::{
 };
 pub use local_entry::LocalEntryService;
 pub use package::{
-    PackageCatalog, PackageCommand, PackageCommandResult, PackageExport, PackageKind,
-    PackageRecord, PackageReferenceLease, PackageService, PackageSnapshot, PackageSnapshotEntry,
-    PackageState, validate_package_store_for_migration,
+    McpPackageExport, McpTransportSpec, PackageCatalog, PackageCommand, PackageCommandResult,
+    PackageExport, PackageExportKind, PackageKind, PackageRecord, PackageReferenceLease,
+    PackageService, PackageSnapshot, PackageSnapshotEntry, PackageState, PackageSyncEntry,
+    ProviderAuthMode, ProviderPackageExport, ToolPackageExport, validate_package_id,
+    validate_package_store_for_migration,
 };
 pub use process_launch::ProcessLaunchContext;
+pub use quartermaster::{
+    CLI_IMPORT_MOUNT_PATH, QuartermasterCommandResult, run_q_command_with_package_service,
+};
 pub use runtime::{
     BOOT_ID_PATH, BOOT_STATE_PATH, InputShadowSelection, LlmClientFactory, ServiceManager,
-    ServiceManagerConfig,
+    ServiceManagerConfig, SessionHandle, SessionLaunchOptions,
 };

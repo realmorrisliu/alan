@@ -145,6 +145,7 @@ fn hydration_omits_unplaced_completed_actions_but_keeps_live_tool_updates() {
         vec![crate::history::RunningTool {
             id: "a2".to_string(),
             title: "active tool".to_string(),
+            tail_lines: Vec::new(),
         }]
     );
 

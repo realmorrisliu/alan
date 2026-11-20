@@ -27,6 +27,7 @@ struct ExplicitRuntimeOverrides {
     streaming_mode: bool,
     partial_stream_recovery_mode: bool,
     durability_required: bool,
+    guardian_profile: bool,
 }
 
 impl Default for AgentConfig {
@@ -93,6 +94,13 @@ impl AgentConfig {
         self.core_config.durability.required = durability_required;
         self.runtime_config.durability_required = durability_required;
         self.explicit_runtime_overrides.durability_required = true;
+    }
+
+    /// Override dedicated Guardian connection profile across agent-root overlays.
+    pub fn set_guardian_profile_override(&mut self, guardian_profile: Option<String>) {
+        self.core_config.guardian_profile = guardian_profile.clone();
+        self.runtime_config.guardian_profile = guardian_profile;
+        self.explicit_runtime_overrides.guardian_profile = true;
     }
 
     pub fn refresh_runtime_derived_fields(&mut self) {
@@ -220,12 +228,16 @@ fn merge_runtime_config_from_core_overlay(
     sync_if_unmodified!(streaming_mode);
     sync_if_unmodified!(partial_stream_recovery_mode);
     sync_if_unmodified!(durability_required);
+    sync_if_unmodified!(guardian_profile);
+    if merged_runtime.guardian == base_runtime.guardian {
+        merged_runtime.guardian = overlaid_runtime.guardian;
+    }
 
     merged_runtime
 }
 
 /// Host inputs for starting one Agent Process runtime.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentProcessConfig {
     /// Agent execution configuration.
     pub agent_config: AgentConfig,
@@ -243,6 +255,27 @@ pub struct AgentProcessConfig {
     pub memory_store_backing: Option<PathBuf>,
     /// Optional execution record used to recover Agent Machine state for a new Process.
     pub recovery_rollout_path: Option<PathBuf>,
+    /// Explicit invocation-only trust posture (never loaded from configs or rollouts).
+    pub trust_posture: crate::policy::TrustPosture,
+    /// Prompt composition mode (`Append` default or `Replace` custom prompt).
+    pub system_prompt_mode: crate::SystemPromptMode,
+    /// Optional default JSON Schema constraining assistant output.
+    pub response_schema: Option<serde_json::Value>,
+    /// Optional host-supplied synchronous Tool policy hook.
+    pub tool_policy_hook: Option<std::sync::Arc<dyn super::ToolPolicyHook>>,
+}
+
+impl std::fmt::Debug for AgentProcessConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentProcessConfig")
+            .field("core_config_source", &self.core_config_source)
+            .field("namespace_cwd", &self.namespace_cwd)
+            .field("trust_posture", &self.trust_posture)
+            .field("system_prompt_mode", &self.system_prompt_mode)
+            .field("has_response_schema", &self.response_schema.is_some())
+            .field("has_tool_policy_hook", &self.tool_policy_hook.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for AgentProcessConfig {
@@ -262,6 +295,10 @@ impl Default for AgentProcessConfig {
             store_bindings: None,
             memory_store_backing: None,
             recovery_rollout_path: None,
+            trust_posture: crate::policy::TrustPosture::Governed,
+            system_prompt_mode: crate::SystemPromptMode::Append,
+            response_schema: None,
+            tool_policy_hook: None,
         }
     }
 }
@@ -283,6 +320,10 @@ impl From<crate::config::Config> for AgentProcessConfig {
             store_bindings: None,
             memory_store_backing: None,
             recovery_rollout_path: None,
+            trust_posture: crate::policy::TrustPosture::Governed,
+            system_prompt_mode: crate::SystemPromptMode::Append,
+            response_schema: None,
+            tool_policy_hook: None,
         }
     }
 }
@@ -304,6 +345,10 @@ impl From<crate::LoadedConfig> for AgentProcessConfig {
             store_bindings: None,
             memory_store_backing: None,
             recovery_rollout_path: None,
+            trust_posture: crate::policy::TrustPosture::Governed,
+            system_prompt_mode: crate::SystemPromptMode::Append,
+            response_schema: None,
+            tool_policy_hook: None,
         }
     }
 }
@@ -344,6 +389,10 @@ impl AgentProcessConfig {
         if let Some(policy_path) = spec.runtime_overrides.policy_path.clone() {
             child.agent_config.runtime_config.governance.policy_path = Some(policy_path);
         }
+        child
+            .agent_config
+            .runtime_config
+            .ad_hoc_subagent_spawn_enabled = false;
         child.namespace_cwd = spec
             .launch
             .cwd
@@ -352,6 +401,9 @@ impl AgentProcessConfig {
         // Only a reconnect recovers a record; the spawn arguments never choose
         // one, so an ordinary child cannot inherit an older child's work.
         child.recovery_rollout_path = request.recovery_rollout.as_deref().map(PathBuf::from);
+        // Children can only inherit equal or narrower invocation trust posture.
+        child.trust_posture = crate::policy::TrustPosture::resolve_child(self.trust_posture, None)
+            .unwrap_or(crate::policy::TrustPosture::Governed);
         child
     }
 
@@ -372,6 +424,10 @@ impl AgentProcessConfig {
         let mut runtime_config = agent_config.runtime_config;
         runtime_config.store_bindings = self.store_bindings.clone();
         runtime_config.memory_store_backing = self.memory_store_backing.clone();
+        runtime_config.trust_posture = self.trust_posture;
+        runtime_config.system_prompt_mode = self.system_prompt_mode.clone();
+        runtime_config.response_schema = self.response_schema.clone();
+        runtime_config.tool_policy_hook = self.tool_policy_hook.clone();
 
         Ok(ResolvedRuntimeLaunchConfig {
             agent_definition,

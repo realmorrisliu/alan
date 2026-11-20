@@ -1,5 +1,11 @@
 use super::*;
+use crate::{MessageContentPart, ReasoningEffort, TokenUsage};
+use axum::{Router, routing::post};
+use futures::StreamExt;
+use openrouter_rs::types::{ResponseUsage, UnifiedStreamEvent};
 use serde_json::json;
+use std::sync::{Arc, Mutex};
+use tokio::net::TcpListener;
 
 #[test]
 fn projects_messages_tools_and_reasoning_effort() {
@@ -307,4 +313,226 @@ fn rejects_unqualified_extended_reasoning_efforts() {
     for effort in [ReasoningEffort::Max, ReasoningEffort::Ultra] {
         assert!(openrouter_effort(effort).is_err());
     }
+}
+
+#[tokio::test]
+async fn generate_sends_image_data_url_and_parses_usage_accounting() {
+    let captured = Arc::new(Mutex::new(None::<Value>));
+    let captured_handler = Arc::clone(&captured);
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let url = format!("http://{}/api/v1", listener.local_addr().unwrap());
+
+    let app = Router::new().route(
+        "/api/v1/chat/completions",
+        post(move |axum::Json(body): axum::Json<Value>| {
+            let captured_handler = Arc::clone(&captured_handler);
+            async move {
+                *captured_handler.lock().unwrap() = Some(body);
+                axum::Json(json!({
+                    "id": "gen-usage-1",
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "native_finish_reason": null,
+                        "message": {"role": "assistant", "content": "looks good"},
+                        "error": null,
+                        "index": 0,
+                        "logprobs": null
+                    }],
+                    "created": 1,
+                    "model": "anthropic/claude-sonnet-4.5",
+                    "object": "chat.completion",
+                    "usage": {
+                        "prompt_tokens": 500,
+                        "completion_tokens": 80,
+                        "total_tokens": 580,
+                        "prompt_tokens_details": {
+                            "cached_tokens": 400,
+                            "cache_write_tokens": 50
+                        },
+                        "completion_tokens_details": {
+                            "reasoning_tokens": 25
+                        },
+                        "cost": 0.0025
+                    }
+                }))
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let mut client =
+        OpenRouterClient::with_params("sk-or-test", &url, "anthropic/claude-sonnet-4.5").unwrap();
+    let mut user = Message::user("");
+    user.content_parts = vec![
+        MessageContentPart::Text {
+            text: "describe".to_string(),
+        },
+        MessageContentPart::Attachment {
+            hash: "img1".to_string(),
+            mime_type: "image/png".to_string(),
+            metadata: json!({"data": "iVBORw0KGgo="}),
+        },
+    ];
+    let mut request = GenerationRequest::new();
+    request.messages.push(user);
+
+    let response = client.generate(request).await.unwrap();
+    server.abort();
+
+    let sent = captured.lock().unwrap().clone().unwrap();
+    assert_eq!(sent["usage"], json!({"include": true}));
+    assert_eq!(
+        sent["messages"][0]["content"],
+        json!([
+            {"type": "text", "text": "describe"},
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}
+            }
+        ])
+    );
+    assert_eq!(response.content, "looks good");
+    assert_eq!(
+        response.usage,
+        Some(TokenUsage {
+            prompt_tokens: 500,
+            cached_prompt_tokens: Some(400),
+            completion_tokens: 80,
+            total_tokens: 580,
+            reasoning_tokens: Some(25),
+            cache_creation_tokens: Some(50),
+            cost_usd: Some(0.0025),
+        })
+    );
+}
+
+#[tokio::test]
+async fn generate_stream_requests_and_parses_usage_accounting() {
+    let captured = Arc::new(Mutex::new(None::<Value>));
+    let captured_handler = Arc::clone(&captured);
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let url = format!("http://{}/api/v1", listener.local_addr().unwrap());
+
+    let app = Router::new().route(
+        "/api/v1/chat/completions",
+        post(move |axum::Json(body): axum::Json<Value>| {
+            let captured_handler = Arc::clone(&captured_handler);
+            async move {
+                *captured_handler.lock().unwrap() = Some(body);
+                let sse = concat!(
+                    "data: {\"id\":\"gen-s1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n",
+                    "data: {\"id\":\"gen-s1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"total_tokens\":120,\"prompt_tokens_details\":{\"cached_tokens\":60,\"cache_write_tokens\":10},\"completion_tokens_details\":{\"reasoning_tokens\":7},\"cost\":0.00042}}\n\n",
+                    "data: [DONE]\n\n"
+                );
+                (
+                    [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                    sse,
+                )
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let mut client = OpenRouterClient::with_params("sk-or-test", &url, "m").unwrap();
+    let mut rx = client
+        .generate_stream(GenerationRequest::new().with_user_message("hello"))
+        .await
+        .unwrap();
+
+    let mut chunks = Vec::new();
+    while let Some(chunk) = rx.recv().await {
+        chunks.push(chunk);
+    }
+    server.abort();
+
+    let sent = captured.lock().unwrap().clone().unwrap();
+    assert_eq!(sent["stream"], json!(true));
+    assert_eq!(sent["usage"], json!({"include": true}));
+    assert_eq!(sent["stream_options"], json!({"include_usage": true}));
+
+    assert_eq!(chunks.len(), 2);
+    assert_eq!(chunks[0].text.as_deref(), Some("hi"));
+    assert!(chunks[1].is_finished);
+    assert_eq!(chunks[1].finish_reason.as_deref(), Some("stop"));
+    assert_eq!(
+        chunks[1].usage,
+        Some(TokenUsage {
+            prompt_tokens: 100,
+            cached_prompt_tokens: Some(60),
+            completion_tokens: 20,
+            total_tokens: 120,
+            reasoning_tokens: Some(7),
+            cache_creation_tokens: Some(10),
+            cost_usd: Some(0.00042),
+        })
+    );
+}
+
+#[test]
+fn openai_reasoning_models_use_developer_role_and_omit_temperature_when_active() {
+    let mut request = GenerationRequest::new()
+        .with_system_prompt("Static instructions")
+        .with_user_message("hello")
+        .with_temperature(0.4)
+        .with_reasoning_effort(ReasoningEffort::High);
+    request.messages.push(Message::context("trailing recall"));
+
+    let payload = build_openrouter_chat_request_payload("openai/gpt-5.4", request).unwrap();
+    assert_eq!(payload["messages"][0]["role"], "developer");
+    assert_eq!(payload["messages"][1]["role"], "user");
+    assert_eq!(payload["messages"][2]["role"], "developer");
+    assert!(
+        payload.get("temperature").is_none() || payload["temperature"].is_null(),
+        "temperature must be omitted for openai/gpt-5.4 with active reasoning: {payload}"
+    );
+}
+
+#[test]
+fn anthropic_claude_attaches_cache_control_breakpoints_and_preserves_system_prefix() {
+    let mut request = GenerationRequest::new()
+        .with_system_prompt("Static system prompt")
+        .with_user_message("turn 1")
+        .with_assistant_message("reply 1");
+    request.messages.push(Message::user("turn 2"));
+    request.messages.push(Message::context("per-turn context"));
+
+    let payload =
+        build_openrouter_chat_request_payload("anthropic/claude-sonnet-4.5", request).unwrap();
+    assert_eq!(payload["messages"][0]["role"], "system");
+    assert_eq!(
+        payload["messages"][0]["content"],
+        json!([{
+            "type": "text",
+            "text": "Static system prompt",
+            "cache_control": {"type": "ephemeral"}
+        }])
+    );
+    assert_eq!(payload["messages"][4]["role"], "user");
+    assert_eq!(
+        payload["messages"][4]["content"][0]["cache_control"],
+        json!({"type": "ephemeral"})
+    );
+    assert_eq!(
+        payload["messages"][3]["content"][0]["cache_control"],
+        json!({"type": "ephemeral"})
+    );
+}
+
+#[test]
+fn honors_session_key_via_stable_derived_session_id() {
+    let req_a = GenerationRequest::new()
+        .with_user_message("a")
+        .with_session_key("boot-1/agent/root");
+    let req_b = GenerationRequest::new()
+        .with_user_message("b")
+        .with_session_key("boot-1/agent/root");
+    let payload_a =
+        build_openrouter_chat_request_payload("anthropic/claude-sonnet-4.5", req_a).unwrap();
+    let payload_b =
+        build_openrouter_chat_request_payload("anthropic/claude-sonnet-4.5", req_b).unwrap();
+    let sid = payload_a["session_id"]
+        .as_str()
+        .expect("session_id present");
+    assert_ne!(sid, "boot-1/agent/root");
+    assert_eq!(sid, payload_b["session_id"].as_str().unwrap());
 }

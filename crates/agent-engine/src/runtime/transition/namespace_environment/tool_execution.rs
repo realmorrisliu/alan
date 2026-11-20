@@ -1,14 +1,27 @@
 //! Tool package discovery, capability resolution, and Process-backed execution.
 
+use std::sync::Arc;
+
+use alan_agent_protocol::ToolResultPresentation;
 use anyhow::{Context, Result, bail};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    NamespaceActionRecord, NamespaceToolActionEvidence, NamespaceToolActionOutput,
-    NamespaceToolExecution, NamespaceToolProcessError, client::NamespaceClient,
+    NamespaceActionRecord, NamespaceAgentFiles, NamespaceToolActionEvidence,
+    NamespaceToolActionOutput, NamespaceToolExecution, NamespaceToolProcessError,
+    agent_files::PendingActionPublication, client::NamespaceClient,
     process_files::NamespaceProcessResult,
 };
 use crate::{evidence::redact_durable_evidence_text, runtime::ToolPackageManifest};
+
+/// A completed Tool Process ready to be published to AgentFS `actions/` in deterministic order.
+pub(crate) struct PreparedToolAction {
+    pid: String,
+    output: String,
+    exit_code: i32,
+    action_record: NamespaceActionRecord,
+}
 
 impl NamespaceToolExecution {
     fn client(&self) -> NamespaceClient {
@@ -150,6 +163,209 @@ impl NamespaceToolExecution {
         if cancel.is_cancelled() {
             bail!("tool process cancelled before spawn");
         }
+        let streaming = if tool_name == "bash"
+            && let Some(ev) = evidence
+            && let Some(context) = &self.tool_process_context
+        {
+            self.start_streaming_bash_action(context, ev).await?
+        } else {
+            None
+        };
+        let preallocated_action_id = streaming.as_ref().map(|stream| stream.action_id.as_str());
+        let prepared = self
+            .execute_action_process_with_action_id(
+                tool_name,
+                evidence,
+                executable,
+                args,
+                cancel,
+                timeout_secs,
+                preallocated_action_id,
+            )
+            .await;
+        match (streaming, prepared) {
+            (Some(stream), Ok(prepared)) => {
+                let action_id = stream.finish().await;
+                let mut pending =
+                    PendingActionPublication::with_retained_id(prepared.action_record, action_id);
+                let action_id = self.agent_files.publish_action(&mut pending).await?;
+                Ok(NamespaceToolActionOutput {
+                    action_id,
+                    pid: prepared.pid,
+                    output: prepared.output,
+                    exit_code: prepared.exit_code,
+                })
+            }
+            (Some(stream), Err(err)) => {
+                let call_id = evidence.map(|ev| ev.call_id).unwrap_or("");
+                let cmdline = evidence
+                    .and_then(|ev| {
+                        ev.arguments
+                            .get("command")
+                            .and_then(serde_json::Value::as_str)
+                    })
+                    .unwrap_or("");
+                let approval = evidence.map_or("not_required", |ev| ev.approval);
+                stream
+                    .abort_failed(&self.agent_files, call_id, cmdline, approval, &err)
+                    .await;
+                Err(err)
+            }
+            (None, Ok(prepared)) => self.publish_prepared_action(prepared).await,
+            (None, Err(err)) => Err(err),
+        }
+    }
+
+    async fn start_streaming_bash_action(
+        &self,
+        context: &super::NamespaceToolProcessContext,
+        evidence: NamespaceToolActionEvidence<'_>,
+    ) -> Result<Option<StreamingBashAction>> {
+        let client = self.client();
+        let agent_path = self.agent_files.agent_path().to_string();
+        let mut retained = None;
+        client
+            .clone_via_open_retained(&format!("{agent_path}/actions/clone"), &mut retained)
+            .await
+            .context("pre-allocate streaming bash action")?;
+        let action_id = retained.context("missing cloned action id")?;
+        let action_path = format!("{agent_path}/actions/{action_id}");
+        let call_id = evidence.call_id.to_string();
+        let cmdline = evidence
+            .arguments
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let initial_result = build_live_bash_result_doc(&call_id, &cmdline, "", "", false);
+        client
+            .write_document(&format!("{action_path}/name"), b"bash")
+            .await?;
+        client
+            .write_document(
+                &format!("{action_path}/approval"),
+                evidence.approval.as_bytes(),
+            )
+            .await?;
+        client
+            .write_document(&format!("{action_path}/result"), initial_result.as_bytes())
+            .await?;
+
+        let (tx, mut rx) = watch::channel((String::new(), String::new(), false));
+        let sink: crate::tools::OutputProgressCallback = Arc::new(
+            move |stdout_tail: &str, stderr_tail: &str, truncated: bool| {
+                let _ =
+                    tx.send_replace((stdout_tail.to_string(), stderr_tail.to_string(), truncated));
+            },
+        );
+        context.tool_runner.set_progress_sink(context.pid, sink);
+
+        let writer_client = self.client();
+        let result_path = format!("{action_path}/result");
+        let cmdline_for_task = cmdline.clone();
+        let call_id_for_task = call_id.clone();
+        let stop_token = CancellationToken::new();
+        let task_stop = stop_token.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    changed = rx.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                    }
+                    _ = task_stop.cancelled() => {
+                        if rx.has_changed().unwrap_or(false) {
+                            let (stdout_tail, stderr_tail, truncated) = rx.borrow_and_update().clone();
+                            let doc = build_live_bash_result_doc(
+                                &call_id_for_task,
+                                &cmdline_for_task,
+                                &stdout_tail,
+                                &stderr_tail,
+                                truncated,
+                            );
+                            let _ = writer_client.write_document(&result_path, doc.as_bytes()).await;
+                        }
+                        break;
+                    }
+                }
+                let (stdout_tail, stderr_tail, truncated) = rx.borrow_and_update().clone();
+                let doc = build_live_bash_result_doc(
+                    &call_id_for_task,
+                    &cmdline_for_task,
+                    &stdout_tail,
+                    &stderr_tail,
+                    truncated,
+                );
+                if let Err(err) = writer_client
+                    .write_document(&result_path, doc.as_bytes())
+                    .await
+                {
+                    tracing::debug!(error = %err, "failed to write live bash action preview");
+                    break;
+                }
+            }
+        });
+
+        Ok(Some(StreamingBashAction {
+            action_id,
+            tool_runner: context.tool_runner.clone(),
+            pid: context.pid,
+            stop_token,
+            task: Some(task),
+        }))
+    }
+
+    /// Spawn and wait for one Tool Process without publishing its `actions/` record yet.
+    /// Callers running read-only batches concurrently use this to overlap execution and then
+    /// commit `actions/` in deterministic batch order via [`Self::publish_prepared_action`].
+    pub(crate) async fn execute_action_process<I, S>(
+        &self,
+        tool_name: &str,
+        evidence: Option<NamespaceToolActionEvidence<'_>>,
+        executable: &str,
+        args: I,
+        cancel: &CancellationToken,
+        timeout_secs: usize,
+    ) -> Result<PreparedToolAction>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.execute_action_process_with_action_id(
+            tool_name,
+            evidence,
+            executable,
+            args,
+            cancel,
+            timeout_secs,
+            None,
+        )
+        .await
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "internal helper carries optional preallocated streaming action id"
+    )]
+    async fn execute_action_process_with_action_id<I, S>(
+        &self,
+        tool_name: &str,
+        evidence: Option<NamespaceToolActionEvidence<'_>>,
+        executable: &str,
+        args: I,
+        cancel: &CancellationToken,
+        timeout_secs: usize,
+        preallocated_action_id: Option<&str>,
+    ) -> Result<PreparedToolAction>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        if cancel.is_cancelled() {
+            bail!("tool process cancelled before spawn");
+        }
         let mut operation = self.operation_cleanup.lease(self.client(), b"cancel")?;
         let read_only_before =
             evidence.and_then(|evidence| self.read_only_context(tool_name, evidence));
@@ -181,6 +397,7 @@ impl NamespaceToolExecution {
                 error.context(NamespaceToolProcessError {
                     category,
                     pid: pid.clone(),
+                    action_id: preallocated_action_id.map(str::to_string),
                 })
             })
         } else {
@@ -204,7 +421,11 @@ impl NamespaceToolExecution {
         let result = match result {
             Ok(result) => result,
             Err(category) => {
-                let error = anyhow::Error::new(NamespaceToolProcessError { category, pid });
+                let error = anyhow::Error::new(NamespaceToolProcessError {
+                    category,
+                    pid,
+                    action_id: preallocated_action_id.map(str::to_string),
+                });
                 return Err(match operation.retire().await {
                     Ok(()) => error,
                     Err(cleanup) => error.context(cleanup),
@@ -260,21 +481,33 @@ impl NamespaceToolExecution {
             );
         }
         let durable_output = redact_durable_evidence_text(&result.output);
-        let action_id = self
-            .agent_files
-            .write_action(
-                NamespaceActionRecord::new(tool_name, action_status)
-                    .with_output(durable_output.text)
-                    .with_result(result_doc.to_string())
-                    .with_approval(evidence.map_or("not_required", |evidence| evidence.approval))
-                    .with_process(format!("/proc/{pid}")),
-            )
-            .await?;
-        Ok(NamespaceToolActionOutput {
-            action_id,
+        let action_record = NamespaceActionRecord::new(tool_name, action_status)
+            .with_output(durable_output.text)
+            .with_result(result_doc.to_string())
+            .with_approval(evidence.map_or("not_required", |evidence| evidence.approval))
+            .with_process(format!("/proc/{pid}"));
+        Ok(PreparedToolAction {
             pid,
             output: result.output,
             exit_code: action_exit_code,
+            action_record,
+        })
+    }
+
+    /// Publish a completed Tool Process to AgentFS `actions/`.
+    pub(crate) async fn publish_prepared_action(
+        &self,
+        prepared: PreparedToolAction,
+    ) -> Result<NamespaceToolActionOutput> {
+        let action_id = self
+            .agent_files
+            .write_action(prepared.action_record)
+            .await?;
+        Ok(NamespaceToolActionOutput {
+            action_id,
+            pid: prepared.pid,
+            output: prepared.output,
+            exit_code: prepared.exit_code,
         })
     }
 }
@@ -311,4 +544,123 @@ fn logical_tool_action_exit_code(result: &NamespaceProcessResult) -> i32 {
     }
 
     result.exit_code
+}
+
+struct StreamingBashAction {
+    action_id: String,
+    tool_runner: crate::tools::ToolProcessRunner,
+    pid: u64,
+    stop_token: CancellationToken,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for StreamingBashAction {
+    fn drop(&mut self) {
+        self.tool_runner.clear_progress_sink(self.pid);
+        self.stop_token.cancel();
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
+impl StreamingBashAction {
+    async fn finish(mut self) -> String {
+        self.tool_runner.clear_progress_sink(self.pid);
+        self.stop_token.cancel();
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
+        self.action_id.clone()
+    }
+
+    async fn abort_failed(
+        mut self,
+        agent_files: &NamespaceAgentFiles,
+        call_id: &str,
+        cmdline: &str,
+        approval: &str,
+        err: &anyhow::Error,
+    ) {
+        self.tool_runner.clear_progress_sink(self.pid);
+        self.stop_token.cancel();
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
+        let mut outcome = serde_json::json!({
+            "success": false,
+            "error": err.to_string(),
+        });
+        if let Some(process_error) = err.downcast_ref::<NamespaceToolProcessError>() {
+            outcome["process"] = serde_json::json!(format!("/proc/{}", process_error.pid));
+            outcome["effect_status"] = serde_json::json!("unknown");
+            outcome["reason"] = serde_json::json!(process_error.category.reason());
+        }
+        let mut envelope = serde_json::json!({
+            "call_id": call_id,
+            "exit_code": 1,
+            "outcome": outcome,
+        });
+        let _ = crate::runtime::tool_presentation::write_action_metadata(
+            &mut envelope,
+            "bash",
+            &serde_json::json!({"command": cmdline}),
+            &outcome,
+        );
+        let output = redact_durable_evidence_text(
+            &serde_json::json!({"stdout": "", "stderr": err.to_string()}).to_string(),
+        )
+        .text;
+        let result = redact_durable_evidence_text(&envelope.to_string()).text;
+        let mut record = NamespaceActionRecord::new("bash", "failed")
+            .with_output(output)
+            .with_result(result)
+            .with_approval(approval);
+        if let Some(process_error) = err.downcast_ref::<NamespaceToolProcessError>() {
+            record = record.with_process(format!("/proc/{}", process_error.pid));
+        }
+        let mut pending =
+            PendingActionPublication::with_retained_id(record, self.action_id.clone());
+        if let Err(publish_err) = agent_files.publish_action(&mut pending).await {
+            tracing::debug!(error = %publish_err, "failed to publish aborted streaming bash action");
+        }
+    }
+}
+
+fn build_live_bash_result_doc(
+    call_id: &str,
+    cmdline: &str,
+    stdout_tail: &str,
+    stderr_tail: &str,
+    truncated: bool,
+) -> String {
+    let redacted_stdout = redact_durable_evidence_text(stdout_tail).text;
+    let redacted_stderr = redact_durable_evidence_text(stderr_tail).text;
+    let preview_source = if !redacted_stderr.is_empty() && redacted_stdout.is_empty() {
+        &redacted_stderr
+    } else if !redacted_stderr.is_empty() {
+        &format!("{redacted_stdout}\n{redacted_stderr}")
+    } else {
+        &redacted_stdout
+    };
+    let preview = preview_source.trim().to_string();
+    let presentation = ToolResultPresentation::Command {
+        cmdline: cmdline.to_string(),
+        exit_code: None,
+        stdout: redacted_stdout,
+        stderr: redacted_stderr,
+        truncated,
+    };
+    let title = crate::runtime::tool_presentation::tool_title(
+        "bash",
+        &serde_json::json!({"command": cmdline}),
+    )
+    .unwrap_or_else(|| "Bash".to_string());
+    serde_json::json!({
+        "call_id": call_id,
+        "title": title,
+        "result_preview": preview,
+        "presentation": presentation,
+    })
+    .to_string()
 }

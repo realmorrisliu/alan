@@ -5,16 +5,17 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
-use alan_agent_engine::skills::{
-    SkillScope, SkillTypedDependency, name_to_id, parse_skill_metadata,
-};
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::fs_safety::{ensure_owned_directory, ensure_owned_file, sync_tree};
+use super::manifest::parse_package_manifest;
+use super::materializer_exports::{build_content_exports, verify_materialized_exports};
 use super::{
-    MATERIALIZER_VERSION, PackageExport, PackageSnapshot, PackageSnapshotEntry, validate_package_id,
+    LEGACY_SKILL_MATERIALIZER_VERSION, MATERIALIZER_VERSION, McpPackageExport, PackageExport,
+    PackageExportKind, PackageSnapshot, PackageSnapshotEntry, ProviderPackageExport,
+    ToolPackageExport,
 };
 
 const MAX_SOURCE_FILES: usize = 4_096;
@@ -125,10 +126,29 @@ impl PackageSnapshot {
     }
 }
 
+fn default_legacy_materializer_version() -> String {
+    LEGACY_SKILL_MATERIALIZER_VERSION.to_string()
+}
+
+/// Complete materialization metadata written inside `manifest.json` per package revision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct MaterializationManifest {
+    #[serde(default = "default_legacy_materializer_version")]
+    pub(super) materializer_version: String,
+    #[serde(default)]
+    pub(super) export_kind: PackageExportKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) manifest_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) description: Option<String>,
     pub(super) exports: Vec<PackageExport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) tool_exports: Vec<ToolPackageExport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) mcp_exports: Vec<McpPackageExport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) provider_export: Option<ProviderPackageExport>,
     pub(super) files: Vec<MaterializedFileRecord>,
     pub(super) tree_fingerprint: String,
 }
@@ -144,9 +164,24 @@ pub(super) struct PackageMaterializer<'a> {
     store_root: &'a Path,
 }
 
+pub(super) fn snapshot_materializer_version(snapshot: &PackageSnapshot) -> &'static str {
+    if snapshot
+        .entries
+        .iter()
+        .any(|entry| entry.path == "alan-package.toml" || entry.path == "package.toml")
+    {
+        MATERIALIZER_VERSION
+    } else {
+        LEGACY_SKILL_MATERIALIZER_VERSION
+    }
+}
+
 pub(super) fn materialize_in_memory(
     snapshot: &PackageSnapshot,
 ) -> Result<(BTreeMap<String, Vec<u8>>, MaterializationManifest)> {
+    let parsed_manifest = parse_package_manifest(snapshot)?;
+    let materializer_version = snapshot_materializer_version(snapshot).to_string();
+
     let mut content_files: BTreeMap<String, (Vec<u8>, bool)> = BTreeMap::new();
     for entry in &snapshot.entries {
         content_files.insert(
@@ -155,93 +190,15 @@ pub(super) fn materialize_in_memory(
         );
     }
 
-    let mut exports = Vec::new();
-    let mut skill_ids = BTreeSet::new();
     let mut generated_files = BTreeSet::new();
-    for native_root in native_skill_roots(snapshot)? {
-        let skill_md_path = native_root.join("SKILL.md");
-        let skill_document = snapshot
-            .entries
-            .iter()
-            .find(|entry| Path::new(&entry.path) == skill_md_path)
-            .map(|entry| entry.bytes.as_slice())
-            .context("native skill root missing SKILL.md")?;
-        let skill_id = skill_id_for_native_root(snapshot, &native_root)?;
-        let declared_dependencies = parse_skill_dependencies(&skill_id, skill_document)?;
-        let dependencies = merge_dependencies(
-            declared_dependencies,
-            detect_availability_dependencies(skill_document),
-        );
-        ensure!(
-            skill_ids.insert(skill_id.clone()),
-            "duplicate Skill id `{skill_id}`"
-        );
-        for entry in &snapshot.entries {
-            let Ok(rel) = Path::new(&entry.path).strip_prefix(&native_root) else {
-                continue;
-            };
-            let rel_str = rel
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("/");
-            content_files.insert(
-                format!("skills/{skill_id}/{rel_str}"),
-                (entry.bytes.clone(), entry.executable),
-            );
-        }
-        exports.push(PackageExport {
-            skill_id: skill_id.clone(),
-            root: format!("skills/{skill_id}"),
-            dependencies,
-        });
-    }
+    let computed = build_content_exports(
+        snapshot,
+        parsed_manifest,
+        &mut content_files,
+        &mut generated_files,
+        MAX_SOURCE_FILE_BYTES,
+    )?;
 
-    if !snapshot
-        .entries
-        .iter()
-        .any(|entry| entry.path == "SKILL.md")
-    {
-        for entry in &snapshot.entries {
-            let path = Path::new(&entry.path);
-            if path.components().count() != 2
-                || path.parent() != Some(Path::new("skills"))
-                || path.extension().and_then(|value| value.to_str()) != Some("md")
-            {
-                continue;
-            }
-            let skill_name = path
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .context("command Skill name is not UTF-8")?;
-            let skill_id = name_to_id(skill_name);
-            validate_package_id(&skill_id)?;
-            ensure!(
-                skill_ids.insert(skill_id.clone()),
-                "duplicate Skill id `{skill_id}`"
-            );
-            let body =
-                std::str::from_utf8(&entry.bytes).context("command-style Skill is not UTF-8")?;
-            let dependencies = detect_availability_dependencies(&entry.bytes);
-            let document = command_skill_document(&skill_id, body, &dependencies);
-            ensure!(
-                document.len() <= MAX_SOURCE_FILE_BYTES,
-                "generated command-style Skill exceeds descriptor file size limit"
-            );
-            content_files.insert(
-                format!("skills/{skill_id}/SKILL.md"),
-                (document.into_bytes(), false),
-            );
-            generated_files.insert(format!("skills/{skill_id}/SKILL.md"));
-            exports.push(PackageExport {
-                skill_id: skill_id.clone(),
-                root: format!("skills/{skill_id}"),
-                dependencies,
-            });
-        }
-    }
-
-    exports.sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
     let mut digest = Sha256::new();
     let mut files = Vec::with_capacity(content_files.len());
     let mut plain_files = BTreeMap::new();
@@ -259,7 +216,14 @@ pub(super) fn materialize_in_memory(
     }
 
     let manifest = MaterializationManifest {
-        exports,
+        materializer_version,
+        export_kind: computed.export_kind,
+        manifest_version: computed.manifest_version,
+        description: computed.description,
+        exports: computed.exports,
+        tool_exports: computed.tool_exports,
+        mcp_exports: computed.mcp_exports,
+        provider_export: computed.provider_export,
         files,
         tree_fingerprint: hex::encode(digest.finalize()),
     };
@@ -290,6 +254,25 @@ impl<'a> PackageMaterializer<'a> {
             Err(error) => return Err(error).context("inspect package revision path"),
         }
 
+        let parsed_manifest = parse_package_manifest(snapshot)?;
+        let materializer_version = snapshot_materializer_version(snapshot).to_string();
+
+        let mut content_files: BTreeMap<String, (Vec<u8>, bool)> = BTreeMap::new();
+        for entry in &snapshot.entries {
+            content_files.insert(
+                format!("source/{}", entry.path),
+                (entry.bytes.clone(), entry.executable),
+            );
+        }
+        let mut generated_files = BTreeSet::new();
+        let computed = build_content_exports(
+            snapshot,
+            parsed_manifest,
+            &mut content_files,
+            &mut generated_files,
+            MAX_SOURCE_FILE_BYTES,
+        )?;
+
         let stage = self.store_root.join("staging").join(format!(
             "{}-{}",
             package_id,
@@ -297,106 +280,34 @@ impl<'a> PackageMaterializer<'a> {
         ));
         let source_root = stage.join("source");
         let content_root = stage.join("content");
-        let skills_root = content_root.join("skills");
         fs::create_dir_all(&source_root)?;
-        fs::create_dir_all(&skills_root)?;
+        fs::create_dir_all(&content_root)?;
+
         let materialized = (|| -> Result<MaterializationManifest> {
             for entry in &snapshot.entries {
-                let target = source_root.join(&entry.path);
-                ensure!(
-                    target.starts_with(&source_root),
-                    "snapshot path escaped staging"
-                );
-                if let Some(parent) = target.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&target, &entry.bytes)?;
-                set_executable(&target, entry.executable)?;
+                write_staged_file(&source_root, &entry.path, &entry.bytes, entry.executable)?;
             }
-
             fs::write(
                 stage.join("source-name.json"),
                 serde_json::to_vec(&snapshot.source_name)?,
             )?;
-            copy_tree(&source_root, &content_root.join("source"))?;
 
-            let mut exports = Vec::new();
-            let mut skill_ids = BTreeSet::new();
-            let mut generated_files = BTreeSet::new();
-            let native_roots = native_skill_roots(snapshot)?;
-            for native_root in native_roots {
-                let skill_document = fs::read(source_root.join(&native_root).join("SKILL.md"))?;
-                let skill_id = skill_id_for_native_root(snapshot, &native_root)?;
-                let declared_dependencies = parse_skill_dependencies(&skill_id, &skill_document)?;
-                let dependencies = merge_dependencies(
-                    declared_dependencies,
-                    detect_availability_dependencies(&skill_document),
-                );
-                ensure!(
-                    skill_ids.insert(skill_id.clone()),
-                    "duplicate Skill id `{skill_id}`"
-                );
-                let target = skills_root.join(&skill_id);
-                copy_tree(&source_root.join(&native_root), &target)?;
-                exports.push(PackageExport {
-                    skill_id: skill_id.clone(),
-                    root: format!("skills/{skill_id}"),
-                    dependencies,
-                });
+            for (relative, (bytes, executable)) in &content_files {
+                write_staged_file(&content_root, relative, bytes, *executable)?;
             }
 
-            if !snapshot
-                .entries
-                .iter()
-                .any(|entry| entry.path == "SKILL.md")
-            {
-                for entry in &snapshot.entries {
-                    let path = Path::new(&entry.path);
-                    if path.components().count() != 2
-                        || path.parent() != Some(Path::new("skills"))
-                        || path.extension().and_then(|value| value.to_str()) != Some("md")
-                    {
-                        continue;
-                    }
-                    let skill_name = path
-                        .file_stem()
-                        .and_then(|value| value.to_str())
-                        .context("command Skill name is not UTF-8")?;
-                    let skill_id = name_to_id(skill_name);
-                    validate_package_id(&skill_id)?;
-                    ensure!(
-                        skill_ids.insert(skill_id.clone()),
-                        "duplicate Skill id `{skill_id}`"
-                    );
-                    let body = std::str::from_utf8(&entry.bytes)
-                        .context("command-style Skill is not UTF-8")?;
-                    let dependencies = detect_availability_dependencies(&entry.bytes);
-                    let document = command_skill_document(&skill_id, body, &dependencies);
-                    ensure!(
-                        document.len() <= MAX_SOURCE_FILE_BYTES,
-                        "generated command-style Skill exceeds descriptor file size limit"
-                    );
-                    let target = skills_root.join(&skill_id);
-                    fs::create_dir_all(&target)?;
-                    fs::write(target.join("SKILL.md"), document)?;
-                    generated_files.insert(format!("{skill_id}/SKILL.md"));
-                    exports.push(PackageExport {
-                        skill_id: skill_id.clone(),
-                        root: format!("skills/{skill_id}"),
-                        dependencies,
-                    });
-                }
-            }
-            exports.sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
-            let generated_files = generated_files
-                .into_iter()
-                .map(|path| format!("skills/{path}"))
-                .collect::<BTreeSet<_>>();
             let files = materialized_file_records(&content_root, &generated_files)?;
             let manifest = MaterializationManifest {
-                tree_fingerprint: fingerprint_directory(&content_root)?,
-                exports,
+                materializer_version,
+                export_kind: computed.export_kind,
+                manifest_version: computed.manifest_version,
+                description: computed.description,
+                exports: computed.exports,
+                tool_exports: computed.tool_exports,
+                mcp_exports: computed.mcp_exports,
+                provider_export: computed.provider_export,
                 files,
+                tree_fingerprint: fingerprint_directory(&content_root)?,
             };
             fs::write(
                 stage.join("manifest.json"),
@@ -433,6 +344,17 @@ impl<'a> PackageMaterializer<'a> {
             }
         }
     }
+}
+
+fn write_staged_file(root: &Path, relative: &str, bytes: &[u8], executable: bool) -> Result<()> {
+    let target = root.join(relative);
+    ensure!(target.starts_with(root), "snapshot path escaped staging");
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&target, bytes)?;
+    set_executable(&target, executable)?;
+    Ok(())
 }
 
 pub(super) fn validate_snapshot(snapshot: &PackageSnapshot) -> Result<()> {
@@ -505,11 +427,19 @@ pub(super) fn validate_snapshot(snapshot: &PackageSnapshot) -> Result<()> {
 }
 
 pub(super) fn fingerprint(snapshot: &PackageSnapshot) -> Result<String> {
+    fingerprint_with_version(snapshot, snapshot_materializer_version(snapshot))
+}
+
+pub(super) fn fingerprint_with_version(
+    snapshot: &PackageSnapshot,
+    materializer_version: &str,
+) -> Result<String> {
     validate_snapshot(snapshot)?;
+    let _ = parse_package_manifest(snapshot)?;
     let mut entries = snapshot.entries.clone();
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     let mut digest = Sha256::new();
-    digest.update(MATERIALIZER_VERSION.as_bytes());
+    digest.update(materializer_version.as_bytes());
     digest.update((snapshot.source_name.len() as u64).to_be_bytes());
     digest.update(snapshot.source_name.as_bytes());
     for entry in entries {
@@ -520,136 +450,6 @@ pub(super) fn fingerprint(snapshot: &PackageSnapshot) -> Result<String> {
         digest.update(&entry.bytes);
     }
     Ok(hex::encode(digest.finalize()))
-}
-
-fn parse_skill_dependencies(skill_id: &str, document: &[u8]) -> Result<Vec<SkillTypedDependency>> {
-    let text = std::str::from_utf8(document).context("SKILL.md is not UTF-8")?;
-    let virtual_path = Path::new(skill_id).join("SKILL.md");
-    let metadata = parse_skill_metadata(text, &virtual_path, SkillScope::Installed)
-        .map_err(anyhow::Error::from)
-        .context("validate native SKILL.md")?;
-    ensure!(
-        metadata.id == skill_id,
-        "native Skill runtime identity is not deterministic"
-    );
-    Ok(alan_agent_engine::skills::skill_declared_dependencies(
-        &metadata,
-    ))
-}
-
-fn detect_availability_dependencies(document: &[u8]) -> Vec<SkillTypedDependency> {
-    let text = String::from_utf8_lossy(document);
-    let mut dependencies = BTreeMap::new();
-    for (needle, name) in [
-        ("WebSearch", "web-search"),
-        ("WebFetch", "web-fetch"),
-        ("TeamCreate", "team-orchestration"),
-        ("TaskCreate", "team-orchestration"),
-    ] {
-        if text.contains(needle) {
-            dependencies.insert(
-                format!("runtime_capability:{name}"),
-                SkillTypedDependency::RuntimeCapability {
-                    name: name.to_string(),
-                    description: Some("Required by imported command vocabulary.".to_string()),
-                },
-            );
-        }
-    }
-    dependencies.into_values().collect()
-}
-
-fn merge_dependencies(
-    left: Vec<SkillTypedDependency>,
-    right: Vec<SkillTypedDependency>,
-) -> Vec<SkillTypedDependency> {
-    let mut dependencies = BTreeMap::new();
-    for dependency in left.into_iter().chain(right) {
-        dependencies
-            .entry(dependency.identity_key())
-            .or_insert(dependency);
-    }
-    dependencies.into_values().collect()
-}
-
-fn command_skill_document(
-    skill_id: &str,
-    body: &str,
-    dependencies: &[SkillTypedDependency],
-) -> String {
-    let yaml_skill_id = serde_yaml::to_string(skill_id)
-        .expect("validated Skill id serialization must succeed")
-        .trim_start_matches("---\n")
-        .trim_end()
-        .to_string();
-    let mut document = format!(
-        "---\nname: {yaml_skill_id}\ndescription: Imported command-style Skill `{skill_id}`.\n"
-    );
-    if !dependencies.is_empty() {
-        document.push_str("compatibility:\n  dependencies:\n");
-        for dependency in dependencies {
-            let yaml = serde_yaml::to_string(dependency)
-                .expect("typed dependency serialization must succeed");
-            let yaml = yaml.trim_start_matches("---\n");
-            let mut lines = yaml.lines();
-            if let Some(first) = lines.next() {
-                document.push_str(&format!("    - {first}\n"));
-            }
-            for line in lines {
-                document.push_str(&format!("      {line}\n"));
-            }
-        }
-    }
-    document.push_str("---\n\n# Alan adapter\n\nThis Skill was imported by Package Service materializer `alan-skill-v1`. Treat foreign command placeholders as instruction context; unavailable capabilities remain explicit dependencies.\n\n");
-    document.push_str(body);
-    document
-}
-
-fn native_skill_roots(snapshot: &PackageSnapshot) -> Result<Vec<PathBuf>> {
-    if snapshot
-        .entries
-        .iter()
-        .any(|entry| entry.path == "SKILL.md")
-    {
-        return Ok(vec![PathBuf::new()]);
-    }
-    let mut roots = snapshot
-        .entries
-        .iter()
-        .filter(|entry| entry.path.ends_with("/SKILL.md"))
-        .map(|entry| {
-            Path::new(&entry.path)
-                .parent()
-                .expect("nested SKILL.md has a parent")
-                .to_path_buf()
-        })
-        .filter(|root| !has_non_export_component(root))
-        .collect::<Vec<_>>();
-    roots.sort();
-    roots.dedup();
-    for (index, root) in roots.iter().enumerate() {
-        ensure!(
-            roots
-                .iter()
-                .skip(index + 1)
-                .all(|other| !other.starts_with(root)),
-            "overlapping native Skill roots are ambiguous"
-        );
-    }
-    Ok(roots)
-}
-
-fn skill_id_for_native_root(snapshot: &PackageSnapshot, root: &Path) -> Result<String> {
-    let source = if root.as_os_str().is_empty() {
-        snapshot.source_name.as_str()
-    } else {
-        root.file_name()
-            .and_then(|name| name.to_str())
-            .context("native Skill directory is not UTF-8")?
-    };
-    let skill_id = name_to_id(source);
-    validate_package_id(&skill_id).context("native Skill directory has no canonical identity")?;
-    Ok(skill_id)
 }
 
 pub(super) fn verify_materialized_revision(
@@ -670,14 +470,21 @@ pub(super) fn verify_materialized_revision(
         "package source root is not an owned directory",
     )?;
     let snapshot = PackageSnapshot::from_directory_named(&source_root, source_name)?;
-    ensure!(
-        fingerprint(&snapshot)? == revision,
-        "package source fingerprint does not match its immutable revision"
-    );
     let manifest_path = root.join("manifest.json");
     ensure_owned_file(&manifest_path, "package manifest is not an owned file")?;
     let manifest: MaterializationManifest = serde_json::from_slice(&fs::read(manifest_path)?)
         .context("decode materialization manifest")?;
+    ensure!(
+        matches!(
+            manifest.materializer_version.as_str(),
+            LEGACY_SKILL_MATERIALIZER_VERSION | MATERIALIZER_VERSION
+        ),
+        "materialization manifest uses unsupported version"
+    );
+    ensure!(
+        fingerprint_with_version(&snapshot, &manifest.materializer_version)? == revision,
+        "package source fingerprint does not match its immutable revision"
+    );
     let content_root = root.join("content");
     ensure_owned_directory(
         &content_root,
@@ -699,15 +506,14 @@ pub(super) fn verify_materialized_revision(
         recorded_paths.len() == manifest.files.len() && recorded_paths == actual_paths,
         "materialization manifest does not enumerate its complete file tree"
     );
-    for export in &manifest.exports {
-        validate_package_id(&export.skill_id)?;
-        let export_root = root.join("content").join(&export.root);
-        ensure!(
-            export.root == format!("skills/{}", export.skill_id)
-                && export_root.join("SKILL.md").is_file(),
-            "materialization manifest contains an invalid Skill export"
-        );
-    }
+    verify_materialized_exports(
+        &content_root,
+        manifest.export_kind,
+        &manifest.exports,
+        &manifest.tool_exports,
+        &manifest.mcp_exports,
+        manifest.provider_export.as_ref(),
+    )?;
     Ok(manifest)
 }
 
@@ -794,32 +600,6 @@ fn revision_root(root: &Path, package_id: &str, revision: &str) -> PathBuf {
     root.join("revisions").join(package_id).join(revision)
 }
 
-fn copy_tree(source: &Path, target: &Path) -> Result<()> {
-    fs::create_dir_all(target)?;
-    let mut pending = vec![(source.to_path_buf(), target.to_path_buf())];
-    while let Some((from, to)) = pending.pop() {
-        let mut entries = fs::read_dir(&from)?.collect::<std::io::Result<Vec<_>>>()?;
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries {
-            let source_path = entry.path();
-            let target_path = to.join(entry.file_name());
-            let metadata = fs::symlink_metadata(&source_path)?;
-            ensure!(
-                !metadata.file_type().is_symlink(),
-                "materialized Skill contains a symlink"
-            );
-            if metadata.is_dir() {
-                fs::create_dir_all(&target_path)?;
-                pending.push((source_path, target_path));
-            } else {
-                fs::copy(&source_path, &target_path)?;
-                set_executable(&target_path, executable_bit(&metadata))?;
-            }
-        }
-    }
-    Ok(())
-}
-
 fn slash_path(path: &Path) -> Result<String> {
     path.components()
         .map(|component| match component {
@@ -836,27 +616,6 @@ fn slash_path(path: &Path) -> Result<String> {
 fn has_vcs_component(path: &Path) -> bool {
     path.components()
         .any(|component| matches!(component, Component::Normal(value) if value == ".git"))
-}
-
-fn has_non_export_component(path: &Path) -> bool {
-    path.components().any(|component| {
-        matches!(
-            component,
-            Component::Normal(value)
-                if matches!(
-                    value.to_str(),
-                    Some(
-                        "agents"
-                            | "assets"
-                            | "bin"
-                            | "evals"
-                            | "eval-viewer"
-                            | "references"
-                            | "scripts"
-                    )
-                )
-        )
-    })
 }
 
 #[cfg(unix)]

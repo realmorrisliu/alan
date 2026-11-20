@@ -446,3 +446,124 @@ fn test_list_dir_tool_metadata() {
         alan_agent_protocol::ToolCapability::Read
     );
 }
+
+#[tokio::test]
+async fn test_grep_and_glob_respect_gitignore_filters_context_limit_and_mtime_sort() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().to_path_buf();
+
+    tokio::fs::write(root.join(".gitignore"), "*.log\n!keep.log\nignored_dir/\n")
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(root.join("target/debug"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(root.join("node_modules/pkg"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(root.join("ignored_dir"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(root.join("src")).await.unwrap();
+
+    tokio::fs::write(root.join("target/debug/out.rs"), "needle in target\n")
+        .await
+        .unwrap();
+    tokio::fs::write(
+        root.join("node_modules/pkg/index.js"),
+        "needle in node_modules\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(root.join("ignored_dir/skip.rs"), "needle in ignored_dir\n")
+        .await
+        .unwrap();
+    tokio::fs::write(root.join("app.log"), "needle in ignored log\n")
+        .await
+        .unwrap();
+    tokio::fs::write(root.join("keep.log"), "needle in kept log\n")
+        .await
+        .unwrap();
+    tokio::fs::write(root.join("src/older.rs"), "before\nneedle one\nafter\n")
+        .await
+        .unwrap();
+    tokio::fs::write(root.join("src/helper.ts"), "needle ts\n")
+        .await
+        .unwrap();
+
+    // Ensure distinct modification times for mtime descending sort test.
+    std::thread::sleep(std::time::Duration::from_millis(25));
+    tokio::fs::write(root.join("src/newer.rs"), "needle two\n")
+        .await
+        .unwrap();
+
+    let ctx = tool_context_with_root(root.clone(), root.join("tmp"), Arc::new(Config::default()));
+    let grep = GrepTool::new();
+
+    // Default gitignore + file_type rust + context lines
+    let rs_hits = grep
+        .execute(
+            json!({
+                "pattern": "needle",
+                "path": ".",
+                "file_type": "rust",
+                "before_context": 1,
+                "after_context": 1
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(rs_hits["total"], 2);
+    assert!(!rs_hits["truncated"].as_bool().unwrap());
+    let older_hit = rs_hits["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["path"].as_str().unwrap().ends_with("older.rs"))
+        .unwrap();
+    assert_eq!(older_hit["before"], json!(["before"]));
+    assert_eq!(older_hit["after"], json!(["after"]));
+
+    // glob filter + files_only + limit
+    let files_only = grep
+        .execute(
+            json!({
+                "pattern": "needle",
+                "path": ".",
+                "glob": "*.log",
+                "files_only": true
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(files_only["total"], 1);
+    assert_eq!(files_only["matches"], json!(["/mnt/source/keep.log"]));
+
+    let limited = grep
+        .execute(
+            json!({
+                "pattern": "needle",
+                "path": ".",
+                "limit": 1
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(limited["total"], 1);
+    assert!(limited["truncated"].as_bool().unwrap());
+
+    // Glob respects gitignore/target and sorts newest mtime first.
+    let glob = GlobTool::new();
+    let glob_res = glob
+        .execute(json!({"pattern": "**/*.rs", "path": "."}), &ctx)
+        .await
+        .unwrap();
+    assert_eq!(glob_res["total"], 2);
+    assert_eq!(
+        glob_res["matches"],
+        json!(["/mnt/source/src/newer.rs", "/mnt/source/src/older.rs"])
+    );
+}

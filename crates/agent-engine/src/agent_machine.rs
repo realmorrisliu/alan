@@ -18,6 +18,7 @@ pub(crate) mod owner_work;
 pub(crate) mod pending_resume;
 mod recovery;
 mod runtime_control;
+mod session_allowlist;
 pub(crate) mod task_budget;
 mod transition_state;
 
@@ -74,6 +75,8 @@ pub(crate) struct AgentMachine {
     auto_memory_flush_attempted_in_cycle: bool,
     /// Responses API continuation state, used when chaining via `previous_response_id`.
     responses_continuation: Option<ResponsesContinuationState>,
+    /// Active turn's per-submission `response_schema`, when supplied.
+    active_turn_response_schema: Option<serde_json::Value>,
 }
 
 pub use crate::tape::{Message, MessageRole};
@@ -101,6 +104,7 @@ impl AgentMachine {
             pending_delegated_resumes: Vec::new(),
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
+            active_turn_response_schema: None,
         }
     }
 
@@ -239,6 +243,7 @@ impl AgentMachine {
             pending_delegated_resumes: Vec::new(),
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
+            active_turn_response_schema: None,
         })
     }
 
@@ -549,6 +554,60 @@ impl AgentMachine {
         self.clear_responses_continuation("machine_cleared");
     }
 
+    /// Reset in-memory session state and rotate to a fresh durable rollout when configured.
+    pub(crate) async fn reset_session(
+        &mut self,
+        process_path: &str,
+        model: &str,
+        rollouts_dir: Option<&Path>,
+        rollout_cwd: Option<&Path>,
+        reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
+    ) -> anyhow::Result<Option<RolloutRecorder>> {
+        self.tape.clear();
+        self.has_active_task = false;
+        self.last_turn_context_snapshot_fingerprint = None;
+        self.clear_responses_continuation("session_reset");
+        self.reset_session_transition_state();
+        self.effect_index.clear();
+        self.user_turn_ordinal = 0;
+        self.compaction_failure_streak = 0;
+        self.latest_compaction_attempt = None;
+        self.latest_memory_flush_attempt = None;
+        self.evaluation_observation = None;
+        self.owner_work = None;
+        self.task_budget = None;
+        self.task_budget_wait = None;
+        self.inherited_budget_wait = None;
+        self.pending_delegated_resumes.clear();
+        self.auto_memory_flush_attempted_in_cycle = false;
+        self.active_turn_response_schema = None;
+        self.memory_record_id = uuid::Uuid::new_v4().to_string();
+
+        if let Some(old_recorder) = self.recorder.take() {
+            if let Err(err) = old_recorder.flush().await {
+                tracing::warn!(error = %err, "Failed to flush prior rollout recorder during session reset");
+            }
+            if let Err(err) = old_recorder.close().await {
+                tracing::warn!(error = %err, "Failed to close prior rollout recorder during session reset");
+            }
+        }
+
+        let Some(rollouts_dir) = rollouts_dir else {
+            return Ok(None);
+        };
+        let next_recorder = RolloutRecorder::new_in_dir_with_cwd_and_reasoning_effort(
+            process_path,
+            model,
+            rollouts_dir,
+            rollout_cwd,
+            reasoning_effort,
+        )
+        .await?;
+        self.memory_record_id = next_recorder.rollout_id().to_string();
+        self.recorder = Some(next_recorder.clone());
+        Ok(Some(next_recorder))
+    }
+
     /// Roll back the last `num_turns` user turns from in-memory context.
     ///
     /// This mutation is intentionally non-durable: recovery from persisted rollout
@@ -829,6 +888,21 @@ impl AgentMachine {
     /// Stable discriminator for this Agent Process's generated memory records.
     pub(crate) fn memory_record_id(&self) -> &str {
         &self.memory_record_id
+    }
+
+    /// Set the active turn's `response_schema` override.
+    pub(crate) fn set_active_turn_response_schema(&mut self, schema: Option<serde_json::Value>) {
+        self.active_turn_response_schema = schema;
+    }
+
+    /// Active turn's `response_schema` override, if any.
+    pub(crate) fn active_turn_response_schema(&self) -> Option<&serde_json::Value> {
+        self.active_turn_response_schema.as_ref()
+    }
+
+    /// Clear any active turn `response_schema` override.
+    pub(crate) fn clear_active_turn_response_schema(&mut self) {
+        self.active_turn_response_schema = None;
     }
 }
 

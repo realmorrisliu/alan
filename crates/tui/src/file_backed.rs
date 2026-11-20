@@ -13,14 +13,20 @@ use alan_ap::InProcessTransport;
 use anyhow::{Context, Result, bail};
 #[cfg(test)]
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
-#[cfg(test)]
-use ratatui::style::Color;
 mod action_detail_io;
 mod app;
 mod file_surface;
+mod fork_picker;
 mod history_merge;
 mod interrupt;
 mod layout;
+mod login;
+mod login_flow;
+pub use login::{
+    LoginControl, LoginControlFuture, LoginControlHandler, LoginInputField, LoginMethod,
+    LoginProgress, LoginProgressSender, LoginProviderChoice, LoginResult, LoginSelectOption,
+    LoginSubmission,
+};
 mod model;
 #[cfg(test)]
 mod model_layout_tests;
@@ -50,6 +56,7 @@ mod queue_lineage_tests;
 mod queue_removed_hint_tests;
 #[cfg(test)]
 mod queue_root_lifetime_tests;
+mod resume_picker;
 #[cfg(test)]
 mod skill_descriptor_tests;
 #[cfg(test)]
@@ -57,11 +64,30 @@ mod skill_review_tests;
 #[cfg(test)]
 mod skill_tests;
 mod skills;
+mod summary_view;
+mod tape_view;
+mod usage;
+pub(crate) mod welcome;
 pub use project::{
     ProjectAccess, ProjectControl, ProjectControlFuture, ProjectControlHandler,
     ProjectControlResult, ProjectMountReceipt,
 };
+mod attachment_io;
+mod editor;
+mod git_status;
+mod help;
+mod man_view;
 mod stdio_completion;
+mod stdio_json;
+mod stdio_runner;
+pub use stdio_json::{StdioTaskOptions, run_stdio_task_with_options};
+pub use stdio_runner::run_stdio_task;
+use stdio_runner::{CommandOutput, StdioTaskSnapshot, StdioTaskWaitContext};
+#[cfg(test)]
+use stdio_runner::{
+    StdioTaskOutput, finish_stdio_task_if_ready, stdio_task_snapshot_from_history,
+    submit_stdio_task, wait_for_stdio_answer, wait_for_stdio_answer_after_submit,
+};
 mod watchers;
 use watchers::AgentWatchers;
 mod tail;
@@ -79,7 +105,7 @@ use file_surface::{
 };
 use file_surface::{
     TapeRecordV1, hydrate_and_open_tails, reattach_to_current_agent, spawn_action_watch,
-    spawn_output_tail, spawn_request_watch, spawn_tape_watch, spawn_terminal_events,
+    spawn_output_tail, spawn_request_watch, spawn_tape_watch, spawn_terminal_events_with_stop,
     spawn_ui_watch, sync_action_from_file, sync_requests_from_files, write_agent_input,
     write_machine_ctl, write_request_response,
 };
@@ -88,10 +114,9 @@ use layout::{
 };
 #[cfg(test)]
 use layout::{draw, live_region_height};
-use tail::{
-    StdioTailAttachment, close_stdio_tails, current_root_agent_pid, open_stdio_tail_attachment,
-    root_agent_path_for_pid, spawn_root_agent_pid_refresh,
-};
+#[cfg(test)]
+use tail::{StdioTailAttachment, close_stdio_tails, open_stdio_tail_attachment};
+use tail::{current_root_agent_pid, root_agent_path_for_pid, spawn_root_agent_pid_refresh};
 
 use crate::completion::CompletionCandidate;
 use crate::composer::Composer;
@@ -111,6 +136,8 @@ mod completion_reference_tests;
 mod observation_io;
 mod project_dispatch;
 mod project_io;
+#[cfg(test)]
+mod ux_polish_tests;
 use project_dispatch::dispatch_with_pending_submissions;
 
 const MAX_COMPOSER_LINES: usize = 10;
@@ -139,6 +166,21 @@ pub struct FileBackedRunConfig {
     pub project_candidate: Option<PathBuf>,
     /// Host-local project grant/revoke control for this Alan invocation.
     pub project_control: Option<ProjectControlHandler>,
+    /// Active OS sandbox backend name displayed in the status bar when supplied.
+    pub sandbox_backend: Option<String>,
+    /// Optional explicit invocation trust posture badge (for example `"confined/trusted"`
+    /// or `"UNSANDBOXED host-account"`). `None` keeps standard governed status display.
+    pub trust_posture_label: Option<String>,
+    /// Optional image/content attachments queued for the first user prompt (from `--image`).
+    pub initial_attachments: Vec<alan_agent_protocol::ContentPart>,
+    /// Host-local interactive login/connection handler for `/login`.
+    pub login_control: Option<LoginControlHandler>,
+    /// Pre-mounted project receipt + canonical Host root hydrated on frame 1.
+    pub initial_project_mount: Option<(ProjectMountReceipt, PathBuf)>,
+    /// Explicit Host report of whether any callable model connection is configured at boot.
+    pub connection_configured: Option<bool>,
+    /// Optional passive update notice shown in the initial welcome header.
+    pub update_notice: Option<String>,
 }
 
 impl FileBackedRunConfig {
@@ -154,6 +196,13 @@ impl FileBackedRunConfig {
             skill_candidates: Vec::new(),
             project_candidate: None,
             project_control: None,
+            sandbox_backend: None,
+            trust_posture_label: None,
+            initial_attachments: Vec::new(),
+            login_control: None,
+            initial_project_mount: None,
+            connection_configured: None,
+            update_notice: None,
         }
     }
 }
@@ -166,21 +215,48 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
 
     let shell = alan_shell::Shell::new(config.root_transport.clone());
     let mut app = FileBackedApp::new(config.agent_path.clone());
+    app.theme = crate::theme::Theme::from_env();
     app.set_effective_model(config.effective_model.clone());
     app.set_project_candidate(config.project_candidate.clone());
-    if let Some(host_root) = &config.host_file_completion_root {
+    if let Some(sandbox) = &config.sandbox_backend {
+        app.sandbox_backend = Some(sandbox.clone());
+    }
+    app.trust_posture_label = config.trust_posture_label.clone();
+    app.login_available = config.login_control.is_some();
+    app.connection_configured = config.connection_configured;
+    app.update_notice = config.update_notice.clone();
+    if !config.initial_attachments.is_empty() {
+        app.pending_attachments = config.initial_attachments.clone();
+    }
+    if let Some((receipt, completion_root)) = &config.initial_project_mount {
+        app.namespace_cwd = PathBuf::from(&receipt.namespace_path);
+        app.project = Some(receipt.clone());
+        app.project_host_root = Some(completion_root.clone());
+        app.set_file_candidates(super::build_file_index(
+            completion_root,
+            crate::FILE_INDEX_LIMIT,
+        ));
+    } else if let Some(host_root) = &config.host_file_completion_root {
         app.set_file_candidates(super::build_file_index(host_root, crate::FILE_INDEX_LIMIT));
+        app.project_host_root = Some(host_root.clone());
     }
     if let Some(history_path) = &config.history_path {
         app.composer = Composer::from_history_path(history_path.clone());
     }
     let follows_root_agent = config.agent_path == "/agent/root";
     let mut pending_root_agent_turns = VecDeque::<PendingRootAgentTurn>::new();
-    let mut terminal = TerminalSession::enter()?;
+    let mut terminal = Some(TerminalSession::enter()?);
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
+    app.maybe_insert_welcome_header();
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<FileBackedEvent>(128);
-    let terminal_reader = spawn_terminal_events(tx.clone());
+    let mut reader_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut terminal_reader = spawn_terminal_events_with_stop(tx.clone(), reader_stop.clone());
+    let mut had_pending_yield = app.pending_yield.is_some();
+    let mut last_osc_title = Some(app.window_title());
+    if let Some(title) = last_osc_title.as_deref() {
+        crate::terminal::set_terminal_title(title);
+    }
 
     let mut watchers = AgentWatchers::start(watch_tails, &config.agent_path, tx.clone());
     let (root_agent_pid_retry, root_agent_pid_retry_rx) = tokio::sync::watch::channel(());
@@ -203,8 +279,13 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let mut jobs = tokio::task::JoinSet::new();
     let model_reads = observation_io::start(shell.clone(), true, tx.clone(), &mut jobs);
     let skill_reads = observation_io::start(shell.clone(), false, tx.clone(), &mut jobs);
+    let usage_reads = observation_io::start_usage(shell.clone(), tx.clone(), &mut jobs);
+    if let Some(host_root) = app.project_host_root.clone() {
+        git_status::spawn_refresh(host_root, &mut jobs, &tx);
+    }
     let mut grant_tick = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut grant_read_pending = false;
+    let mut active_login_task: Option<(u64, tokio::task::AbortHandle)> = None;
     let mut draw_result = Ok(());
     loop {
         tokio::select! {
@@ -212,6 +293,8 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 let Some(event) = event else {
                     break;
                 };
+                let was_project_mounted = app.project_host_root.is_some();
+                let is_input_completed = matches!(event, FileBackedEvent::Ui(UiEvent::InputCompleted { .. }));
                 if let FileBackedEvent::Ui(ref event) = event {
                     observe_root_agent_completion(&mut pending_root_agent_turns, event, &mut app);
                 }
@@ -284,9 +367,66 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             app.apply_skills(&owner, None);
                         }
                     }
+                    FileBackedEvent::UsageChanged { owner } => {
+                        if owner == app.usage.owner {
+                            observation_io::request(&usage_reads, owner);
+                        }
+                    }
+                    FileBackedEvent::UsageUnavailable { owner } => {
+                        if owner == app.usage.owner {
+                            observation_io::request(&usage_reads, String::new());
+                            app.usage.apply(&owner, None);
+                        }
+                    }
                     FileBackedEvent::ObservationRead { revision, owner, snapshot } => {
-                        let request = match &snapshot { observation_io::Snapshot::Model(_) => &model_reads, observation_io::Snapshot::Skills(_) => &skill_reads };
+                        let request = match &snapshot {
+                            observation_io::Snapshot::Model(_) => &model_reads,
+                            observation_io::Snapshot::Skills(_) => &skill_reads,
+                            observation_io::Snapshot::Usage(_) => &usage_reads,
+                        };
                         observation_io::apply(&mut app, request, revision, &owner, snapshot);
+                    }
+                    FileBackedEvent::HistorySwitchCompleted { rollout_id, result } => {
+                        match result {
+                            Ok(()) => {
+                                pending_root_agent_turns.clear();
+                                app.reset_for_rollout_switch(rollout_id.as_deref());
+                                root_agent_pid_retry.send_replace(());
+                            }
+                            Err(error) => app.push_error(format!("rollout switch failed: {error}")),
+                        }
+                    }
+                    FileBackedEvent::LoginStepCompleted { generation, result } => {
+                        if active_login_task
+                            .as_ref()
+                            .is_some_and(|(task_gen, _)| *task_gen == generation)
+                        {
+                            active_login_task = None;
+                        }
+                        if let Some((_, connected_model)) =
+                            app.apply_login_step_result(generation, result)
+                        {
+                            let owner = watchers
+                                .root_agent_pid
+                                .and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid))
+                                .unwrap_or_else(|| app.model.owner.clone());
+                            login::spawn_post_login_model_sync(
+                                config.root_transport.clone(),
+                                owner,
+                                connected_model,
+                                model_reads.clone(),
+                            );
+                        }
+                    }
+                    FileBackedEvent::GitStatusUpdated { root, status } => {
+                        if app.project_host_root.as_ref() == Some(&root) {
+                            app.git_status = status;
+                        }
+                    }
+                    FileBackedEvent::FileIndexUpdated { root, candidates } => {
+                        if app.project_host_root.as_ref() == Some(&root) {
+                            app.set_file_candidates(candidates);
+                        }
                     }
                     FileBackedEvent::RequestsChanged => {
                         if let Err(err) = sync_requests_from_files(&shell, &app.agent_path.clone(), &mut app).await {
@@ -303,10 +443,16 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         .await
                         {
                             app.push_error(format!("action refresh failed: {err:#}"));
-                        } else if let Some(grant_id) = app.take_ready_project_revoke()
-                            && let Some(handler) = config.project_control.as_ref() {
-                            let owner = app.pending_project_control.as_ref().map(|p| p.owner.clone()).unwrap_or_default();
-                            project_io::start(&mut app, handler, ProjectControl::Revoke { grant_id }, owner, &mut jobs, &tx);
+                        } else {
+                            if let Some(grant_id) = app.take_ready_project_revoke()
+                                && let Some(handler) = config.project_control.as_ref()
+                            {
+                                let owner = app.pending_project_control.as_ref().map(|p| p.owner.clone()).unwrap_or_default();
+                                project_io::start(&mut app, handler, ProjectControl::Revoke { grant_id }, owner, &mut jobs, &tx);
+                            }
+                            if let Some(root) = app.project_host_root.clone() {
+                                git_status::spawn_refresh(root, &mut jobs, &tx);
+                            }
                         }
                     }
                     other => {
@@ -314,8 +460,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             &mut app,
                             other,
                             &pending_root_agent_turns,
-                        )
-                        {
+                        ) {
                             match action {
                                 FileBackedAction::Submit(record) => {
                                     let submitted_at_ms = unix_time_ms();
@@ -331,7 +476,28 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                                 submitted_process: if follows_root_agent { watchers.root_agent_pid } else { app.agent_path.strip_prefix("/agent/").and_then(|pid| pid.parse().ok()) },
                                                 submitted_at_ms,
                                             });
-                                            if follows_root_agent {
+                                            if let Some(host_root) = app.project_host_root.clone()
+                    && (is_input_completed || (!was_project_mounted))
+                {
+                    git_status::spawn_refresh(host_root.clone(), &mut jobs, &tx);
+                    let refresh_tx = tx.clone();
+                    jobs.spawn(async move {
+                        let candidates = tokio::task::spawn_blocking(move || {
+                            (
+                                crate::build_file_index(&host_root, crate::FILE_INDEX_LIMIT),
+                                host_root,
+                            )
+                        })
+                        .await
+                        .ok();
+                        if let Some((candidates, root)) = candidates {
+                            let _ = refresh_tx
+                                .send(FileBackedEvent::FileIndexUpdated { root, candidates })
+                                .await;
+                        }
+                    });
+                }
+                if follows_root_agent {
                                                 watchers
                                                     .refresh_root_agent_attachment(
                                                     &shell,
@@ -427,6 +593,37 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         _ => unreachable!(),
                                     }
                                 }
+                                FileBackedAction::OpenExternalEditor => {
+                                    reader_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    let _ = terminal_reader.await;
+                                    drop(terminal.take());
+                                    let draft = app.composer.text().to_owned();
+                                    let edit_result = tokio::task::spawn_blocking(move || {
+                                        editor::edit_text_in_external_editor(&draft)
+                                    })
+                                    .await;
+                                    terminal = Some(TerminalSession::enter()?);
+                                    last_osc_title = None;
+                                    reader_stop = std::sync::Arc::new(
+                                        std::sync::atomic::AtomicBool::new(false),
+                                    );
+                                    terminal_reader = spawn_terminal_events_with_stop(
+                                        tx.clone(),
+                                        reader_stop.clone(),
+                                    );
+                                    match edit_result {
+                                        Ok(Ok(Some(updated))) => {
+                                            app.composer.apply_external_edit(updated);
+                                            app.refresh_completion();
+                                        }
+                                        Ok(Ok(None)) => {}
+                                        Ok(Err(error)) => app
+                                            .push_error(format!("external editor failed: {error:#}")),
+                                        Err(error) => app.push_error(format!(
+                                            "external editor task failed: {error}"
+                                        )),
+                                    }
+                                }
                                 FileBackedAction::Interrupt => {
                                     match interrupt::interrupt_control(
                                         &app.agent_path,
@@ -446,13 +643,131 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         Err(error) => app.push_error(error),
                                     }
                                 }
+                                FileBackedAction::ReadTape => {
+                                    let owner = watchers
+                                        .root_agent_pid
+                                        .and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid))
+                                        .unwrap_or_else(|| app.agent_path.clone());
+                                    tape_view::start(&shell, &mut app, &tx, &owner);
+                                }
+                                FileBackedAction::ReadMan { topic, generation } => {
+                                    man_view::spawn_read(&shell, &tx, topic, generation);
+                                }
+                                FileBackedAction::ReadHistoryCatalog { generation } => {
+                                    resume_picker::spawn_load_catalog(&shell, &tx, generation);
+                                }
+                                FileBackedAction::SwitchRollout { rollout_id } => {
+                                    resume_picker::spawn_switch_rollout(&shell, &tx, rollout_id);
+                                }
+                                FileBackedAction::InspectProjectSummary => {
+                                    summary_view::spawn_inspect(&shell, &tx);
+                                }
+                                FileBackedAction::EditProjectSummary {
+                                    text,
+                                    expected_revision,
+                                } => {
+                                    summary_view::spawn_edit(&shell, &tx, text, expected_revision);
+                                }
+                                FileBackedAction::DeleteProjectSummary { expected_revision } => {
+                                    summary_view::spawn_delete(&shell, &tx, expected_revision);
+                                }
+                                FileBackedAction::LoginListProviders { generation } => {
+                                    if let Some((_, prev)) = active_login_task.take() {
+                                        prev.abort();
+                                    }
+                                    if let Some(handler) = config.login_control.clone() {
+                                        let abort = login::spawn_list_providers(
+                                            handler,
+                                            tx.clone(),
+                                            generation,
+                                        );
+                                        active_login_task = Some((generation, abort));
+                                    }
+                                }
+                                FileBackedAction::LoginSubmit {
+                                    generation,
+                                    submission,
+                                    progress_rx,
+                                } => {
+                                    if let Some((_, prev)) = active_login_task.take() {
+                                        prev.abort();
+                                    }
+                                    if let Some(handler) = config.login_control.clone() {
+                                        let abort = login::spawn_login_submit(
+                                            handler,
+                                            tx.clone(),
+                                            generation,
+                                            submission,
+                                            progress_rx,
+                                        );
+                                        active_login_task = Some((generation, abort));
+                                    }
+                                }
+                                FileBackedAction::CancelLogin => {
+                                    if let Some((_, prev)) = active_login_task.take() {
+                                        prev.abort();
+                                    }
+                                }
+                                FileBackedAction::Suspend => {
+                                    reader_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    let _ = terminal_reader.await;
+                                    drop(terminal.take());
+                                    if let Err(error) = crate::terminal::suspend_current_process() {
+                                        app.push_error(format!("suspend failed: {error:#}"));
+                                    }
+                                    terminal = Some(TerminalSession::enter()?);
+                                    last_osc_title = None;
+                                    reader_stop = std::sync::Arc::new(
+                                        std::sync::atomic::AtomicBool::new(false),
+                                    );
+                                    terminal_reader = spawn_terminal_events_with_stop(
+                                        tx.clone(),
+                                        reader_stop.clone(),
+                                    );
+                                    last_drawn_second = None;
+                                }
                                 FileBackedAction::Quit => break,
                             }
                         }
                     }
                 }
+                if let Some(host_root) = app.project_host_root.clone()
+                    && (is_input_completed || (!was_project_mounted))
+                {
+                    git_status::spawn_refresh(host_root.clone(), &mut jobs, &tx);
+                    let refresh_tx = tx.clone();
+                    jobs.spawn(async move {
+                        let candidates = tokio::task::spawn_blocking(move || {
+                            (
+                                crate::build_file_index(&host_root, crate::FILE_INDEX_LIMIT),
+                                host_root,
+                            )
+                        })
+                        .await
+                        .ok();
+                        if let Some((candidates, root)) = candidates {
+                            let _ = refresh_tx
+                                .send(FileBackedEvent::FileIndexUpdated { root, candidates })
+                                .await;
+                        }
+                    });
+                }
                 if follows_root_agent {
                     settle_unknown_replaced_input(&mut pending_root_agent_turns, watchers.root_agent_pid, &mut app);
+                }
+                if app.take_ready_auto_continue_on_empty_cancel() {
+                    let owner = watchers
+                        .root_agent_pid
+                        .and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid))
+                        .unwrap_or_else(|| app.agent_path.clone());
+                    spawn_control_write(
+                        config.root_transport.clone(),
+                        tx.clone(),
+                        owner,
+                        "queue-v1 continue".to_string(),
+                        "cancelled — ready".to_string(),
+                        "auto-continue failed".to_string(),
+                    );
                 }
                 if !app.project_host_pending && let Some(grant_id) = app.take_project_cleanup() {
                     if let Some(handler) = config.project_control.as_ref() {
@@ -463,6 +778,16 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     }
                 }
                 action_detail_io::start_pending_for_pid(&shell, &mut app, &tx, watchers.root_agent_pid);
+                let has_yield = app.pending_yield.is_some();
+                if has_yield && !had_pending_yield {
+                    crate::terminal::ring_terminal_bell();
+                }
+                had_pending_yield = has_yield;
+                let osc_title = app.window_title();
+                if last_osc_title.as_ref() != Some(&osc_title) {
+                    crate::terminal::set_terminal_title(&osc_title);
+                    last_osc_title = Some(osc_title);
+                }
                 dirty = true;
             }
             _ = jobs.join_next(), if !jobs.is_empty() => {}
@@ -481,10 +806,12 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
             }
             _ = frame_tick.tick() => {
                 let now_ms = unix_time_ms();
-                if frame_needs_redraw(dirty, &app, now_ms, last_drawn_second) {
-                    let (viewport_width, terminal_height) = terminal.viewport_size();
+                if frame_needs_redraw(dirty, &app, now_ms, last_drawn_second)
+                    && let Some(active_terminal) = terminal.as_mut()
+                {
+                    let (viewport_width, terminal_height) = active_terminal.viewport_size();
                     let committed = app.drain_committed_scrollback(viewport_width, terminal_height);
-                    draw_result = terminal.draw_inline_frame(&committed, inline_viewport_height(
+                    draw_result = active_terminal.draw_inline_frame(&committed, inline_viewport_height(
                         &app,
                         viewport_width,
                         terminal_height,
@@ -501,6 +828,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         }
     }
 
+    if let Some((_, prev)) = active_login_task.take() {
+        prev.abort();
+    }
     jobs.abort_all();
     while jobs.join_next().await.is_some() {}
     watchers.stop().await;
@@ -547,345 +877,6 @@ fn spawn_control_write(
             })
             .await;
     });
-}
-
-/// Run one redirected input, write its output streams, and return its exit status.
-pub async fn run_stdio_task(
-    root_transport: InProcessTransport,
-    agent_path: impl Into<String>,
-    input: &str,
-    interrupt: impl std::future::Future<Output = Result<()>>,
-) -> Result<i32> {
-    use tokio::io::AsyncWriteExt;
-
-    let task = StdioTaskWaitContext::new(input)?;
-
-    let agent_path = agent_path.into();
-    let shell = alan_shell::Shell::new(root_transport);
-    let mut attachment = open_stdio_tail_attachment(&shell, &agent_path).await?;
-
-    let result = wait_for_stdio_answer(&shell, task, &mut attachment, interrupt).await;
-    let close_result = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
-    let answer = result?;
-    close_result?;
-
-    let (out, err, exit_code, add_newline) = match answer {
-        StdioTaskOutput::Agent(answer) => (answer, String::new(), 0, true),
-        StdioTaskOutput::Command(output) => (output.stdout, output.stderr, output.exit_code, false),
-    };
-    let mut stdout = tokio::io::stdout();
-    stdout.write_all(out.as_bytes()).await?;
-    if add_newline && !out.ends_with('\n') {
-        stdout.write_all(b"\n").await?;
-    }
-    stdout.flush().await?;
-    let mut stderr = tokio::io::stderr();
-    stderr.write_all(err.as_bytes()).await?;
-    stderr.flush().await?;
-    Ok(exit_code)
-}
-
-async fn wait_for_stdio_answer(
-    shell: &alan_shell::Shell,
-    task: StdioTaskWaitContext,
-    attachment: &mut StdioTailAttachment,
-    interrupt: impl std::future::Future<Output = Result<()>>,
-) -> Result<StdioTaskOutput> {
-    submit_stdio_task(shell, &task, attachment).await?;
-    wait_for_stdio_answer_after_submit(shell, task, attachment, interrupt).await
-}
-
-async fn submit_stdio_task(
-    shell: &alan_shell::Shell,
-    task: &StdioTaskWaitContext,
-    attachment: &StdioTailAttachment,
-) -> Result<()> {
-    write_agent_input(
-        shell,
-        "/agent/root",
-        Some(attachment.root_agent_pid),
-        &task.record,
-    )
-    .await
-}
-
-async fn wait_for_stdio_answer_after_submit(
-    shell: &alan_shell::Shell,
-    task: StdioTaskWaitContext,
-    attachment: &mut StdioTailAttachment,
-    interrupt: impl std::future::Future<Output = Result<()>>,
-) -> Result<StdioTaskOutput> {
-    tokio::pin!(interrupt);
-    let mut tape_pending = Vec::new();
-    let mut ui_pending = Vec::new();
-    let mut interrupt_requested = false;
-    let mut snapshot = StdioTaskSnapshot {
-        task_started: false,
-        waiting_for_response: false,
-        assistant_answer: None,
-        command_output: None,
-        activity_state: None,
-        task_error: None,
-        completion: None,
-    };
-    let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
-    root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    // Every established future in this loop is polled by its own arm; nothing is left
-    // queued on a shared lock while another arm's body awaits (see
-    // `mountfs::lock_discipline_tests`). `interrupt` is the one future pinned across
-    // iterations, so it must stay a pure signal wait: a caller that made it issue
-    // namespace requests could strand them here while a branch body runs.
-    loop {
-        tokio::select! {
-            bytes = attachment.tape_tail.read(4096) => {
-                let bytes = match bytes {
-                    Ok(bytes) if !bytes.is_empty() => bytes,
-                    result => {
-                        let error = match result {
-                            Ok(_) => anyhow::anyhow!("Agent tape closed before the task completed"),
-                            Err(err) => anyhow::anyhow!("read Agent tape failed: {err:?}"),
-                        };
-                        return Err(error.context("task outcome is unknown"));
-                    }
-                };
-                tape_pending.extend_from_slice(&bytes);
-                for line in drain_lines(&mut tape_pending) {
-                    let Ok(record) = serde_json::from_slice::<TapeRecordV1>(&line) else {
-                        continue;
-                    };
-                    if record.kind != "message" {
-                        continue;
-                    }
-                    if record.belongs_to(&task.record.submission_id) {
-                        snapshot.task_started = true;
-                        if record.role == "assistant" {
-                            snapshot.assistant_answer = Some(record.content);
-                        }
-                    }
-                }
-                if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
-                    return Ok(answer);
-                }
-            }
-            bytes = attachment.ui_tail.read(4096) => {
-                let bytes = match bytes {
-                    Ok(bytes) if !bytes.is_empty() => bytes,
-                    result => {
-                        let error = match result {
-                            Ok(_) => anyhow::anyhow!("Agent UI event stream closed before the task completed"),
-                            Err(err) => anyhow::anyhow!("read Agent UI events failed: {err:?}"),
-                        };
-                        return Err(error.context("task outcome is unknown"));
-                    }
-                };
-                ui_pending.extend_from_slice(&bytes);
-                for line in drain_lines(&mut ui_pending) {
-                    let event = serde_json::from_slice::<UiEvent>(&line)
-                        .map_err(|err| anyhow::anyhow!("parse Agent UI event failed: {err}"))?;
-                    match event {
-                        event @ UiEvent::Activity { .. } => {
-                            stdio_completion::observe_event(&task.record.submission_id, &mut snapshot, event);
-                        }
-                        event @ UiEvent::InputCompleted { .. } => {
-                            stdio_completion::observe_event(&task.record.submission_id, &mut snapshot, event);
-                        }
-                        UiEvent::Error { .. } | UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
-                    }
-                }
-                if interrupt_requested
-                    && interrupt_stdio_task_if_pending(shell, &attachment.agent_process_path, &task.record.submission_id, &snapshot).await?
-                {
-                    bail!("Agent input cancellation requested");
-                }
-                if snapshot.completion.is_none() && snapshot.waiting_for_response {
-                    bail!("Agent task needs interactive input; attach with the TTY renderer");
-                }
-                let refresh_result = {
-                    let refresh = stdio_completion::refresh_answer_after_completion(
-                        shell,
-                        &attachment.agent_process_path,
-                        &task,
-                        &mut snapshot,
-                    );
-                    tokio::pin!(refresh);
-                    // Every await in this loop must be its own select arm. A future left
-                    // queued on a shared lock while another arm's body awaits keeps the
-                    // permit it was handed, so the awaiting arm starves behind it: the
-                    // namespace read then blocks for as long as the other arm takes.
-                    let mut probe: Option<ProbeFuture<'_>> = None;
-                    loop {
-                        tokio::select! {
-                            result = &mut refresh => break result,
-                            _ = root_agent_pid_tick.tick() => {
-                                probe = Some(Box::pin(probe_root_agent_attachment(shell, attachment)));
-                            }
-                            result = async { probe.as_mut().expect("probe future").await }, if probe.is_some() => {
-                                probe = None;
-                                result?;
-                            }
-                        }
-                    }
-                };
-                refresh_result.context("final task outcome is unknown")?;
-                if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
-                    return Ok(answer);
-                }
-            }
-            _ = root_agent_pid_tick.tick() => {
-                probe_root_agent_attachment(shell, attachment).await?;
-            }
-            signal = &mut interrupt, if !interrupt_requested => {
-                signal?;
-                interrupt_requested = true;
-                if interrupt_stdio_task_if_pending(shell, &attachment.agent_process_path, &task.record.submission_id, &snapshot).await? {
-                    bail!("Agent input cancellation requested");
-                }
-            }
-        }
-    }
-}
-
-/// A root-agent probe in flight, polled as its own select arm.
-type ProbeFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>>;
-
-/// A root-agent liveness probe must never gate the answer: a stalled namespace read
-/// is retried on the next tick instead of wedging the wait.
-const ROOT_AGENT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
-
-async fn probe_root_agent_attachment(
-    shell: &alan_shell::Shell,
-    attachment: &StdioTailAttachment,
-) -> Result<()> {
-    match tokio::time::timeout(
-        ROOT_AGENT_PROBE_TIMEOUT,
-        tail::require_stdio_attachment_current(shell, attachment),
-    )
-    .await
-    {
-        Ok(result) => result,
-        // The probe is advisory; a stalled read is retried on the next tick.
-        Err(_) => Ok(()),
-    }
-}
-
-async fn interrupt_stdio_task_if_pending(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-    submission_id: &str,
-    snapshot: &StdioTaskSnapshot,
-) -> Result<bool> {
-    if snapshot.completion.is_some() {
-        return Ok(false);
-    }
-    write_machine_ctl(
-        shell,
-        agent_path,
-        &format!("queue-v1 interrupt {submission_id}"),
-    )
-    .await
-    .context("failed to send Agent task interrupt")?;
-    Ok(true)
-}
-
-fn finish_stdio_task_if_ready(snapshot: &mut StdioTaskSnapshot) -> Result<Option<StdioTaskOutput>> {
-    if snapshot.completion.is_none() {
-        return Ok(None);
-    }
-    if let Some(output) = snapshot.command_output.take() {
-        return Ok(Some(StdioTaskOutput::Command(output)));
-    }
-    if let Some(message) = snapshot.task_error.take() {
-        bail!("Agent task failed: {message}");
-    }
-    if let Some(answer) = snapshot.assistant_answer.take() {
-        return Ok(Some(StdioTaskOutput::Agent(answer)));
-    }
-    Ok(None)
-}
-
-#[derive(Debug)]
-enum StdioTaskOutput {
-    Agent(String),
-    Command(CommandOutput),
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct CommandOutput {
-    stdout: String,
-    stderr: String,
-    #[serde(default)]
-    exit_code: i32,
-}
-
-#[cfg(test)]
-impl StdioTaskOutput {
-    fn agent_answer(self) -> String {
-        match self {
-            Self::Agent(answer) => answer,
-            Self::Command(_) => panic!("expected Agent answer"),
-        }
-    }
-}
-
-struct StdioTaskSnapshot {
-    task_started: bool,
-    waiting_for_response: bool,
-    assistant_answer: Option<String>,
-    command_output: Option<CommandOutput>,
-    activity_state: Option<UiActivityState>,
-    task_error: Option<String>,
-    completion: Option<alan_agent_protocol::UiInputStatus>,
-}
-
-struct StdioTaskWaitContext {
-    record: alan_agent_protocol::UserInputRecord,
-    #[cfg(test)]
-    submitted_at_ms: u64,
-}
-
-impl StdioTaskWaitContext {
-    fn new(input: &str) -> Result<Self> {
-        let (intent, body) = alan_agent_protocol::parse_input_prefix(input);
-        anyhow::ensure!(!body.trim().is_empty(), "stdin input body is empty");
-        Ok(Self {
-            record: alan_agent_protocol::UserInputRecord::new(
-                intent,
-                alan_agent_protocol::InputMode::FollowUp,
-                body,
-            ),
-            #[cfg(test)]
-            submitted_at_ms: unix_time_ms(),
-        })
-    }
-}
-
-#[cfg(test)]
-fn stdio_task_snapshot_from_history(
-    task: &StdioTaskWaitContext,
-    tape_history: &[u8],
-    ui_history: &[u8],
-) -> Result<StdioTaskSnapshot> {
-    let (tape_task_started, assistant_answer) =
-        stdio_completion::tape_outcome(&task.record.submission_id, tape_history)?;
-    let ui_task = file_surface::correlated_ui_task(ui_history, task.submitted_at_ms)?;
-    let mut snapshot = StdioTaskSnapshot {
-        task_started: tape_task_started,
-        waiting_for_response: false,
-        assistant_answer,
-        command_output: None,
-        activity_state: ui_task.state,
-        task_error: None,
-        completion: None,
-    };
-    for line in std::str::from_utf8(ui_history)
-        .context("UI history is not utf8")?
-        .lines()
-    {
-        let event = serde_json::from_str::<UiEvent>(line).context("parse Agent UI history")?;
-        stdio_completion::observe_event(&task.record.submission_id, &mut snapshot, event);
-    }
-    Ok(snapshot)
 }
 
 fn unix_time_ms() -> u64 {
@@ -939,3 +930,15 @@ mod stdio_idle_tests;
 mod stdio_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "file_backed/ux_m2_tests.rs"]
+mod ux_m2_tests;
+#[cfg(test)]
+#[path = "file_backed/ux_m3_tests.rs"]
+mod ux_m3_tests;
+#[cfg(test)]
+#[path = "file_backed/ux_m6_tests.rs"]
+mod ux_m6_tests;
+#[cfg(test)]
+#[path = "file_backed/ux_tests.rs"]
+mod ux_tests;

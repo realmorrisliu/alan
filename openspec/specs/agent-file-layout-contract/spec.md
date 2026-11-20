@@ -52,7 +52,9 @@ on top of this full layout.
 An input operation written to an Agent Process SHALL use the canonical
 `type: "input"` record and SHALL include an explicit `mode`. Alan SHALL NOT
 accept the retired `type: "steer"` alias or infer a mode when the field is
-absent.
+absent. Input scheduling mode and command/Agent intent SHALL remain distinct:
+intent classification MUST NOT invent a missing protocol mode or reinterpret a
+request response as ordinary input.
 
 #### Scenario: Explicit input is submitted
 - **WHEN** a caller submits `type: "input"` with a supported explicit mode and
@@ -409,6 +411,10 @@ no second writer can interleave records into the tape mid-stream. The safe windo
 for an external actor to amend `machine/tape` or `context/` is the agent's
 yielded/paused state.
 
+The same exclusive writer exclusion SHALL cover deterministic command transitions
+that update Tape. A paused ordinary queue does not itself grant any external
+writer permission; the existing protocol-layer lease prerequisites still apply.
+
 #### Scenario: A second writer attempts the tape during generation
 - **WHEN** an agent is generating and another writer attempts to write
   `machine/tape`
@@ -489,6 +495,13 @@ requests, actions, and renderer projections through files owned by the Agent Pro
 durable backing stores. The Process path and durable record identifiers SHALL be sufficient to
 locate and interpret that state.
 
+Accepted submission identity, intent, queue ordering/pause and shared cwd
+recovery evidence SHALL use these owners. Restoring prior execution SHALL require
+explicit durable-record selection and current authority validation; records do
+not confer live capabilities. Reliable pending work is restored
+paused; unknown effects are reconciled and never automatically replayed.
+Missing or untrustworthy records are reported rather than fabricated.
+
 #### Scenario: An Agent Process resumes durable machine state
 - **WHEN** Agent Runtime Service restores an Agent Machine from durable rollout or checkpoint files
 - **THEN** the restored state is associated with the concrete Agent Process and AgentFS layout
@@ -510,6 +523,10 @@ snapshots, renderer-safe UI state, and ordered update streams under `/agent`,
 while `/proc` SHALL own generic Process state. Hosts and supervisors SHALL NOT
 require an engine handle, callback, or broadcast receiver to observe equivalent
 live state.
+
+The complete boundary SHALL include input route, correlated submission outcome,
+shared cwd and pending queue/pause state. Multiple clients observe the same
+authority through files.
 
 #### Scenario: Host attaches after a turn has started
 - **WHEN** a host opens an already-running Agent Process
@@ -645,3 +662,45 @@ or manufacture an assistant message in `io/output`.
 - **WHEN** explicit recovery reconstructs an acknowledged completed work under a new PID
 - **THEN** its work UUID, source rollout identity, owner and citations remain unchanged
 - **AND** recovery publishes no synthetic answer and dispatches no model call
+
+### Requirement: Unified submissions and queue state are file-visible
+AgentFS SHALL expose accepted submission identity, selected route, status,
+ordered pending work, queue pause state and shared cwd through existing owning
+Machine, UI and context surfaces. Explicit continue/discard controls SHALL use
+the existing runtime control boundary. These records SHALL belong to the Agent
+Process and MUST NOT introduce a global Session or renderer-owned queue.
+
+#### Scenario: Another client attaches to paused work
+- **WHEN** a client attaches after an interrupt paused queued submissions
+- **THEN** it can inspect the paused queue and cwd through AgentFS
+- **AND** it need not recover state from the original renderer
+
+#### Scenario: Waiting for a response is correlated to its inputs
+- **WHEN** an input or its participating steering inputs wait for confirmation, structured input or authorization
+- **THEN** the paused UI activity snapshot and event identify those inputs in `waiting_submission_ids`
+- **AND** unrelated queued inputs are not identified as needing a response
+- **AND** resume clears those identities; a queue-only pause has an empty list
+- **AND** readers treat an absent field in older snapshots as an empty list
+
+### Requirement: Command evidence feeds bounded shared Agent context
+Direct commands and results SHALL use existing action, Process and durable
+evidence owners and become available to subsequent Agent work. Model-input
+projection SHALL include bounded output, exit status and an evidence reference,
+with explicit truncation or retention loss. It MUST NOT require automatic model
+summarization or a duplicated output database. Existing redaction, authorization
+and retention rules SHALL apply to all evidence reads.
+
+#### Scenario: A command produces large output
+- **WHEN** output exceeds the model-input projection bound
+- **THEN** later Agent input receives a bounded excerpt, status and evidence reference
+- **AND** truncation is visible and further reads require the same access rights
+
+#### Scenario: Output has expired under retention
+- **WHEN** the Agent follows an output reference whose content is no longer retained
+- **THEN** it receives an explicit unavailable or retention-gap result
+- **AND** the interface does not claim complete history
+
+#### Scenario: User refers to the prior command
+- **WHEN** the user asks about the preceding direct command result
+- **THEN** Agent reasoning can use its correlated command and evidence without asking the user to paste it
+

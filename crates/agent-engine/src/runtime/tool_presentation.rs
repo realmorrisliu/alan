@@ -86,6 +86,11 @@ pub fn tool_presentation(
     }
     match name {
         "edit_file" => {
+            if let Some(pres) = result.get("presentation")
+                && let Ok(parsed) = serde_json::from_value::<ToolResultPresentation>(pres.clone())
+            {
+                return Some(parsed);
+            }
             let path = result_path(result, args)?;
             let old = args.get("old_string").and_then(Value::as_str).unwrap_or("");
             let new = args.get("new_string").and_then(Value::as_str).unwrap_or("");

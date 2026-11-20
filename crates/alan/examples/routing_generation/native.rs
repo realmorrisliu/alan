@@ -167,6 +167,7 @@ fn usage(events: &[Value]) -> Result<Option<TokenUsage>> {
         total_tokens: count("total_tokens")?,
         cached_prompt_tokens: optional("cached_prompt_tokens")?,
         reasoning_tokens: optional("reasoning_tokens")?,
+        ..Default::default()
     }))
 }
 

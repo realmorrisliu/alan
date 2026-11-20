@@ -4,6 +4,7 @@ pub(super) struct RecordingToolCallProvider {
     tool_calls: Vec<ToolCall>,
     content: String,
     seen_system_prompts: Arc<std::sync::Mutex<Vec<String>>>,
+    seen_requests: Arc<std::sync::Mutex<Vec<GenerationRequest>>>,
 }
 
 impl RecordingToolCallProvider {
@@ -16,7 +17,16 @@ impl RecordingToolCallProvider {
             tool_calls,
             content: content.into(),
             seen_system_prompts,
+            seen_requests: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
+    }
+
+    pub(super) fn with_seen_requests(
+        mut self,
+        seen_requests: Arc<std::sync::Mutex<Vec<GenerationRequest>>>,
+    ) -> Self {
+        self.seen_requests = seen_requests;
+        self
     }
 
     fn record_system_prompt(&self, request: &GenerationRequest) {
@@ -26,6 +36,7 @@ impl RecordingToolCallProvider {
                 .unwrap()
                 .push(system_prompt.clone());
         }
+        self.seen_requests.lock().unwrap().push(request.clone());
     }
 }
 

@@ -48,17 +48,26 @@ OpenSpec and the ADRs.
   invocation and attaches its
   terminal renderer to that instance's `/agent/root`; it creates no extra Shell
   Process and never borrows another invocation's Root. Actual Alan exit ends its
-  instance; a Herdr view detach may leave the native process alive (ADR-0054 and
-  the lifecycle update to ADR-0056). Starting another Herdr session starts a
-  separate invocation; reusing earlier durable work requires explicit user
-  selection, never automatic product-wide recovery. PR #1011 verifies separate
-  input streams and cwd bindings across simultaneous invocations. Explicit
-  durable recovery, Herdr view detach, revocation and no-repeat acceptance are
-  recorded in `openspec/changes/unify-agent-command-input/next-delivery.md`
-  (merged PR #1032); broader cross-client/grant matrices remain open.
+  instance; a terminal-host view detach (for example tmux) may leave the native
+  process alive (ADR-0054 and the lifecycle update to ADR-0056). Starting another
+  terminal session starts a separate invocation; reusing earlier durable work
+  requires explicit user selection, never automatic product-wide recovery. PR
+  #1011 verifies separate input streams and cwd bindings across simultaneous
+  invocations. Broader cross-client/grant matrices remain open and are owned by
+  the standard-terminal acceptance in the personal daily-use roadmap.
 - avoid introducing globally addressable Thread, Conversation, or execution
   manager objects.
-- prefer existing terminal hosts, especially Herdr; do not rebuild desktop topology (ADR-0054).
+- target standard POSIX/VT terminals (Ghostty, iTerm2, Kitty, WezTerm, Terminal.app,
+  tmux, SSH); no terminal host is a runtime, acceptance or authorization
+  dependency, and desktop topology is not rebuilt (ADR-0054, ADR-0061).
+- the OS sandbox and explicit mount grants are the security boundary; do not add
+  static shell-text bans or Guardian prompts for effects the confinement already
+  contains (ADR-0061). Mounted `AGENTS.md`/`CLAUDE.md` are non-authoritative
+  knowledge, never grants.
+- first-party providers are exactly `magpie`, OpenAI Responses/Codex, Google Cloud
+  Vertex AI and OpenRouter; Anthropic is a protocol adapter/`q` package, and
+  Quartermaster `q` is the extension hub for `skill`, `mcp`, `tool` and
+  `provider` packages (ADR-0061).
 - distinguish accepted mixed-Machine direction (ADR-0055) from the shipped
   generation/Tool loop and optional no-effect typed input shadow evaluation.
 
@@ -213,16 +222,19 @@ create alternative spec documents elsewhere. Historical files under
 
 ## Product design context
 
-Alan is terminal-first, with Herdr as the preferred host. Keep terminal output
+Alan is terminal-first and standard-terminal-native: it runs in any POSIX/VT
+terminal without detecting or requiring a particular host. Keep terminal output
 calm, precise and readable with progressive disclosure and usable scrollback.
-Do not recreate a sidebar, workspace manager or terminal emulator. Herdr-native
-Alan detection is not yet implemented; ordinary terminal operation comes first.
+Do not recreate a sidebar, workspace manager or terminal emulator. Verify UI
+behavior with a real Unix PTY plus a terminal-state model, not host-specific
+harnesses.
 Read a change's disposition before executing its tasks; parked/cancelled work
 does not authorize implementation.
 
 
 ## Personal daily-use work
 
-When implementing autonomy, trust or continuity, follow ADR-0060 and
-`openspec/changes/qualify-personal-daily-development/roadmap.md`. Read the owning
+When implementing autonomy, trust, continuity, providers or extensions, follow
+ADR-0060, ADR-0061 and
+`openspec/changes/qualify-personal-daily-development/roadmap.md` (M1–M5 order). Read the owning
 change's disposition and verify delivered controls before using them.

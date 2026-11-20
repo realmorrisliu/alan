@@ -84,7 +84,7 @@ pub(super) fn parse_delegated_skill_invocation_request(
     })
 }
 
-fn parse_host_mounts(
+pub(super) fn parse_host_mounts(
     arguments: &serde_json::Value,
 ) -> Option<Vec<alan_agent_protocol::SpawnHostMount>> {
     let Some(value) = arguments.get("host_mounts") else {
@@ -111,7 +111,7 @@ fn parse_host_mounts(
     Some(mounts)
 }
 
-fn parse_optional_path_argument(
+pub(super) fn parse_optional_path_argument(
     arguments: &serde_json::Value,
     key: &str,
 ) -> Option<Option<PathBuf>> {
@@ -127,7 +127,7 @@ fn parse_optional_path_argument(
     }
 }
 
-fn parse_optional_timeout_secs_argument(
+pub(super) fn parse_optional_timeout_secs_argument(
     arguments: &serde_json::Value,
     key: &str,
 ) -> Option<Option<u64>> {
@@ -167,7 +167,7 @@ pub(super) fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Optional Alan OS namespace cwd for the delegated Process. When omitted, the child inherits the parent Process cwd.",
+                    "description": "Optional alan9 namespace cwd for the delegated Process. When omitted, the child inherits the parent Process cwd.",
                     "maxLength": MAX_DELEGATED_PATH_CHARS
                 },
                 "host_mounts": {
@@ -538,7 +538,7 @@ where
     })
 }
 
-async fn spawn_and_join_delegated_child(
+pub(super) async fn spawn_and_join_delegated_child(
     runtime: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: &CancellationToken,
@@ -553,7 +553,7 @@ async fn spawn_and_join_delegated_child(
     controller.join_until_cancelled(cancel).await
 }
 
-fn resolve_delegated_skill_invocation(
+pub(super) fn resolve_delegated_skill_invocation(
     runtime: &mut DelegatedSkillRuntime<'_>,
     request: &DelegatedSkillInvocationRequest,
 ) -> DelegatedSkillSpawnResult<SpawnSpec> {
@@ -680,7 +680,7 @@ fn build_delegated_spawn_spec(
     })
 }
 
-fn resolve_delegated_launch_path(
+pub(super) fn resolve_delegated_launch_path(
     requested_path: &Path,
     base: Option<&Path>,
     field_name: &str,

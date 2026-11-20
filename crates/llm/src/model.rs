@@ -60,13 +60,18 @@ pub struct ToolCall {
 }
 
 /// Token usage information
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TokenUsage {
     pub prompt_tokens: i32,
+    /// Prompt tokens served from a provider prompt/context cache.
     pub cached_prompt_tokens: Option<i32>,
     pub completion_tokens: i32,
     pub total_tokens: i32,
     pub reasoning_tokens: Option<i32>,
+    /// Prompt tokens written into a provider prompt cache on this request.
+    pub cache_creation_tokens: Option<i32>,
+    /// Provider-reported request cost in USD, when the provider meters it.
+    pub cost_usd: Option<f64>,
 }
 
 /// Unified request for generation
@@ -79,6 +84,12 @@ pub struct GenerationRequest {
     pub max_tokens: Option<i32>,
     /// Canonical cross-provider reasoning controls.
     pub reasoning: ReasoningControls,
+    /// Stable conversation/session key (one per Agent Process) used only for
+    /// provider cache affinity such as OpenAI `prompt_cache_key` or Magpie
+    /// session-affinity headers. Never forwarded verbatim as a body field.
+    pub session_key: Option<String>,
+    /// Optional JSON Schema constraining the final assistant output.
+    pub response_schema: Option<serde_json::Value>,
     /// Provider-specific extra parameters
     pub extra_params: HashMap<String, serde_json::Value>,
 }
@@ -153,8 +164,16 @@ impl GenerationRequest {
             temperature: None,
             max_tokens: None,
             reasoning: ReasoningControls::default(),
+            session_key: None,
+            response_schema: None,
             extra_params: HashMap::new(),
         }
+    }
+
+    /// Constrain the final assistant response with a JSON Schema object.
+    pub fn with_response_schema(mut self, schema: serde_json::Value) -> Self {
+        self.response_schema = Some(schema);
+        self
     }
 
     /// Set the system prompt
@@ -235,6 +254,13 @@ impl GenerationRequest {
     /// Set canonical reasoning controls.
     pub fn with_reasoning_controls(mut self, controls: ReasoningControls) -> Self {
         self.reasoning = controls;
+        self
+    }
+
+    /// Set the stable per-conversation cache-affinity key.
+    pub fn with_session_key(mut self, session_key: impl Into<String>) -> Self {
+        let session_key = session_key.into();
+        self.session_key = (!session_key.trim().is_empty()).then_some(session_key);
         self
     }
 

@@ -90,6 +90,7 @@ const DEFAULT_UI_ACTIVITY: &str = r#"{"version":1,"state":"idle"}"#;
 const DEFAULT_UI_PLAN: &str = r#"{"version":1,"items":[]}"#;
 const DEFAULT_UI_THINKING: &str = r#"{"version":1,"state":"idle","text":""}"#;
 const DEFAULT_UI_NOTICE: &str = r#"{"version":1,"kind":"none","message":""}"#;
+const DEFAULT_UI_USAGE: &str = r#"{"version":1}"#;
 
 #[derive(Default)]
 struct Request {
@@ -143,6 +144,7 @@ struct State {
     ui_plan: String,
     ui_thinking: String,
     ui_notice: String,
+    ui_usage: String,
     next_request: u64,
     next_action: u64,
     /// The fid currently holding the exclusive-write lease on `machine/tape`, if
@@ -208,6 +210,7 @@ enum Node {
     UiPlan,
     UiThinking,
     UiNotice,
+    UiUsage,
     UiEvents,
     CheckpointsDir,
     CurrentCheckpoint,
@@ -273,6 +276,7 @@ impl AgentFs {
                 ui_thinking: DEFAULT_UI_THINKING.to_string(),
                 ui_skills: surface_state::UNKNOWN_SKILLS.to_string(),
                 ui_notice: DEFAULT_UI_NOTICE.to_string(),
+                ui_usage: DEFAULT_UI_USAGE.to_string(),
                 next_request: 0,
                 next_action: 0,
                 tape_writer: None,
@@ -494,6 +498,7 @@ impl FileServer for AgentFs {
                 | Node::UiThinking
                 | Node::UiSkills
                 | Node::UiNotice
+                | Node::UiUsage
                 | Node::RequestField(..)
                 | Node::ActionField(..) => Some(state.computed_bytes(&node)?),
                 _ => None,
@@ -640,6 +645,7 @@ impl FileServer for AgentFs {
             | Node::UiThinking
             | Node::UiSkills
             | Node::UiNotice
+            | Node::UiUsage
             | Node::RequestField(..)
             | Node::ActionField(..) => {
                 let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
@@ -816,6 +822,7 @@ impl FileServer for AgentFs {
                 | Node::UiThinking
                 | Node::UiSkills
                 | Node::UiNotice
+                | Node::UiUsage
         ) && f.wrote
         {
             let value = if matches!(f.node, Node::UiSkills) {
@@ -851,6 +858,10 @@ impl FileServer for AgentFs {
                 Node::UiNotice => {
                     state.ui_notice = value;
                     (Node::UiNotice, "ui:notice\n")
+                }
+                Node::UiUsage => {
+                    state.ui_usage = value;
+                    (Node::UiUsage, "ui:usage\n")
                 }
                 _ => unreachable!("matched above"),
             };

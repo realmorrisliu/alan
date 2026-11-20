@@ -45,7 +45,7 @@ async fn test_read_file_tool_uses_mount_root_binding_from_context() {
     let result = tool.execute(args, &ctx).await.unwrap();
 
     assert_eq!(result["path"], json!("/mnt/source/test.txt"));
-    assert_eq!(result["content"], json!("bound"));
+    assert_eq!(result["content"], json!("1| bound"));
 }
 
 #[tokio::test]
@@ -97,11 +97,19 @@ async fn test_read_file_with_offset_and_limit() {
     let args = json!({"path": "lines.txt", "offset": 2, "limit": 2});
     let result = tool.execute(args, &ctx).await.unwrap();
 
-    assert_eq!(result["content"], "line2\nline3");
+    assert_eq!(result["content"], "2| line2\n3| line3");
     assert_eq!(result["start_line"], 2);
     assert_eq!(result["end_line"], 3);
     assert_eq!(result["total_lines"], 5);
     assert!(result["truncated"].as_bool().unwrap());
+
+    // Read to EOF with offset: must not report truncated=true when end == total_lines
+    let eof_args = json!({"path": "lines.txt", "offset": 4, "limit": 2});
+    let eof_result = tool.execute(eof_args, &ctx).await.unwrap();
+    assert_eq!(eof_result["content"], "4| line4\n5| line5");
+    assert_eq!(eof_result["start_line"], 4);
+    assert_eq!(eof_result["end_line"], 5);
+    assert!(!eof_result["truncated"].as_bool().unwrap());
 }
 
 #[tokio::test]
@@ -160,6 +168,20 @@ async fn test_read_image_file() {
     assert_eq!(result["type"], "image");
     assert_eq!(result["mime_type"], "image/png");
     assert_eq!(result["size_bytes"], 8);
+    let parts: Vec<alan_agent_protocol::ContentPart> =
+        serde_json::from_value(result["content_parts"].clone()).unwrap();
+    assert_eq!(parts.len(), 1);
+    match &parts[0] {
+        alan_agent_protocol::ContentPart::Attachment {
+            mime_type,
+            metadata,
+            ..
+        } => {
+            assert_eq!(mime_type, "image/png");
+            assert_eq!(metadata["data"], json!("iVBORw0KGgo="));
+        }
+        other => panic!("expected attachment part, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -180,7 +202,7 @@ async fn test_write_and_read_file() {
     // Read back
     let read_args = json!({"path": "output.txt"});
     let read_result = read_tool.execute(read_args, &ctx).await.unwrap();
-    assert_eq!(read_result["content"], "Hello World");
+    assert_eq!(read_result["content"], "1| Hello World");
 }
 
 #[tokio::test]
@@ -268,7 +290,7 @@ async fn test_edit_file() {
     // Verify
     let read_args = json!({"path": "edit.txt"});
     let read_result = read_tool.execute(read_args, &ctx).await.unwrap();
-    assert_eq!(read_result["content"], "Hello Rust");
+    assert_eq!(read_result["content"], "1| Hello Rust");
 }
 
 #[tokio::test]
@@ -349,31 +371,69 @@ async fn test_edit_file_multiline_replacement() {
 }
 
 #[tokio::test]
-async fn test_edit_file_only_first_occurrence() {
+async fn test_edit_file_enforces_uniqueness_unless_replace_all_and_returns_diff() {
     let temp = TempDir::new().unwrap();
     let mount_root = temp.path().to_path_buf();
 
-    tokio::fs::write(mount_root.join("repeat.txt"), "foo foo foo")
-        .await
-        .unwrap();
+    tokio::fs::write(
+        mount_root.join("repeat.txt"),
+        "header\nfoo one\nmiddle\nfoo two\ntail\n",
+    )
+    .await
+    .unwrap();
 
     let tool = EditFileTool::new();
     let config = Arc::new(Config::default());
     let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
-    let args = json!({
-        "path": "repeat.txt",
-        "old_string": "foo",
-        "new_string": "bar"
-    });
-    let result = tool.execute(args, &ctx).await.unwrap();
+    let ambiguous = tool
+        .execute(
+            json!({
+                "path": "repeat.txt",
+                "old_string": "foo",
+                "new_string": "bar"
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap_err();
+    let msg = ambiguous.to_string();
+    assert!(msg.contains("2 occurrences"), "{msg}");
+    assert!(msg.contains("replace_all: true"), "{msg}");
 
-    assert_eq!(result["replacements"], 1);
+    let all_result = tool
+        .execute(
+            json!({
+                "path": "repeat.txt",
+                "old_string": "foo",
+                "new_string": "bar",
+                "replace_all": true
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(all_result["replacements"], 2);
+    let pres: alan_agent_protocol::ToolResultPresentation =
+        serde_json::from_value(all_result["presentation"].clone()).unwrap();
+    match pres {
+        alan_agent_protocol::ToolResultPresentation::Diff { hunks, .. } => {
+            assert_eq!(hunks.len(), 2);
+            assert!(
+                hunks[0]
+                    .header
+                    .as_deref()
+                    .is_some_and(|h| h.starts_with("@@ -"))
+            );
+        }
+        other => panic!("expected Diff presentation, got {other:?}"),
+    }
 
     let content = tokio::fs::read_to_string(mount_root.join("repeat.txt"))
         .await
         .unwrap();
-    assert_eq!(content, "bar foo foo");
+    assert_eq!(content, "header\nbar one\nmiddle\nbar two\ntail\n");
 }
 
 #[test]

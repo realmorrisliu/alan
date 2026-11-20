@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn semantic_markdown_production_buffer_removes_markers_and_preserves_roles() {
     use ratatui::style::{Color, Modifier};
+    let theme = crate::theme::Theme::default();
     for width in [40, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Assistant(
@@ -38,10 +39,10 @@ fn semantic_markdown_production_buffer_removes_markers_and_preserves_roles() {
                 .contains(Modifier::ITALIC)
         );
         assert_eq!(buffer.cell((0, 3)).unwrap().symbol(), "•");
-        assert_eq!(buffer.cell((4, 5)).unwrap().symbol(), "l");
-        assert_eq!(buffer.cell((0, 8)).unwrap().symbol(), "+");
-        assert_eq!(buffer.cell((0, 8)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((0, 9)).unwrap().fg, Color::Red);
+        assert_eq!(buffer.cell((6, 5)).unwrap().symbol(), "l");
+        assert_eq!(buffer.cell((2, 8)).unwrap().symbol(), "+");
+        assert_eq!(buffer.cell((2, 8)).unwrap().fg, theme.status_run);
+        assert_eq!(buffer.cell((2, 9)).unwrap().fg, theme.status_block);
         for row in [11, 12, 13] {
             assert_eq!(
                 buffer.cell((0, row)).unwrap().fg,
@@ -57,6 +58,7 @@ fn typed_diff_and_partial_scrollback_keep_styles_and_literal_indentation() {
     use crate::history::ToolStatus;
     use alan_agent_protocol::{DiffHunk, DiffLine, ToolResultPresentation};
     use ratatui::style::Color;
+    let theme = crate::theme::Theme::default();
     for width in [40, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Tool {
@@ -98,12 +100,12 @@ fn typed_diff_and_partial_scrollback_keep_styles_and_literal_indentation() {
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer.cell((2, 3)).unwrap().symbol(), "-");
-        assert_eq!(buffer.cell((2, 3)).unwrap().fg, Color::Red);
-        assert_eq!(buffer.cell((7, 4)).unwrap().symbol(), "新");
-        assert_eq!(buffer.cell((7, 4)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((7, 5)).unwrap().symbol(), "!");
-        assert_eq!(buffer.cell((7, 5)).unwrap().fg, Color::Reset);
+        assert_eq!(buffer.cell((4, 3)).unwrap().symbol(), "-");
+        assert_eq!(buffer.cell((4, 3)).unwrap().fg, theme.status_block);
+        assert_eq!(buffer.cell((9, 4)).unwrap().symbol(), "新");
+        assert_eq!(buffer.cell((9, 4)).unwrap().fg, theme.status_run);
+        assert_eq!(buffer.cell((9, 5)).unwrap().symbol(), "!");
+        assert_eq!(buffer.cell((9, 5)).unwrap().fg, Color::Reset);
         assert!(
             retained
                 .iter()
@@ -114,7 +116,8 @@ fn typed_diff_and_partial_scrollback_keep_styles_and_literal_indentation() {
 
 #[test]
 fn partial_markdown_drain_keeps_fence_context_during_stream_append_and_resize() {
-    use ratatui::style::{Color, Modifier};
+    use ratatui::style::Modifier;
+    let theme = crate::theme::Theme::default();
     for width in [40, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Assistant(
@@ -130,10 +133,10 @@ fn partial_markdown_drain_keeps_fence_context_during_stream_append_and_resize() 
             let mut terminal = Terminal::new(TestBackend::new(resized, 12)).unwrap();
             terminal.draw(|frame| draw(frame, &app)).unwrap();
             let buffer = terminal.backend().buffer();
-            assert_eq!(buffer.cell((0, 0)).unwrap().fg, Color::Green);
-            assert_eq!(buffer.cell((0, 1)).unwrap().fg, Color::Red);
-            assert_eq!(buffer.cell((5, 2)).unwrap().symbol(), "界");
-            assert_eq!(buffer.cell((5, 2)).unwrap().fg, Color::Green);
+            assert_eq!(buffer.cell((2, 0)).unwrap().fg, theme.status_run);
+            assert_eq!(buffer.cell((2, 1)).unwrap().fg, theme.status_block);
+            assert_eq!(buffer.cell((7, 2)).unwrap().symbol(), "界");
+            assert_eq!(buffer.cell((7, 2)).unwrap().fg, theme.status_run);
             assert!(
                 buffer
                     .cell((0, 4))
@@ -375,7 +378,7 @@ fn completed_turn_is_followed_by_the_next_inline_alan_prompt() {
     assert_eq!(line(2), "/workspace/alan");
     assert_eq!(line(3), "");
     assert_eq!(line(4), "─".repeat(80));
-    assert!(line(5).starts_with("Select project · model unknown"));
+    assert!(line(5).contains("Select project · model unknown"));
     assert_eq!(line(6), ":");
     assert_eq!(
         backend.cursor_position(),
@@ -395,7 +398,7 @@ fn prompt_shows_the_process_selected_next_model() {
         .trim_end()
         .to_string();
 
-    assert!(line.starts_with("Select project · gpt-6-luna / high"));
+    assert!(line.contains("Select project · gpt-6-luna / high"));
 }
 
 #[test]
@@ -497,7 +500,7 @@ fn model_and_status_remain_visible_across_prompt_widths() {
                     if selecting {
                         assert!(attention.contains("Selecting project"));
                     }
-                    if width >= model.len() {
+                    if width >= model.len() + 2 {
                         assert!(text.contains(model), "{width}: {text}");
                     }
                 }
@@ -508,7 +511,7 @@ fn model_and_status_remain_visible_across_prompt_widths() {
 
 #[test]
 fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
-    for width in [40, 60, 80, 120] {
+    for width in [40usize, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         let mut typed = String::new();
         let mut heights = Vec::new();
@@ -530,24 +533,41 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
                 .map(|c| c.label.as_str())
                 .collect::<Vec<_>>();
             assert!(labels.contains(&"project"), "{typed}: {labels:?}");
-            if typed.len() >= 3 {
+            if typed.len() >= 5 {
                 assert_eq!(labels, ["project"]);
             }
+            let max_left = width.saturating_sub(14).clamp(10, 32);
+            let left_col_width = state
+                .matches
+                .iter()
+                .take(MAX_COMPLETION_ROWS)
+                .map(|c| 1 + unicode_width::UnicodeWidthStr::width(c.label.as_str()))
+                .max()
+                .unwrap_or(0)
+                .min(max_left);
             let expected_hint_rows = state
                 .matches
                 .iter()
                 .take(MAX_COMPLETION_ROWS)
                 .map(|c| {
+                    let left_raw = format!("/{}", c.label);
+                    let left_w = unicode_width::UnicodeWidthStr::width(left_raw.as_str());
+                    let pad = left_col_width.saturating_sub(left_w) + 2;
                     let hint = ratatui::text::Line::from(format!(
-                        "  /{}  - {}",
-                        c.label,
+                        "  {left_raw}{}{}",
+                        " ".repeat(pad),
                         c.detail.as_ref().unwrap()
                     ));
                     crate::transcript_ui::wrapped_line_count(&[hint], width)
                 })
                 .sum::<usize>();
+            let counter_rows = usize::from(state.matches.len() > MAX_COMPLETION_ROWS);
             let height = inline_viewport_height(&app, width, 22);
-            assert_eq!(height as usize, expected_hint_rows + 4, "{width}: {typed}");
+            assert_eq!(
+                height as usize,
+                expected_hint_rows + counter_rows + 4,
+                "{width}: {typed}"
+            );
             heights.push(height);
             let mut terminal = Terminal::new(TestBackend::new(width as u16, height)).unwrap();
             terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -566,11 +586,15 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            assert!(
-                rendered.contains("/project"),
-                "{width}: {typed}: {rendered}"
-            );
-            assert!(rendered.contains("select or revoke"), "{rendered}");
+            if typed.len() >= 2 {
+                assert!(
+                    rendered.contains("/project"),
+                    "{width}: {typed}: {rendered}"
+                );
+                assert!(rendered.contains("select or revoke"), "{rendered}");
+            } else {
+                assert!(rendered.contains("/login"), "{width}: {typed}: {rendered}");
+            }
             let cursor = terminal.backend().cursor_position();
             assert_eq!((cursor.x, cursor.y), ((2 + typed.len()) as u16, 3));
             assert!(app.drain_committed_scrollback(width, 22).is_empty());
@@ -580,10 +604,13 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
             );
         }
         assert!(
-            heights[0] > heights[1] && heights[1] > heights[2],
+            heights[0] > heights[1]
+                && heights[1] > heights[2]
+                && heights[2] >= heights[3]
+                && heights[3] > heights[4],
             "{width}: {heights:?}"
         );
-        assert!(heights[2..].iter().all(|h| *h == heights[2]));
+        assert!(heights[4..].iter().all(|h| *h == heights[4]));
         let saved_height = *heights.last().unwrap();
         app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
         assert_eq!(inline_viewport_height(&app, width, 22), 22);
@@ -623,13 +650,15 @@ fn completion_candidates_render_below_the_inline_prompt_without_entering_history
     };
 
     assert_eq!(line(6), ": /");
-    assert!(line(7).contains("/project"));
-    assert!(line(8).contains("/compact"));
-    assert!(line(10).contains("/continue"));
-    assert!(line(11).contains("/discard"));
-    assert!(line(12).contains("/clear"));
+    assert!(line(7).contains("/login"));
+    assert!(line(8).contains("/model"));
+    assert!(line(9).contains("/resume"));
+    assert!(line(10).contains("/new"));
+    assert!(line(11).contains("/fork"));
+    assert!(line(12).contains("/permissions"));
+    assert!(line(13).contains("1-6/"));
     assert_eq!(app.transcript.len(), 2, "candidates are transient UI state");
-    assert_eq!(inline_viewport_height(&app, 80, 14), 13);
+    assert_eq!(inline_viewport_height(&app, 80, 14), 14);
 }
 
 #[test]
@@ -880,7 +909,7 @@ fn compact_header_keeps_project_access_model_and_effort_at_pane_width() {
             assert!(text.contains("fixture · read-only"), "{width}: {text}");
             assert!(text.contains("gpt-6.1-sol"), "{width}: {text}");
             assert!(!text.contains("queued 0"));
-            assert_eq!(app.attention_labels().is_empty(), known);
+            assert!(app.attention_labels().is_empty());
             if known || width >= 73 {
                 assert!(text.contains("medium"), "{width}: {text}");
             }

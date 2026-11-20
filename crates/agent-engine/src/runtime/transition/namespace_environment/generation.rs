@@ -9,7 +9,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::client::NamespaceClient;
 use super::{
-    NamespaceGeneration, NamespaceLlmCapabilities, NamespaceTurnOutput, NamespaceTurnRuntime,
+    NamespaceAgentFiles, NamespaceGeneration, NamespaceLlmCapabilities, NamespaceTurnOutput,
+    NamespaceTurnRuntime,
 };
 
 #[path = "generation_cause.rs"]
@@ -246,6 +247,34 @@ impl NamespaceGeneration {
     }
 }
 
+/// Usage metering published beside the generation that produced it.
+impl NamespaceAgentFiles {
+    /// Current `machine/ui/usage` document; an absent file reads as no usage yet.
+    pub(crate) async fn read_ui_usage_snapshot(
+        &self,
+    ) -> Result<alan_agent_protocol::UiUsageSnapshot> {
+        let path = format!("{}/machine/ui/usage", self.agent_path);
+        let Some(raw) = NamespaceClient::new(self.root.clone())
+            .try_read_file(&path)
+            .await?
+        else {
+            return Ok(alan_agent_protocol::UiUsageSnapshot::empty());
+        };
+        serde_json::from_slice(&raw).context("parse agent usage snapshot")
+    }
+
+    /// Replace `machine/ui/usage`; AgentFS announces the change as `ui:usage`.
+    pub(crate) async fn write_ui_usage_snapshot(
+        &self,
+        snapshot: &alan_agent_protocol::UiUsageSnapshot,
+    ) -> Result<()> {
+        let bytes = serde_json::to_vec(snapshot).context("serialize usage snapshot")?;
+        NamespaceClient::new(self.root.clone())
+            .write_document(&format!("{}/machine/ui/usage", self.agent_path), &bytes)
+            .await
+    }
+}
+
 impl NamespaceTurnRuntime {
     /// Run one turn from the next committed `io/input` message.
     pub async fn run_next_turn(&mut self) -> Result<NamespaceTurnOutput> {
@@ -312,6 +341,10 @@ pub(super) struct LlmRequestDoc<'a> {
     max_tokens: Option<i32>,
     #[serde(skip_serializing_if = "alan_llm::ReasoningControls::is_empty")]
     reasoning: alan_llm::ReasoningControls,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_key: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_schema: Option<&'a serde_json::Value>,
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
     extra_params: &'a std::collections::HashMap<String, serde_json::Value>,
 }
@@ -331,6 +364,8 @@ impl<'a> LlmRequestDoc<'a> {
             temperature: request.temperature,
             max_tokens: request.max_tokens,
             reasoning: request.reasoning,
+            session_key: request.session_key.as_deref(),
+            response_schema: request.response_schema.as_ref(),
             extra_params: &request.extra_params,
         })
     }
@@ -379,6 +414,10 @@ pub(super) struct LlmEventTokenUsage {
     total_tokens: i32,
     #[serde(default)]
     reasoning_tokens: Option<i32>,
+    #[serde(default)]
+    cache_creation_tokens: Option<i32>,
+    #[serde(default)]
+    cost_usd: Option<f64>,
 }
 
 impl From<LlmEventTokenUsage> for alan_llm::TokenUsage {
@@ -389,6 +428,8 @@ impl From<LlmEventTokenUsage> for alan_llm::TokenUsage {
             completion_tokens: value.completion_tokens,
             total_tokens: value.total_tokens,
             reasoning_tokens: value.reasoning_tokens,
+            cache_creation_tokens: value.cache_creation_tokens,
+            cost_usd: value.cost_usd,
         }
     }
 }
@@ -463,6 +504,32 @@ fn assemble_llmfs_tool_calls(
         }
     }
     (tool_calls, warnings)
+}
+
+/// Bounded sleep schedule for readers whose server returns empty instead of blocking.
+#[derive(Default)]
+struct EmptyReadBackoff {
+    consecutive: u32,
+}
+
+impl EmptyReadBackoff {
+    const FIRST: std::time::Duration = std::time::Duration::from_millis(2);
+    const CEILING: std::time::Duration = std::time::Duration::from_millis(100);
+
+    fn delay(&self) -> std::time::Duration {
+        Self::FIRST
+            .saturating_mul(1_u32 << self.consecutive.min(6))
+            .min(Self::CEILING)
+    }
+
+    async fn wait(&mut self) {
+        tokio::time::sleep(self.delay()).await;
+        self.consecutive = self.consecutive.saturating_add(1);
+    }
+
+    fn reset(&mut self) {
+        self.consecutive = 0;
+    }
 }
 
 pub(super) async fn start_generation_controlled(
@@ -580,12 +647,17 @@ where
     let mut tool_call_buffers: BTreeMap<usize, PartialToolCall> = BTreeMap::new();
     let mut pending = Vec::new();
     let mut emitted_text = false;
+    let mut idle = EmptyReadBackoff::default();
     loop {
+        // Events are a blocking stream: a read at the live edge parks until bytes exist, so the
+        // stream itself is the wakeup. An empty reply therefore means a server that does not
+        // block (or closed early); poll it with bounded backoff instead of spinning.
         let chunk = client.read_at(fid.fid(), offset, 4096).await?;
         if chunk.is_empty() {
-            tokio::task::yield_now().await;
+            idle.wait().await;
             continue;
         }
+        idle.reset();
         offset += chunk.len() as u64;
         pending.extend_from_slice(&chunk);
         while let Some(pos) = pending.iter().position(|&b| b == b'\n') {
@@ -617,6 +689,11 @@ where
                 && !delta.is_empty()
             {
                 thinking.push_str(&delta);
+                emit(Event::ThinkingDelta {
+                    chunk: delta,
+                    is_final: false,
+                })
+                .await;
             }
             if let Some(signature) = event.thinking_signature
                 && !signature.is_empty()

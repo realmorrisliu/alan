@@ -492,6 +492,7 @@ fn convert_openai_responses_usage(usage: OpenAiResponsesUsage) -> TokenUsage {
         reasoning_tokens: usage
             .output_tokens_details
             .and_then(|details| details.reasoning_tokens),
+        ..Default::default()
     }
 }
 
@@ -639,6 +640,7 @@ mod tests {
                 completion_tokens: 2,
                 total_tokens: 3,
                 reasoning_tokens: None,
+                ..Default::default()
             }),
             responses_finish_reason(false),
             None,

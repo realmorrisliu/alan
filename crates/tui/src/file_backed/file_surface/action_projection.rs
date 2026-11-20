@@ -20,6 +20,16 @@ pub(in crate::file_backed) fn action_snapshot_to_history_cell(
     };
 
     let metadata = serde_json::from_str::<Value>(&snapshot.result).ok();
+    if snapshot.name == "cd"
+        && status == ToolStatus::Complete
+        && metadata
+            .as_ref()
+            .and_then(|v| v.get("title"))
+            .and_then(Value::as_str)
+            == Some("Select Process directory")
+    {
+        return None;
+    }
     let title = metadata
         .as_ref()
         .and_then(|v| v.get("title"))
@@ -71,11 +81,67 @@ pub(in crate::file_backed) fn action_snapshot_to_history_cell(
     })
 }
 
-pub(super) fn action_title(snapshot: &ActionSnapshot) -> String {
+pub(in crate::file_backed) fn action_title(snapshot: &ActionSnapshot) -> String {
     let trimmed = snapshot.name.trim();
     if !trimmed.is_empty() {
         trimmed.to_string()
     } else {
         format!("tool {}", snapshot.id)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::file_backed) struct RequestSnapshot {
+    pub(in crate::file_backed) id: String,
+    pub(in crate::file_backed) kind: String,
+    pub(in crate::file_backed) prompt: String,
+    pub(in crate::file_backed) options: String,
+    pub(in crate::file_backed) status: String,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::file_backed) struct ActionSnapshot {
+    pub(in crate::file_backed) id: String,
+    pub(in crate::file_backed) name: String,
+    pub(in crate::file_backed) status: String,
+    pub(in crate::file_backed) output: String,
+    pub(in crate::file_backed) result: String,
+}
+
+#[derive(Deserialize)]
+pub(in crate::file_backed) struct TapeRecordV1 {
+    #[serde(skip)]
+    pub(in crate::file_backed) end_offset: usize,
+    #[allow(
+        dead_code,
+        reason = "version is part of the persisted tape schema even though deserialization validates it elsewhere"
+    )]
+    pub(in crate::file_backed) version: u16,
+    pub(in crate::file_backed) kind: String,
+    pub(in crate::file_backed) role: String,
+    pub(in crate::file_backed) content: String,
+    #[serde(default)]
+    pub(in crate::file_backed) input_intent: Option<alan_agent_protocol::InputIntent>,
+    #[serde(default)]
+    pub(in crate::file_backed) submission_id: Option<String>,
+    #[serde(default)]
+    pub(in crate::file_backed) related_submission_ids: Vec<String>,
+}
+
+impl TapeRecordV1 {
+    pub(in crate::file_backed) fn into_user_cell(self) -> HistoryCell {
+        if self.input_intent == Some(alan_agent_protocol::InputIntent::Command) {
+            HistoryCell::Command(self.content)
+        } else {
+            HistoryCell::User(self.content)
+        }
+    }
+
+    pub(in crate::file_backed) fn belongs_to(&self, submission_id: &str) -> bool {
+        self.submission_id.as_deref() == Some(submission_id)
+            || self
+                .related_submission_ids
+                .iter()
+                .any(|id| id == submission_id)
     }
 }

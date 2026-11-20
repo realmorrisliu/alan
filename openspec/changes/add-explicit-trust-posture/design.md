@@ -2,8 +2,9 @@
 
 ## Context
 
-This change depends on delegate-project-autonomy and ADR-0060. It revises the
-single-posture prohibition deliberately. It is a separate delivery, not an
+This change builds on ADR-0060 and M2's OS-boundary simplification, and per ADR-0061
+is sequenced in milestone M3 ahead of the full delegation qualification corpus. It
+revises the single-posture prohibition deliberately. It is a separate delivery, not an
 exception silently hidden inside reviewer code or the default-mode score.
 
 ## Goals / Non-Goals
@@ -62,6 +63,19 @@ Verify posture changes during pending/queued/running work and child launches.
 
 ## Migration Plan
 
-Deploy only after the dependency and its canonical sync. Existing autonomous
+Deploy independently of the delegation qualification corpus. Its overlapping
+deltas and delegate-project-autonomy's are applied in sync order; the second to sync
+rebases onto the first and never applies in reverse. Existing autonomous
 configurations keep their meanings. No persisted project default enables full
 trust. On rollback or unknown mode, fail rather than fall back to broad execution.
+
+## OS-boundary rule (ADR-0061)
+
+Inside an active confinement backend the OS and explicit mount grants are the
+security boundary. Static shell-text bans and Guardian prompts for contained effects
+are brittle and noisy, so they are removed for confined execution; token-aware red
+lines and review remain for effects that escape or cannot be contained. Reviewer or
+model confidence never becomes a grant. Mounted `AGENTS.md` and `CLAUDE.md` are plain
+project knowledge: Agents may read them, and they cannot widen authority, change
+posture or isolation, or modify control policy. Without any confinement backend and
+without an explicit Host-account selection, the conservative boundary applies.

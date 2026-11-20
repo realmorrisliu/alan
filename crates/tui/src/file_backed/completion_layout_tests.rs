@@ -34,6 +34,16 @@ pub(super) fn render_at(
     (rows, (cursor.x, cursor.y - area.y))
 }
 
+fn expected_visible_menu_token(app: &FileBackedApp) -> &'static str {
+    if app.composer.text().len() >= 3 {
+        "/project"
+    } else if app.composer.text().len() == 2 {
+        "/permissions"
+    } else {
+        "/login"
+    }
+}
+
 #[test]
 fn project_per_key_anchor_and_menu_order() {
     for width in [40, 48, 60, 73, 80, 120] {
@@ -55,8 +65,9 @@ fn project_per_key_anchor_and_menu_order() {
                     rows[..prompt].iter().all(|r| !r.contains("/project")),
                     "menu above input: {rows:?}"
                 );
+                let expected = expected_visible_menu_token(&app);
                 assert!(
-                    rows.iter().skip(prompt + 1).any(|r| r.contains("/project")),
+                    rows.iter().skip(prompt + 1).any(|r| r.contains(expected)),
                     "menu missing: {rows:?}"
                 );
                 let (edge_rows, edge_cursor) = render_at(&app, width, pane + 7, 7);

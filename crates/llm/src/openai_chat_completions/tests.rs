@@ -122,6 +122,7 @@ fn test_chat_completion_request_serialization() {
         reasoning_effort: None,
         stream: Some(false),
         stream_options: None,
+        response_format: None,
         extra_params: HashMap::new(),
     };
 
@@ -159,6 +160,7 @@ fn test_chat_completion_request_with_tools() {
         reasoning_effort: None,
         stream: None,
         stream_options: None,
+        response_format: None,
         extra_params: HashMap::new(),
     };
 
@@ -732,4 +734,43 @@ fn test_stream_function_call_deserialization() {
     let func: OpenAiChatCompletionsStreamFunctionCall = serde_json::from_str(json).unwrap();
     assert_eq!(func.name, Some("my_func".to_string()));
     assert_eq!(func.arguments, Some("{\"key\": \"value\"}".to_string()));
+}
+
+#[test]
+fn test_build_chat_completions_omits_temperature_for_active_openai_reasoning_models() {
+    let built = build_chat_completions_request_for_model(
+        "gpt-5.4".to_string(),
+        "developer",
+        GenerationRequest::new()
+            .with_user_message("Hello")
+            .with_temperature(0.3)
+            .with_reasoning_effort(ReasoningEffort::Low),
+        false,
+    )
+    .unwrap();
+    assert_eq!(built.temperature, None);
+
+    let none_effort = build_chat_completions_request_for_model(
+        "gpt-5.4".to_string(),
+        "developer",
+        GenerationRequest::new()
+            .with_user_message("Hello")
+            .with_temperature(0.3)
+            .with_reasoning_effort(ReasoningEffort::None),
+        false,
+    )
+    .unwrap();
+    assert_eq!(none_effort.temperature, Some(0.3));
+
+    let compat = build_chat_completions_request_for_model(
+        "deepseek-reasoner".to_string(),
+        "system",
+        GenerationRequest::new()
+            .with_user_message("Hello")
+            .with_temperature(0.3)
+            .with_reasoning_effort(ReasoningEffort::Low),
+        false,
+    )
+    .unwrap();
+    assert_eq!(compat.temperature, Some(0.3));
 }

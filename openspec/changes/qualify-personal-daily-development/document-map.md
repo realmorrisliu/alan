@@ -44,11 +44,12 @@ are not edited.
 
 ## Existing active plans
 
-- `qualify-agent-input-routing`: still unqualified and off; move later in the order.
-- `add-cognitive-model-routing`: reuse delivered capability without reopening general mixed-Machine work.
-- `unify-agent-command-input`: keep broader unchecked boundaries distinct from shipped recovery evidence.
-- `expose-agent-rollout-history`: remains parked; bounded history need goes to the new continuity change, never its rejected clone/background launch path.
-- `add-proactive-memory-v2`: remains parked; no automatic policy/permission learning.
+- `expose-agent-rollout-history`: retired and archived 2026-11-19; the bounded history need goes to the continuity change, never its rejected clone/background launch path.
+- `add-proactive-memory-v2`: retired and archived 2026-11-19; no automatic policy/permission learning.
+- `add-alan-anywhere-mvp`, `define-groove-master-alan-app`, `define-updf-product-umbrella`, `spike-macos-matter-controller`: retired desktop-era plans, archived 2026-11-19 without sync.
+- `embed-alan-runtime` and `unify-agent-command-input`: delivered, synced into canonical specs and archived 2026-11-19; residual matrices are handed to this roadmap.
+- `add-cognitive-model-routing`: archived 2026-11-20 at `openspec/changes/archive/2026-11-20-add-cognitive-model-routing/` without syncing deferred research into canonical specs.
+- `qualify-agent-input-routing`: parked in place as `deferred-research / parked` outside M1–M6 (retained because shadow harness scripts and `crates/tui/src/file_backed/shadow_admission_tests.rs` reference its pinned corpus/budgets).
 
 ## Current guides and vocabulary
 

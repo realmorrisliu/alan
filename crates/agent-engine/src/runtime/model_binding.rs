@@ -52,6 +52,10 @@ pub trait ConnectionAuthority: Send + Sync {
     async fn capture_evaluation(&self, _profile: &str) -> Result<CapturedCallable> {
         anyhow::bail!("evaluation authority unavailable")
     }
+    /// Capture an independently reachable Guardian reviewer; never mutate generation binding.
+    async fn capture_guardian(&self, _profile: &str) -> Result<CapturedCallable> {
+        anyhow::bail!("guardian authority unavailable")
+    }
     /// Verified maximum total bill for this exact bounded request, including reasoning.
     /// None means unknown; callers must not infer a quote from token usage or subscription.
     async fn quote_generation(

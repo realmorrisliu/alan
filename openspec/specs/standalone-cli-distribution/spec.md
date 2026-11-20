@@ -4,9 +4,7 @@
 Defines the supported terminal distribution boundary for the standalone Alan
 CLI and its linked foreground alan9 composition after the macOS desktop product
 is retired.
-
 ## Requirements
-
 ### Requirement: Standalone distribution contains the foreground CLI
 
 The supported local and release distribution SHALL provide `alan` as a
@@ -85,18 +83,19 @@ will replace or retire against the applicable verified ownership manifest.
 
 ### Requirement: Host lifecycle remains a runtime concern
 
-Standalone installation SHALL NOT register or start an alan9 runtime. Bare or
-redirected Agent-execution invocations SHALL use a foreground instance and
-independent Root when `ALAN_INSTANCE_RUNTIME_DIR` is unset or selects a
-directory not in use by another invocation. A shared explicit directory
-permits only one owner. Metadata, configuration and targeted management
-commands SHALL NOT boot a Root. Process exit SHALL end its instance.
+Standalone installation SHALL NOT start or register an Alan runtime. With
+`ALAN_INSTANCE_RUNTIME_DIR` unset or set to a directory not in use by another
+invocation, ordinary `alan` execution SHALL own its foreground instance
+through existing composition. A shared explicit directory permits only one
+owner. `--version`, connection-profile and credential commands SHALL NOT
+require starting the instance. An explicitly targeted client MAY connect to a
+live instance, but a missing target MUST NOT create a background Host.
 
 #### Scenario: CLI is installed but no Host is running
 
-- **WHEN** installation completes on a machine without an active Alan instance
+- **WHEN** installation completes on a machine without an active Host
 - **THEN** installation succeeds
-- **AND** no runtime process or launchd product registration is created by the
+- **AND** no Host process or launchd product registration is created by the
   installer
 
 #### Scenario: Concurrent foreground Alan invocations use separate runtime directories
@@ -138,3 +137,4 @@ Sparkle, appcast, or Apple GUI checks.
 - **WHEN** CI builds a supported release target
 - **THEN** it uploads the standalone foreground CLI executable
 - **AND** the build does not depend on an Xcode app archive
+

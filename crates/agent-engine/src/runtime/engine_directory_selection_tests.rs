@@ -384,11 +384,33 @@ async fn directory_selection_preserves_recovered_paused_work_until_continue(
     })
     .await
     .unwrap();
-    for request in mock.recorded_requests() {
-        let prompt = request.system_prompt.unwrap_or_default();
+    let requests = mock.recorded_requests();
+    assert_eq!(requests.len(), inputs.len());
+    let first_system_prompt = requests[0].system_prompt.as_deref().unwrap_or_default();
+    for request in &requests {
+        assert_eq!(
+            request.system_prompt.as_deref().unwrap_or_default(),
+            first_system_prompt,
+            "system_prompt prefix must remain static across turns"
+        );
         assert!(
-            prompt.contains("Current selected Process directory: \"/mnt/new\""),
-            "generation must use the replacement Process directory: {prompt}"
+            !request
+                .system_prompt
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Current selected Process directory:"),
+            "directory instruction must live in trailing context, not system_prompt"
+        );
+        let trailing_context = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == alan_llm::MessageRole::Context)
+            .map(|message| message.content.as_str())
+            .unwrap_or_default();
+        assert!(
+            trailing_context.contains("Current selected Process directory: \"/mnt/new\""),
+            "generation must use the replacement Process directory in trailing context: {trailing_context}"
         );
     }
     runtime.shutdown().await.unwrap();

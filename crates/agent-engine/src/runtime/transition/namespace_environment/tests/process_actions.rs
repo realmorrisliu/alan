@@ -433,3 +433,162 @@ async fn run_tool_action_reads_exact_chunk_output_without_waiting_for_more() {
     assert!(action.output.bytes().all(|byte| byte == b'y'));
     assert_eq!(action.exit_code, 0);
 }
+
+struct StreamingMockBashTool {
+    chunk_sent: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
+impl crate::tools::Tool for StreamingMockBashTool {
+    fn name(&self) -> &str {
+        "bash"
+    }
+
+    fn description(&self) -> &str {
+        "mock streaming bash tool"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": { "type": "string" }
+            },
+            "required": ["command"]
+        })
+    }
+
+    fn execute(
+        &self,
+        _arguments: serde_json::Value,
+        ctx: &crate::tools::ToolContext,
+    ) -> crate::tools::ToolResult {
+        let cb = ctx.progress_callback();
+        let chunk_sent = Arc::clone(&self.chunk_sent);
+        let release = Arc::clone(&self.release);
+        Box::pin(async move {
+            if let Some(cb) = cb.as_ref() {
+                cb("first live line\n", "", false);
+            }
+            chunk_sent.notify_one();
+            release.notified().await;
+            if let Some(cb) = cb.as_ref() {
+                cb("first live line\nsecond done\n", "", false);
+            }
+            Ok(serde_json::json!({
+                "success": true,
+                "stdout": "first live line\nsecond done\n",
+                "stderr": "",
+                "exit_code": 0,
+            }))
+        })
+    }
+}
+
+#[tokio::test]
+async fn run_tool_action_streams_live_bash_preview_while_running() {
+    let chunk_sent = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let mut registry = crate::tools::ToolRegistry::new();
+    let temp = tempfile::tempdir().unwrap();
+    registry.set_default_execution_binding(crate::tools::test_execution_binding(
+        "/mnt/project",
+        temp.path().to_path_buf(),
+        temp.path().join(".scratch"),
+    ));
+    registry.register(StreamingMockBashTool {
+        chunk_sent: Arc::clone(&chunk_sent),
+        release: Arc::clone(&release),
+    });
+    let runner = crate::tools::ToolProcessRunner::from_registry(&registry);
+    let root = InProcessTransport::new(tool_test_root(Arc::new(runner.clone())).await);
+    let environment = NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default")
+        .with_tool_process_context(1, runner);
+    let shell = Shell::new(root);
+    let cancel = CancellationToken::new();
+
+    let handle = tokio::spawn({
+        let environment = environment.clone();
+        let cancel = cancel.clone();
+        async move {
+            let args = serde_json::json!({"command": "echo first && sleep 1 && echo second"});
+            environment
+                .tool_execution()
+                .run_action_with_cancel_and_timeout(
+                    "bash",
+                    Some(NamespaceToolActionEvidence {
+                        call_id: "call_live_stream",
+                        approval: "not_required",
+                        arguments: &args,
+                        submission_id: None,
+                    }),
+                    "/bin/bash",
+                    [args.to_string()],
+                    &cancel,
+                    10,
+                )
+                .await
+        }
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), chunk_sent.notified())
+        .await
+        .expect("mock bash tool should report first chunk");
+
+    let mut live_result = None;
+    for _ in 0..40 {
+        if let Ok(bytes) = shell.cat("/agent/1/actions/a0/result").await
+            && let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&bytes)
+            && parsed["result_preview"]
+                .as_str()
+                .is_some_and(|preview| preview.contains("first live line"))
+        {
+            live_result = Some(parsed);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let live_result =
+        live_result.expect("streaming bash should update actions/a0/result while running");
+    assert_eq!(
+        String::from_utf8(shell.cat("/agent/1/actions/a0/status").await.unwrap()).unwrap(),
+        "running"
+    );
+    let live_presentation: alan_agent_protocol::ToolResultPresentation =
+        serde_json::from_value(live_result["presentation"].clone())
+            .expect("live presentation should decode");
+    assert!(
+        matches!(
+            live_presentation,
+            alan_agent_protocol::ToolResultPresentation::Command {
+                exit_code: None,
+                ref stdout,
+                ..
+            } if stdout == "first live line\n"
+        ),
+        "unexpected live presentation: {live_presentation:?}"
+    );
+
+    release.notify_one();
+    let action = handle.await.unwrap().unwrap();
+    assert_eq!(action.action_id, "a0");
+    assert_eq!(
+        String::from_utf8(shell.cat("/agent/1/actions/a0/status").await.unwrap()).unwrap(),
+        "completed"
+    );
+    let final_result: serde_json::Value =
+        serde_json::from_slice(&shell.cat("/agent/1/actions/a0/result").await.unwrap()).unwrap();
+    let final_presentation: alan_agent_protocol::ToolResultPresentation =
+        serde_json::from_value(final_result["presentation"].clone())
+            .expect("final presentation should decode");
+    assert!(
+        matches!(
+            final_presentation,
+            alan_agent_protocol::ToolResultPresentation::Command {
+                exit_code: Some(0),
+                ..
+            }
+        ),
+        "unexpected final presentation: {final_presentation:?}"
+    );
+}

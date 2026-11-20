@@ -166,3 +166,84 @@ async fn ephemeral_home_does_not_resume_roots_it_did_not_persist() {
         Err(ErrorCode::NotFound)
     );
 }
+
+#[tokio::test]
+async fn memfs_recall_and_search_surfaces_exercise_bm25_cjk_and_are_read_only() {
+    let fs = MemFs::new();
+    create_file(
+        &fs,
+        "prefs.md",
+        Fid(1),
+        "用户偏好：回答尽量使用中文，工具栈使用 Rust。".as_bytes(),
+    )
+    .await;
+    create_file(
+        &fs,
+        "cargo.md",
+        Fid(2),
+        "排查 Rust 项目里的 Cargo 报错需要检查 Cargo.lock。".as_bytes(),
+    )
+    .await;
+
+    let hits = fs.search("用户偏好用哪种语言？", 5).await.unwrap();
+    assert!(!hits.is_empty());
+    assert_eq!(hits[0].id, "prefs.md");
+
+    // Walk read-only virtual `recall/<query>` and `search/<query>` surfaces.
+    fs.walk(
+        Fid::ROOT,
+        Fid(10),
+        &["recall".into(), "Rust 项目里的 Cargo 报错".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(10), OpenMode::Read).await.unwrap();
+    let body = String::from_utf8(fs.read(Fid(10), 0, 8192).await.unwrap()).unwrap();
+    fs.clunk(Fid(10)).await.unwrap();
+    assert!(body.contains("cargo.md"), "{body}");
+
+    fs.walk(Fid::ROOT, Fid(11), &["search".into(), "偏好".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.open(Fid(11), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+    fs.open(Fid(11), OpenMode::Read).await.unwrap();
+    let search_body = String::from_utf8(fs.read(Fid(11), 0, 8192).await.unwrap()).unwrap();
+    fs.clunk(Fid(11)).await.unwrap();
+    assert!(search_body.contains("prefs.md"), "{search_body}");
+
+    // Reserved virtual names cannot be overwritten by file creation.
+    assert_eq!(
+        fs.create(Fid::ROOT, Fid(12), "recall", FileKind::File)
+            .await,
+        Err(ErrorCode::BadRequest)
+    );
+}
+
+#[tokio::test]
+async fn memfs_checkpoint_history_supports_versioned_revert() {
+    let fs = MemFs::new();
+    create_file(&fs, "notes.md", Fid(1), b"version one").await;
+
+    fs.walk(Fid::ROOT, Fid(2), &["notes.md".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, b"version two").await.unwrap();
+    fs.clunk(Fid(2)).await.unwrap();
+
+    let history = fs.checkpoint_history("notes.md").await.unwrap();
+    assert!(history.len() >= 2, "{history:?}");
+    assert_eq!(fs.materialize("notes.md").await.unwrap(), b"version two");
+
+    let reverted_root = fs.revert_previous("notes.md").await.unwrap();
+    assert_eq!(fs.checkpoint_root("notes.md").await.unwrap(), reverted_root);
+    assert_eq!(fs.materialize("notes.md").await.unwrap(), b"version one");
+
+    // Can also jump explicitly back to v2 by checkpoint root hash.
+    let v2_root = history.last().unwrap().root.clone();
+    fs.revert_to_checkpoint("notes.md", &v2_root).await.unwrap();
+    assert_eq!(fs.materialize("notes.md").await.unwrap(), b"version two");
+}

@@ -4,12 +4,18 @@ impl FileBackedApp {
     pub(in crate::file_backed) fn seed_reconciler_from_tape_history(&mut self, raw: &str) {
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
+        self.turn_prompts.clear();
         for line in raw.lines() {
             let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
                 continue;
             };
             if record.kind == "message" {
                 self.reconciler.on_hydrated_message_record(&record.role);
+                if record.role == "user" {
+                    let is_cmd =
+                        record.input_intent == Some(alan_agent_protocol::InputIntent::Command);
+                    self.turn_prompts.push((record.content, is_cmd));
+                }
             }
         }
     }
@@ -17,13 +23,17 @@ impl FileBackedApp {
         self.namespace_cwd = std::path::PathBuf::from("/");
         self.lose_model_receipts(&self.model.owner.clone());
         self.model_chooser.active = false;
-        self.model_chooser.explicit = false;
         self.model_chooser.catalog = None;
         self.model = super::super::model::ModelProjection::default();
+        self.usage = super::super::usage::UsageProjection::default();
         self.skills = super::super::skills::SkillProjection::default();
         self.completion_sources.skills.clear();
         self.queue = super::super::queue::QueueProjection::default();
-        let mut project_notice = if self.retained_project_grant().is_some() {
+        let mut project_notice = if (self.pending_project_control.is_some()
+            || self.retained_project_mount.is_some()
+            || self.project_cleanup.is_some())
+            && self.retained_project_grant().is_some()
+        {
             self.fence_project_control();
             self.notice.take()
         } else {
@@ -36,14 +46,13 @@ impl FileBackedApp {
                 None => unknown.into(),
             }));
         }
+        self.last_input_failed = false;
+        self.auto_continue_on_empty_cancel = false;
         self.tape_consumed_offset = 0;
         self.action_cells.clear();
         self.modal.active = false;
-        self.modal.generation += 1;
-        self.modal.rows.clear();
-        self.modal.actions.clear();
-        self.modal.plans.clear();
-        self.modal.plan_mode = false;
+        self.modal
+            .reset_for_mode(action_modal::ModalMode::Actions, false);
         self.activity = UiActivitySnapshot::idle();
         self.plan = UiPlanSnapshot::empty();
         self.plan_revision = 0;

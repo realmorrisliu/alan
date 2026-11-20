@@ -344,6 +344,7 @@ fn action_snapshots_track_running_and_commit_completed_tool() {
         vec![RunningTool {
             id: "a0".to_string(),
             title: "edit".to_string(),
+            tail_lines: Vec::new(),
         }]
     );
     assert!(app.transcript.is_empty());
@@ -460,7 +461,7 @@ fn transcript_renders_error_style() {
     let cell = backend.buffer().cell((0, 0)).unwrap();
 
     assert_eq!(cell.symbol(), "E");
-    assert_eq!(cell.fg, Color::Red);
+    assert_eq!(cell.fg, crate::theme::Theme::default().status_block);
 }
 
 #[test]

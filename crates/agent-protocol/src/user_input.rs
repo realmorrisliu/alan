@@ -1,7 +1,7 @@
 //! Versioned input payloads; AgentFS continues to own the outer length frame.
 use serde::{Deserialize, Serialize};
 
-use crate::InputMode;
+use crate::{ContentPart, InputMode};
 
 /// One-shot routing intent, independent from input scheduling mode.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -28,7 +28,7 @@ pub fn parse_input_prefix(input: &str) -> (InputIntent, &str) {
 }
 
 /// Payload identity and intent for one committed AgentFS input frame.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct UserInputRecord {
     /// Supported wire schema version.
@@ -41,6 +41,12 @@ pub struct UserInputRecord {
     pub mode: InputMode,
     /// Exact body after consuming at most one prefix.
     pub body: String,
+    /// Optional additional structured or attachment parts (such as images).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<ContentPart>,
+    /// Optional per-turn JSON Schema constraining the assistant output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_schema: Option<serde_json::Value>,
 }
 
 const MAGIC: &[u8] = b"alan-input-v1\n";
@@ -54,7 +60,21 @@ impl UserInputRecord {
             intent,
             mode,
             body: body.into(),
+            parts: Vec::new(),
+            response_schema: None,
         }
+    }
+
+    /// Attach additional content parts (such as `ContentPart::Attachment` images).
+    pub fn with_parts(mut self, parts: Vec<ContentPart>) -> Self {
+        self.parts = parts;
+        self
+    }
+
+    /// Constrain this turn's assistant output to match the supplied JSON Schema.
+    pub fn with_response_schema(mut self, schema: serde_json::Value) -> Self {
+        self.response_schema = Some(schema);
+        self
     }
 
     /// Validate a record before encoding or admission.
@@ -65,7 +85,7 @@ impl UserInputRecord {
         if uuid::Uuid::parse_str(&self.submission_id).is_err() {
             return Err("user input submission_id must be a UUID");
         }
-        if self.body.trim().is_empty() {
+        if self.body.trim().is_empty() && self.parts.is_empty() {
             return Err("user input body is empty");
         }
         Ok(())

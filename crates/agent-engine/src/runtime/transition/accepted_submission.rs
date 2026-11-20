@@ -57,6 +57,23 @@ pub(crate) fn advance_accepted_submission<'a>(
         // Publish identity synchronously, before the Process can select a control
         // ahead of the returned future's first poll. Transition ownership stays here.
         state.machine.accept_submission(submission.id.clone());
+        match &submission.op {
+            Op::Turn { context, .. } => {
+                state.machine.set_active_turn_response_schema(
+                    context.as_ref().and_then(|c| c.response_schema.clone()),
+                );
+            }
+            Op::Input {
+                mode: InputMode::FollowUp,
+                ..
+            } => {
+                let schema = state
+                    .environment
+                    .take_submission_response_schema(&submission.id);
+                state.machine.set_active_turn_response_schema(schema);
+            }
+            _ => {}
+        }
         if matches!(submission.op, Op::CompactWithOptions { .. }) {
             // Manual compaction has a Tape identity but no cancellation contract.
             state
@@ -115,6 +132,14 @@ pub(crate) fn advance_accepted_submission<'a>(
         }
         let mut emit = |_event: Event| async {};
 
+        if matches!(
+            submission.op,
+            Op::Turn { .. } | Op::Resume { .. } | Op::Input { .. }
+        ) {
+            let knowledge = state.environment.read_project_knowledge_section().await;
+            state.prompt_cache.set_project_knowledge_section(knowledge);
+        }
+
         let cancelled_before_start =
             cancel.is_cancelled() && matches!(submission.op, Op::Turn { .. } | Op::Input { .. });
         let result = if cancelled_before_start {
@@ -131,9 +156,15 @@ pub(crate) fn advance_accepted_submission<'a>(
                 Ok(())
             }
         } else if requeue_inband_submissions {
-            drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
+            Box::pin(drive_turn_submission_with_cancel(
+                state, submission, broker, &mut emit, cancel,
+            ))
+            .await
         } else {
-            handle_submission_with_cancel(state, submission, &mut emit, cancel).await
+            Box::pin(handle_submission_with_cancel(
+                state, submission, &mut emit, cancel,
+            ))
+            .await
         };
         // A pre-start cancellation bypasses submission dispatch, so it must
         // also close any budget opened during input preparation here.
@@ -167,6 +198,7 @@ pub(crate) fn advance_accepted_submission<'a>(
             state
                 .machine
                 .set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+            state.machine.clear_active_turn_response_schema();
         }
         state
             .environment
@@ -289,13 +321,13 @@ where
         }
         _ => None,
     };
-    handle_submission_with_cancel_and_steering(
+    Box::pin(handle_submission_with_cancel_and_steering(
         state,
         initial_submission,
         emit,
         cancel,
         Some(broker),
-    )
+    ))
     .await?;
     let mut pending_command = command.filter(|_| state.machine.has_pending_interaction());
 
@@ -388,13 +420,13 @@ where
             Op::Resume { .. } => {}
             _ => state.machine.accept_submission(next_submission.id.clone()),
         }
-        handle_submission_with_cancel_and_steering(
+        Box::pin(handle_submission_with_cancel_and_steering(
             state,
             next_submission,
             emit,
             cancel,
             Some(broker),
-        )
+        ))
         .await?;
         if !state.machine.has_pending_interaction() {
             pending_command = None;

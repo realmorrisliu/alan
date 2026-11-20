@@ -41,10 +41,13 @@ impl SwitchableFileServer {
         *self.inner.write().await = None;
     }
 
-    pub(super) async fn while_bound<T>(&self, action: impl FnOnce() -> Result<T>) -> Result<T> {
+    pub(super) async fn while_bound_async<T, F>(&self, action: impl FnOnce() -> F) -> Result<T>
+    where
+        F: std::future::Future<Output = Result<T>>,
+    {
         let inner = self.inner.read().await;
         ensure!(inner.is_some(), "Package Service is unavailable");
-        action()
+        action().await
     }
 }
 
@@ -167,15 +170,41 @@ pub(super) struct SupervisorRuntime {
     root_template: RootAgentTemplate,
 }
 
+pub(super) enum SupervisorCommand {
+    Open {
+        options: crate::agent_runtime::sessions::SessionLaunchOptions,
+        reply: tokio::sync::oneshot::Sender<Result<(Pid, InProcessTransport)>>,
+    },
+    SpawnChild {
+        parent_pid: Pid,
+        options: crate::agent_runtime::sessions::SessionLaunchOptions,
+        reply: tokio::sync::oneshot::Sender<Result<(Pid, InProcessTransport)>>,
+    },
+    Close {
+        pid: Pid,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
+    },
+    ResetRoot {
+        options: crate::agent_runtime::sessions::SessionLaunchOptions,
+        reply: tokio::sync::oneshot::Sender<Result<Pid>>,
+    },
+}
+
 async fn run_supervisor(
     mut runtime: SupervisorRuntime,
     mut shutdown: tokio::sync::oneshot::Receiver<()>,
+    mut commands: tokio::sync::mpsc::UnboundedReceiver<SupervisorCommand>,
 ) -> Result<()> {
     let mut interval = tokio::time::interval(Duration::from_millis(25));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
             _ = &mut shutdown => break,
+            cmd = commands.recv() => {
+                if let Some(cmd) = cmd {
+                    runtime.handle_command(cmd).await;
+                }
+            }
             _ = interval.tick() => runtime.tick().await?,
         }
     }
@@ -267,11 +296,109 @@ impl SupervisorRuntime {
         self,
     ) -> (
         tokio::sync::oneshot::Sender<()>,
+        tokio::sync::mpsc::UnboundedSender<SupervisorCommand>,
         tokio::task::JoinHandle<Result<()>>,
     ) {
         let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(run_supervisor(self, shutdown_rx));
-        (shutdown, task)
+        let (commands_tx, commands_rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run_supervisor(self, shutdown_rx, commands_rx));
+        (shutdown, commands_tx, task)
+    }
+
+    async fn handle_command(&mut self, cmd: SupervisorCommand) {
+        match cmd {
+            SupervisorCommand::Open { options, reply } => {
+                let result = self.open_session(options).await;
+                let _ = reply.send(result);
+            }
+            SupervisorCommand::SpawnChild {
+                parent_pid,
+                options,
+                reply,
+            } => {
+                let result = self.spawn_child_session(parent_pid, options).await;
+                let _ = reply.send(result);
+            }
+            SupervisorCommand::Close { pid, reply } => {
+                let result = self.agent_runtime.close_session(pid).await;
+                let _ = reply.send(result);
+            }
+            SupervisorCommand::ResetRoot { options, reply } => {
+                let result = self.reset_root_session(options).await;
+                let _ = reply.send(result);
+            }
+        }
+    }
+
+    async fn open_session(
+        &self,
+        options: crate::agent_runtime::sessions::SessionLaunchOptions,
+    ) -> Result<(Pid, InProcessTransport)> {
+        let unit = self
+            .manifest
+            .get("root-agent")
+            .cloned()
+            .context("unknown Boot Unit `root-agent`")?;
+        let template = self.root_template.for_session(&options, false)?;
+        self.agent_runtime
+            .launch_interactive_session(
+                self.manager_pid,
+                &self.system_namespace,
+                &unit,
+                &template,
+                None,
+            )
+            .await
+    }
+
+    async fn spawn_child_session(
+        &self,
+        parent_pid: Pid,
+        options: crate::agent_runtime::sessions::SessionLaunchOptions,
+    ) -> Result<(Pid, InProcessTransport)> {
+        ensure!(
+            matches!(
+                self.procfs.try_observe_process_lifecycle(parent_pid),
+                Some((Status::Running, _))
+            ),
+            "parent session Process {} is not active",
+            parent_pid.0
+        );
+        let unit = self
+            .manifest
+            .get("root-agent")
+            .cloned()
+            .context("unknown Boot Unit `root-agent`")?;
+        let template = self.root_template.for_session(&options, false)?;
+        self.agent_runtime
+            .launch_interactive_session(
+                parent_pid,
+                &self.system_namespace,
+                &unit,
+                &template,
+                Some(parent_pid),
+            )
+            .await
+    }
+
+    async fn reset_root_session(
+        &mut self,
+        options: crate::agent_runtime::sessions::SessionLaunchOptions,
+    ) -> Result<Pid> {
+        self.active.remove("root-agent");
+        self.pending.remove("root-agent");
+        self.root_pid.store(0, Ordering::Release);
+        if let Some(root) = self.root.take() {
+            self.agent_runtime.shutdown_root(root).await?;
+        }
+        self.root_template = self.root_template.for_session(&options, true)?;
+        let unit = self
+            .manifest
+            .get("root-agent")
+            .cloned()
+            .context("unknown Boot Unit `root-agent`")?;
+        self.launch_root(&unit).await?;
+        Ok(Pid(self.root_pid.load(Ordering::Acquire)))
     }
 
     async fn tick(&mut self) -> Result<()> {
@@ -483,9 +610,11 @@ impl SupervisorRuntime {
 
     async fn stop(mut self) -> Result<()> {
         self.package_handle.deactivate().await;
+        let sessions_result = self.agent_runtime.shutdown_sessions().await;
         if let Some(root) = self.root.take() {
             self.agent_runtime.shutdown_root(root).await?;
         }
+        sessions_result?;
         for (name, active) in self.active {
             self.procfs.record_exit(active.pid, 0).await;
             if let Some(unit) = self.manifest.get(&name) {

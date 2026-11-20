@@ -10,6 +10,7 @@
 
 mod bash_classifier;
 mod execution_adapter;
+mod exploration_gitignore;
 mod exploration_tools;
 mod file_tools;
 #[cfg(test)]
@@ -42,7 +43,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute shell commands from the Process cwd, subject to namespace authority, policy, and execution-backend constraints. Use cwd-relative operands for mounted project files; use file Tools for absolute Alan namespace paths such as /mnt/project/src/lib.rs. Namespace paths inside shell command text are not automatically translated. A refusal for such an operand alone does not mean the selected project needs another grant; use relative operands in its selected cwd. Shell variable, command, brace and unquoted glob expansion is unsupported, even for reads. Use literal paths or quoted search filters such as rg --files --glob '*.rs', not src/*.rs; another project grant does not enable expansion. Prefer direct commands like rg, sed, git status, or curl. Avoid opaque interpreter wrappers like python -, python -c, bash -c, or sh -c unless genuinely required, because sandbox preflight may reject them conservatively."
+        "Execute a shell command in the Process cwd inside the active OS sandbox and trust posture (falls back to bash). Shell features such as variables, pipes, subshells, globs, and inline interpreters work inside the sandboxed cwd. Prefer dedicated tools (`read_file`, `edit_file`, `write_file`, `grep`, `glob`, `list_dir`) for inspecting, searching, or editing files; use `bash` for builds, tests, git, package managers, and commands without a dedicated tool. Use cwd-relative paths for mounted project files; absolute alan9 paths such as /mnt/project/... inside command strings are not automatically translated."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -52,7 +53,7 @@ impl Tool for BashTool {
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "Shell command from the selected Process cwd. Use cwd-relative operands for mounted project files; absolute Alan namespace paths in command text are not automatically translated. Use literal paths or quoted search filters such as '*.rs' instead of shell expansion. Prefer direct commands instead of wrappers like python -, python -c, bash -c, or sh -c."
+                    "description": "Shell command string to execute from the Process cwd."
                 },
                 "timeout": {
                     "type": "integer",
@@ -81,14 +82,27 @@ impl Tool for BashTool {
         let command = args["command"].as_str().unwrap_or("").to_string();
         let capability = classify_bash_command(&command);
         let timeout_secs = args["timeout"].as_u64().unwrap_or(60).clamp(1, 300);
+        let progress = ctx.progress_callback();
 
         Box::pin(async move {
+            let adapter_for_progress = adapter.clone();
+            let projected_progress = progress.map(|cb| {
+                let wrapped: alan_agent_engine::tools::OutputProgressCallback = std::sync::Arc::new(
+                    move |stdout_tail: &str, stderr_tail: &str, truncated: bool| {
+                        let out = adapter_for_progress.project_text(stdout_tail);
+                        let err = adapter_for_progress.project_text(stderr_tail);
+                        cb(&out, &err, truncated);
+                    },
+                );
+                wrapped
+            });
             let result = sandbox
-                .exec_with_timeout_and_capability(
+                .exec_with_timeout_capability_and_progress(
                     &command,
                     &cwd,
                     Some(std::time::Duration::from_secs(timeout_secs)),
                     Some(capability),
+                    projected_progress,
                 )
                 .await?;
 
@@ -350,12 +364,13 @@ mod tests {
     }
 
     #[test]
-    fn test_bash_tool_description_warns_about_eval_wrappers() {
+    fn test_bash_tool_description_guides_dedicated_tools_and_sandbox() {
         let tool = BashTool::new();
         let description = tool.description();
-        assert!(description.contains("python -c"));
-        assert!(description.contains("bash -c"));
-        assert!(description.contains("Prefer direct commands"));
+        assert!(description.contains("read_file"));
+        assert!(description.contains("edit_file"));
+        assert!(description.contains("sandbox"));
+        assert!(!description.contains("is unsupported"));
     }
 
     #[test]

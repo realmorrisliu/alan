@@ -208,6 +208,7 @@ fn validate_reasoning_effort(
 
 fn provider_type_for_llm_provider(provider: LlmProvider) -> ProviderType {
     match provider {
+        LlmProvider::Magpie => ProviderType::Magpie,
         LlmProvider::GoogleGeminiGenerateContent => ProviderType::GoogleGeminiGenerateContent,
         LlmProvider::Chatgpt => ProviderType::ChatgptResponses,
         LlmProvider::OpenAiResponses => ProviderType::OpenAiResponses,

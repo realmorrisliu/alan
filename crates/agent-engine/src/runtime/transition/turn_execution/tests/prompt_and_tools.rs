@@ -97,16 +97,37 @@ async fn generation_directory_context_refreshes_between_tool_iterations() {
     .unwrap();
     let requests = mock.recorded_requests();
     assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].system_prompt, requests[1].system_prompt,
+        "system_prompt must remain static across directory changes for prefix caching"
+    );
+    let ctx_0 = requests[0]
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == alan_llm::MessageRole::Context)
+        .unwrap();
     assert!(
-        requests[0]
-            .system_prompt
-            .as_deref()
-            .unwrap()
+        ctx_0
+            .content
             .contains("Current selected Process directory: \"/mnt/before\"")
     );
-    let prompt = requests[1].system_prompt.as_deref().unwrap();
-    assert!(prompt.contains("Current selected Process directory: \"/mnt/after\""));
-    assert!(!prompt.contains("Current selected Process directory: \"/mnt/before\""));
+    let ctx_1 = requests[1]
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == alan_llm::MessageRole::Context)
+        .unwrap();
+    assert!(
+        ctx_1
+            .content
+            .contains("Current selected Process directory: \"/mnt/after\"")
+    );
+    assert!(
+        !ctx_1
+            .content
+            .contains("Current selected Process directory: \"/mnt/before\"")
+    );
 }
 
 #[tokio::test]
@@ -148,14 +169,28 @@ async fn generation_directory_context_refreshes_binding_and_escapes_path_data() 
     }
     let requests = mock.recorded_requests();
     assert_eq!(requests.len(), paths.len());
+    assert_eq!(requests[0].system_prompt, requests[1].system_prompt);
     for (request, path) in requests.iter().zip(paths) {
-        let prompt = request.system_prompt.as_deref().unwrap();
-        let data = prompt
+        assert!(
+            !request
+                .system_prompt
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Current selected Process directory:")
+        );
+        let trailing_context = request
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == alan_llm::MessageRole::Context)
+            .expect("expected trailing context message");
+        let data = trailing_context
+            .content
             .lines()
             .find_map(|line| line.strip_prefix("Current selected Process directory: "))
             .unwrap();
         assert_eq!(serde_json::from_str::<String>(data).unwrap(), path);
-        assert!(prompt.contains("context, not a grant"));
+        assert!(trailing_context.content.contains("context, not a grant"));
     }
     assert!(!state.machine.messages().iter().any(|message| {
         message
@@ -186,12 +221,20 @@ async fn test_turn_tool_definitions_include_runtime_delegated_schema_when_suppor
     );
 
     let tool_execution = state.tool_execution();
-    let (_, tools) = turn_tool_definitions(true, &tool_execution).await.unwrap();
+    let (_, tools) = turn_tool_definitions(true, true, &tool_execution)
+        .await
+        .unwrap();
     assert!(
         tools
             .iter()
             .any(|tool| tool.name == "invoke_delegated_skill")
     );
+    assert!(tools.iter().any(|tool| tool.name == "spawn_subagent"));
+
+    let (_, child_tools) = turn_tool_definitions(true, false, &tool_execution)
+        .await
+        .unwrap();
+    assert!(!child_tools.iter().any(|tool| tool.name == "spawn_subagent"));
 }
 
 #[tokio::test]
@@ -199,7 +242,9 @@ async fn unmounted_tool_is_not_model_callable() {
     let state = create_test_state_with_provider(ContentMockProvider::new("ok"));
 
     let tool_execution = state.tool_execution();
-    let (_, tools) = turn_tool_definitions(false, &tool_execution).await.unwrap();
+    let (_, tools) = turn_tool_definitions(false, false, &tool_execution)
+        .await
+        .unwrap();
     assert!(!tools.iter().any(|tool| tool.name == "network_probe"));
 }
 

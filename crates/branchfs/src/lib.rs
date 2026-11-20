@@ -1,9 +1,10 @@
 //! alan-branchfs — headless branching execution as an aP file server.
 //!
-//! The server exposes speculative checkpoint branches as files. It does not run
-//! a scheduler or model calls; it proves the file boundary that a later
-//! scheduler can drive: create cheap forks, score branches, select a branch,
-//! discard branches, and tail lifecycle events.
+//! Ring 3/4 aP file server retained in the workspace: exposes speculative
+//! `alan-knowledge` checkpoint branches as plain files (`ctl`, `branches/`,
+//! `selected`, `events`). It does not run a scheduler or model calls; it proves
+//! the file boundary that a later scheduler can drive: create cheap forks,
+//! score branches, select a branch, discard branches, and tail lifecycle events.
 
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};

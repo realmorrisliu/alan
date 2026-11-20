@@ -6,15 +6,25 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use alan_agent_engine::{
-    AgentProcessConfig, LlmClient, ProcessPackageKind, ProcessPackageReference,
-    ProcessPackageSkillReference, ToolRegistry, provider_capabilities_for_config,
+    AgentProcessConfig, LlmClient, ToolRegistry, provider_capabilities_for_config,
 };
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid};
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
 
+pub(crate) mod embed_mounts;
+mod packages;
+pub(crate) mod sessions;
 mod supervisor;
+mod trust;
+
+pub use sessions::{SessionHandle, SessionLaunchOptions};
+
+#[cfg(test)]
+use packages::project_package_reference_async;
+pub(crate) use packages::{namespace_with_package_references, validate_package_reference_mounts};
+use packages::{overlaps_package_namespace, project_package_reference, seed_preinstalled_packages};
 
 use supervisor::{
     ActiveUnit, SupervisorEnvironment, SupervisorRuntime, SwitchableFileServer,
@@ -48,6 +58,11 @@ pub struct ServiceManagerConfig {
     pub process: AgentProcessConfig,
     /// Restore the previously selected Root Agent rollout for this invocation.
     pub resume_root: bool,
+    /// Optional explicit Root Agent rollout id when resuming (`--resume <id>`).
+    pub resume_rollout_id: Option<String>,
+    /// Never read or overwrite the `metadata/root-rollout` selector, so a throwaway run neither
+    /// resumes nor becomes the selected session of earlier or later invocations.
+    pub ephemeral_rollout: bool,
     pub input_shadow: Option<InputShadowSelection>,
     pub launch_context: ProcessLaunchContext,
     pub connection_store: Option<ConnectionStoreBindings>,
@@ -56,6 +71,8 @@ pub struct ServiceManagerConfig {
     pub llm_factory: Arc<dyn LlmClientFactory>,
     pub host_mount_adapter: Arc<dyn HostMountExportAdapter>,
     pub tools: ToolRegistry,
+    /// Whether to project Alan's built-in skills onto Agent Processes.
+    pub include_builtin_skills: bool,
 }
 
 pub trait LlmClientFactory: std::fmt::Debug + Send + Sync {
@@ -68,20 +85,16 @@ pub trait LlmClientFactory: std::fmt::Debug + Send + Sync {
 }
 
 #[derive(Debug)]
-struct OneShotLlmClientFactory(std::sync::Mutex<Option<LlmClient>>);
+struct ReusableLlmClientFactory(alan_agent_engine::ReusableLlmClient);
 
-impl LlmClientFactory for OneShotLlmClientFactory {
+impl LlmClientFactory for ReusableLlmClientFactory {
     fn create(
         &self,
         _base_config: &alan_agent_engine::Config,
         _selected_profile: Option<&str>,
         _connections: &ConnectionsFile,
     ) -> Result<LlmClient> {
-        self.0
-            .lock()
-            .map_err(|_| anyhow::anyhow!("LLM factory lock poisoned"))?
-            .take()
-            .context("ephemeral LLM client was already consumed")
+        Ok(self.0.client())
     }
 }
 
@@ -118,13 +131,41 @@ impl ServiceManagerConfig {
             in_memory_stores: false,
             process,
             resume_root: false,
+            resume_rollout_id: None,
+            ephemeral_rollout: false,
             input_shadow: None,
-            llm_factory: Arc::new(OneShotLlmClientFactory(std::sync::Mutex::new(Some(
-                llm_client,
-            )))),
+            llm_factory: Arc::new(ReusableLlmClientFactory(llm_client.into_reusable())),
             host_mount_adapter: Arc::new(UnavailableHostMountExportAdapter),
             tools,
+            include_builtin_skills: true,
         }
+    }
+
+    /// Control whether Alan's preinstalled built-in skills are projected onto Agent Processes.
+    pub fn with_include_builtin_skills(mut self, include: bool) -> Self {
+        self.include_builtin_skills = include;
+        self
+    }
+
+    /// Keep this invocation's Root rollout out of the selected-rollout channel.
+    pub fn with_ephemeral_rollout(mut self, ephemeral: bool) -> Self {
+        self.ephemeral_rollout = ephemeral;
+        self
+    }
+
+    /// Set explicit invocation-only trust posture on the Root Agent Process config.
+    pub fn with_trust_posture(mut self, trust_posture: alan_agent_engine::TrustPosture) -> Self {
+        self.process.trust_posture = trust_posture;
+        self
+    }
+
+    /// Select an explicit Root rollout id for `--resume <id>`.
+    pub fn with_resume_rollout_id(mut self, rollout_id: Option<String>) -> Self {
+        if rollout_id.is_some() {
+            self.resume_root = true;
+        }
+        self.resume_rollout_id = rollout_id;
+        self
     }
 }
 
@@ -143,16 +184,14 @@ pub struct ServiceManager {
     package_handle: Arc<SwitchableFileServer>,
     #[cfg(test)]
     root_namespace: InProcessTransport,
-    supervisor_shutdown: tokio::sync::oneshot::Sender<()>,
-    supervisor_task: tokio::task::JoinHandle<Result<()>>,
+    supervisor_cmd: tokio::sync::mpsc::UnboundedSender<supervisor::SupervisorCommand>,
+    supervisor_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    supervisor_task: Option<tokio::task::JoinHandle<Result<()>>>,
 }
 
 impl ServiceManager {
     pub async fn boot(mut config: ServiceManagerConfig) -> Result<Self> {
-        ensure!(
-            !config.resume_root || config.process.store_bindings.is_some(),
-            "Root Agent recovery requires durable store bindings"
-        );
+        trust::validate_boot_trust_and_resume(&config)?;
         ensure!(
             config.launch_context.package_references.is_empty(),
             "initial package references must be resolved by Package Service"
@@ -166,7 +205,9 @@ impl ServiceManager {
                 .all(|(path, _)| !overlaps_package_namespace(path)),
             "namespace mounts overlapping /lib/pkg are not accepted"
         );
+        let _ = embed_mounts::caller_mnt_mounts(&config.launch_context.namespace)?;
         let boot_id = Uuid::new_v4();
+        let include_builtin_skills = config.include_builtin_skills;
         let manifest = BootManifest::system().context("load system /lib/boot units")?;
         let (package_bootstrap, package_service) =
             if config.in_memory_stores && config.package_store.is_none() {
@@ -239,7 +280,18 @@ impl ServiceManager {
             selected_profile,
             &connections,
         ) {
-            Ok(client) => Some((llm_connection.clone(), client)),
+            Ok(client)
+                if selected_profile.is_some() || client.provider_name() != "unconfigured" =>
+            {
+                Some((llm_connection.clone(), client))
+            }
+            Ok(_) => {
+                tracing::info!(
+                    profile_id = %llm_connection,
+                    "No connection profile configured during boot; continuing without a callable provider"
+                );
+                None
+            }
             Err(_) => {
                 tracing::warn!(
                     profile_id = %llm_connection,
@@ -278,9 +330,12 @@ impl ServiceManager {
             host_mount_adapter: config.host_mount_adapter.clone(),
             process: config.process,
             resume_root: config.resume_root,
+            resume_rollout_id: config.resume_rollout_id,
+            ephemeral_rollout: config.ephemeral_rollout,
             input_shadow: config.input_shadow,
             launch_context: config.launch_context,
             tools: config.tools,
+            include_builtin_skills,
             host_capabilities,
             generation_capabilities,
         })
@@ -302,7 +357,7 @@ impl ServiceManager {
         if let Some(package_bootstrap) = package_bootstrap {
             package_bootstrap.finish();
         }
-        let (supervisor_shutdown, supervisor_task) = runtime.start();
+        let (supervisor_shutdown, supervisor_cmd, supervisor_task) = runtime.start();
 
         Ok(Self {
             boot_id,
@@ -318,8 +373,9 @@ impl ServiceManager {
             package_handle,
             #[cfg(test)]
             root_namespace: root,
-            supervisor_shutdown,
-            supervisor_task,
+            supervisor_cmd,
+            supervisor_shutdown: Some(supervisor_shutdown),
+            supervisor_task: Some(supervisor_task),
         })
     }
 
@@ -354,7 +410,9 @@ impl ServiceManager {
         package_id: &str,
     ) -> Result<()> {
         self.package_handle
-            .while_bound(|| project_package_reference(&self.package, launch_context, package_id))
+            .while_bound_async(|| {
+                packages::project_package_reference_async(&self.package, launch_context, package_id)
+            })
             .await
     }
 
@@ -383,14 +441,28 @@ impl ServiceManager {
         Ok(())
     }
 
-    pub async fn shutdown(self) -> Result<()> {
+    /// Best-effort synchronous signal requesting background supervisor shutdown without blocking.
+    pub fn signal_shutdown(&mut self) {
+        if let Some(shutdown) = self.supervisor_shutdown.take() {
+            let _ = shutdown.send(());
+        }
+    }
+
+    pub async fn shutdown(mut self) -> Result<()> {
         self.state.lock().await.mark_stopping();
-        let _ = self.supervisor_shutdown.send(());
-        self.supervisor_task
-            .await
-            .context("Service Manager supervisor task failed")??;
+        self.signal_shutdown();
+        if let Some(task) = self.supervisor_task.take() {
+            task.await
+                .context("Service Manager supervisor task failed")??;
+        }
         self.procfs.record_exit(self.manager_pid, 0).await;
         Ok(())
+    }
+}
+
+impl Drop for ServiceManager {
+    fn drop(&mut self) {
+        self.signal_shutdown();
     }
 }
 
@@ -406,9 +478,12 @@ struct AssembleInputs {
     host_mount_adapter: Arc<dyn HostMountExportAdapter>,
     process: AgentProcessConfig,
     resume_root: bool,
+    resume_rollout_id: Option<String>,
+    ephemeral_rollout: bool,
     input_shadow: Option<InputShadowSelection>,
     launch_context: ProcessLaunchContext,
     tools: ToolRegistry,
+    include_builtin_skills: bool,
     host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
     generation_capabilities: alan_llm::ProviderCapabilities,
 }
@@ -426,13 +501,17 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         host_mount_adapter,
         mut process,
         resume_root,
+        resume_rollout_id,
+        ephemeral_rollout,
         input_shadow,
         mut launch_context,
         tools,
+        include_builtin_skills,
         host_capabilities,
         generation_capabilities,
     } = inputs;
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    connection_service.attach_package_service(package_service.clone());
     connection_service
         .attach_callable_registry(
             llmfs.clone(),
@@ -471,6 +550,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         tools.process_runner(),
     );
 
+    let caller_mnt_mounts = embed_mounts::caller_mnt_mounts(&launch_context.namespace)?;
     let mut namespace = launch_context.namespace.child();
     mount_standard_namespace_roots(&mut namespace);
     mount_boot_units(&mut namespace);
@@ -545,13 +625,18 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
                 if unit.name == "local-entry" {
                     mount_service_handles(&system_namespace, &srvfs).await?;
                 }
+                let extra_mounts: &[_] = if unit.name == "local-entry" {
+                    &caller_mnt_mounts
+                } else {
+                    &[]
+                };
                 let (pid, unit_namespace) = spawn_unit_process(
                     &procfs,
                     manager_pid,
                     &system_namespace,
                     Credentials::system(),
                     unit,
-                    &[],
+                    extra_mounts,
                 )
                 .await?;
                 state
@@ -657,9 +742,11 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     );
     launch_context = root_template_context;
     let reference_service = package_service.clone();
-    launch_context = tokio::task::spawn_blocking(move || {
-        for package_id in alan_agent_engine::skills::preinstalled_skill_package_ids() {
-            project_package_reference(&reference_service, &mut launch_context, package_id)?;
+    let launch_context = tokio::task::spawn_blocking(move || {
+        if include_builtin_skills {
+            for package_id in alan_agent_engine::skills::preinstalled_skill_package_ids() {
+                project_package_reference(&reference_service, &mut launch_context, package_id)?;
+            }
         }
         Ok::<_, anyhow::Error>(launch_context)
     })
@@ -684,7 +771,9 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         llm_connection,
         resume_root,
         input_shadow,
-    );
+    )
+    .with_ephemeral_rollout(ephemeral_rollout)
+    .with_resume_rollout_id(resume_rollout_id);
     let root = agent_runtime
         .launch_root(manager_pid, &system_namespace, root_unit, &root_template)
         .await?;
@@ -724,13 +813,20 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
 }
 
 fn mount_standard_namespace_roots(namespace: &mut Namespace) {
-    for path in ["/bin", "/lib", "/man", "/mnt"] {
+    for path in ["/bin", "/lib", "/mnt"] {
         namespace.mount(
             path,
             InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
             Access::ReadOnly,
         );
     }
+    namespace.mount(
+        "/man",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_tree(
+            crate::manpages::tree_entries(),
+        ))),
+        Access::ReadOnly,
+    );
 }
 
 fn mount_boot_units(namespace: &mut Namespace) {
@@ -786,104 +882,6 @@ fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistry) -> Resul
                 tools.package_manifest_bytes(name)?,
             ))),
             Access::ReadOnly,
-        );
-    }
-    Ok(())
-}
-
-fn seed_preinstalled_packages(package_service: &Arc<PackageService>) -> Result<()> {
-    package_service.retire_preinstalled("alan-shell-control")?;
-    for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
-        let snapshot = crate::PackageSnapshot::from_preinstalled(&source).with_context(|| {
-            format!(
-                "snapshot first-party package `{}` for Package Service",
-                source.package_id
-            )
-        })?;
-        package_service.seed_preinstalled(source.package_id, snapshot)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn namespace_with_package_references(
-    mut base: Namespace,
-    launch_context: &ProcessLaunchContext,
-) -> Result<LiveNamespace> {
-    for reference in &launch_context.package_references {
-        base.mount(
-            &reference.namespace_path,
-            reference.handle(),
-            Access::ReadOnly,
-        );
-    }
-    Ok(LiveNamespace::new(base))
-}
-
-fn overlaps_package_namespace(path: &str) -> bool {
-    namespace_paths_overlap(path, "/lib/pkg")
-}
-
-fn namespace_paths_overlap(left: &str, right: &str) -> bool {
-    left == "/"
-        || right == "/"
-        || left == right
-        || left
-            .strip_prefix(right)
-            .is_some_and(|suffix| suffix.starts_with('/'))
-        || right
-            .strip_prefix(left)
-            .is_some_and(|suffix| suffix.starts_with('/'))
-}
-
-fn project_package_reference(
-    package_service: &Arc<PackageService>,
-    launch_context: &mut ProcessLaunchContext,
-    package_id: &str,
-) -> Result<()> {
-    let lease = package_service.acquire(package_id)?;
-    let record = lease.record().clone();
-    let namespace_root = format!("/lib/pkg/{package_id}");
-    let handle = InProcessTransport::new(lease.file_server()?);
-    launch_context
-        .namespace
-        .mount(&namespace_root, handle.clone(), Access::ReadOnly);
-    let kind = match record.kind {
-        crate::PackageKind::Preinstalled => ProcessPackageKind::Preinstalled,
-        crate::PackageKind::Installed => ProcessPackageKind::Installed,
-    };
-    let skills = record
-        .exports
-        .iter()
-        .map(|export| {
-            ProcessPackageSkillReference::new(
-                &export.skill_id,
-                &export.root,
-                export.dependencies.clone(),
-                lease.skill_descriptor(&export.root)?,
-            )
-        })
-        .collect::<Result<Vec<_>>>()?;
-    launch_context.add_package_reference(ProcessPackageReference::new(
-        package_id,
-        &record.revision,
-        kind,
-        &namespace_root,
-        skills,
-        handle,
-    )?);
-    launch_context.retain_authority(lease);
-    Ok(())
-}
-
-pub(crate) fn validate_package_reference_mounts(
-    launch_context: &ProcessLaunchContext,
-) -> Result<()> {
-    for reference in &launch_context.package_references {
-        let exact_mounts = launch_context.namespace.union_at(&reference.namespace_path);
-        ensure!(
-            exact_mounts.len() == 1 && exact_mounts[0].access == Access::ReadOnly,
-            "package reference {} requires one exact read-only Process namespace mount",
-            reference.namespace_path
         );
     }
     Ok(())

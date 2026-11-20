@@ -3,9 +3,7 @@
 ## Purpose
 Define Alan's Rust terminal UI as a terminal-first renderer host whose local
 contract reads mounted agent files directly.
-
 ## Requirements
-
 ### Requirement: Legacy TUI entrypoints are removed
 alan SHALL remove the TypeScript/Bun/Ink TUI, the `alan-tui` shipped executable,
 the `ALAN_TUI_PATH` override, and the public `alan chat` and `alan ask`
@@ -219,10 +217,9 @@ Root replacement cleanup remains applicable.
 The TUI SHALL NOT capture mouse input and SHALL leave text selection and copy to
 the host terminal. It SHALL restore terminal modes on normal exit, EOF, and
 error, and leave the latest prompt/output in terminal order when it exits.
-The TUI SHALL NOT directly issue Process or Host shutdown controls. When bare
-`alan` owns the mounted instance, its CLI SHALL shut that instance down after
-the renderer exits. A terminal-host view detach while retaining the Alan process
-is distinct from actual application exit.
+The renderer SHALL restore its terminal and release file attachments on exit.
+The owning foreground application SHALL then shut down its instance. Detaching a
+terminal-host view while retaining the native process is not an application exit.
 
 #### Scenario: Mouse capture is disabled
 - **WHEN** the TUI is running
@@ -230,16 +227,14 @@ is distinct from actual application exit.
 - **AND** the TUI does not enable mouse capture
 
 #### Scenario: The foreground application exits while a task is active
-- **WHEN** the user quits Alan or terminal input ends during a running task
-- **THEN** the renderer restores terminal modes and returns to its owning CLI
-- **AND** the CLI shuts down its owned instance and active work
-- **AND** completed effects remain completed and uncertain outcomes are not
-  replayed automatically
+- **WHEN** the user quits Alan or the terminal input ends during a running task
+- **THEN** the renderer restores terminal modes and the application shuts down owned work
+- **AND** completed effects are retained and an unknown outcome does not trigger automatic replay
 
 #### Scenario: Ctrl-D exits from an empty prompt
 - **WHEN** the user presses Ctrl-D with an empty prompt and no pending Agent input
 - **THEN** the renderer exits and restores terminal modes
-- **AND** the owning foreground application shuts down its Agent and services
+- **AND** the foreground application shuts down its owned Agent and services
 
 #### Scenario: Ctrl-D preserves pending Agent input
 - **WHEN** the user presses Ctrl-D while a confirmation or structured-input request is pending
@@ -396,7 +391,6 @@ position. Multiline drafts and temporary controls SHALL expand only as needed. W
 - **THEN** it prefers the confirmed next-input model
 - **AND** running, paused work or a current response retains active-model priority
 - **AND** full status can still distinguish both bindings
-
 
 #### Scenario: External project authority and ordinary directory selection
 - **WHEN** an existing public Host control grants a directory and the Root completes an ordinary directory action without a local project-picker receipt
@@ -591,3 +585,4 @@ implicitly. Read-only discovery SHALL preserve responsive input and exit.
 - **WHEN** Root identity, cwd or the settled input boundary changes before discovery completes
 - **THEN** the stale result sends no directory control or revocation
 - **AND** a subsequent explicit command must discover authority in its current context
+

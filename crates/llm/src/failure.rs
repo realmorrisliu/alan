@@ -1,5 +1,20 @@
+#[cfg(any(
+    feature = "provider-magpie",
+    feature = "provider-openai",
+    feature = "provider-vertex",
+    feature = "provider-openrouter",
+    feature = "provider-anthropic-adapter"
+))]
 use crate::StreamChunk;
+#[cfg(feature = "provider-openai")]
 use alan_auth::{ChatgptAuthError, ChatgptAuthErrorKind};
+#[cfg(any(
+    feature = "provider-magpie",
+    feature = "provider-openai",
+    feature = "provider-vertex",
+    feature = "provider-openrouter",
+    feature = "provider-anthropic-adapter"
+))]
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug)]
@@ -20,6 +35,7 @@ pub fn safe_failure_reason(error: &anyhow::Error) -> &'static str {
         if source.is::<serde_json::Error>() {
             return "stream_error:parse";
         }
+        #[cfg(feature = "provider-openai")]
         if let Some(auth) = source.downcast_ref::<ChatgptAuthError>() {
             match auth.kind() {
                 Some(
@@ -91,6 +107,13 @@ pub fn safe_finish_reason(reason: &str) -> &'static str {
     }
 }
 
+#[cfg(any(
+    feature = "provider-magpie",
+    feature = "provider-openai",
+    feature = "provider-vertex",
+    feature = "provider-openrouter",
+    feature = "provider-anthropic-adapter"
+))]
 pub(crate) fn failure_chunk(reason: &'static str) -> StreamChunk {
     StreamChunk {
         text: None,
@@ -109,6 +132,13 @@ pub(crate) fn failure_chunk(reason: &'static str) -> StreamChunk {
 
 // One owner forwards payload and emits the sole terminal. Receiver drop cancels
 // delivery; an already-observed normal terminal wins over later transport close.
+#[cfg(any(
+    feature = "provider-magpie",
+    feature = "provider-openai",
+    feature = "provider-vertex",
+    feature = "provider-openrouter",
+    feature = "provider-anthropic-adapter"
+))]
 pub(crate) fn guard_stream(
     mut input: mpsc::Receiver<StreamChunk>,
     status: oneshot::Receiver<Option<&'static str>>,

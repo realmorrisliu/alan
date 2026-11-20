@@ -5,13 +5,12 @@ use std::path::Path;
 fn test_config_default() {
     let config = Config::default();
     assert_eq!(config.llm_provider, LlmProvider::OpenAiResponses);
-    assert_eq!(
-        config.google_gemini_generate_content_location,
-        "us-central1"
-    );
+    assert_eq!(config.magpie_base_url, "http://127.0.0.1:3425/v1");
+    assert_eq!(config.magpie_model, "default");
+    assert_eq!(config.google_gemini_generate_content_location, "global");
     assert_eq!(
         config.google_gemini_generate_content_model,
-        "gemini-2.0-flash"
+        "gemini-2.5-flash"
     );
     assert_eq!(
         config.openai_responses_base_url,
@@ -39,7 +38,7 @@ fn test_config_default() {
         config.anthropic_messages_base_url,
         "https://api.anthropic.com/v1"
     );
-    assert_eq!(config.anthropic_messages_model, "claude-3-5-sonnet-latest");
+    assert_eq!(config.anthropic_messages_model, "claude-sonnet-4-5");
     assert_eq!(config.llm_request_timeout_secs, 180);
     assert_eq!(config.tool_timeout_secs, 30);
     assert_eq!(config.tool_repeat_limit, 4);
@@ -130,14 +129,41 @@ fn test_config_for_google_gemini_generate_content() {
 #[test]
 fn test_config_for_google_gemini_generate_content_defaults() {
     let config = Config::for_google_gemini_generate_content("project", None, None);
-    assert_eq!(
-        config.google_gemini_generate_content_location,
-        "us-central1"
-    );
+    assert_eq!(config.google_gemini_generate_content_location, "global");
     assert_eq!(
         config.google_gemini_generate_content_model,
-        "gemini-2.0-flash"
+        "gemini-2.5-flash"
     );
+}
+
+#[test]
+fn test_config_for_magpie_allows_empty_api_key() {
+    let config = Config::for_magpie(None, None, None);
+    assert_eq!(config.llm_provider, LlmProvider::Magpie);
+    assert_eq!(config.magpie_base_url, "http://127.0.0.1:3425/v1");
+    assert_eq!(config.magpie_model, "default");
+    assert_eq!(config.magpie_api_key, None);
+    assert!(config.has_llm_config());
+    let provider = config.to_provider_config().unwrap();
+    assert_eq!(
+        provider.provider_type,
+        alan_llm::factory::ProviderType::Magpie
+    );
+    assert_eq!(provider.api_key, None);
+}
+
+#[test]
+fn test_config_for_vertex_express_requires_no_project_id() {
+    let config = Config::for_google_gemini_express("vertex-key", Some("gemini-3-pro-preview"));
+    assert_eq!(
+        config.llm_provider,
+        LlmProvider::GoogleGeminiGenerateContent
+    );
+    assert!(config.has_llm_config());
+    let provider = config.to_provider_config().unwrap();
+    assert_eq!(provider.api_key.as_deref(), Some("vertex-key"));
+    assert_eq!(provider.project_id, None);
+    assert_eq!(provider.model, "gemini-3-pro-preview");
 }
 
 #[test]
@@ -321,7 +347,7 @@ fn test_config_for_anthropic_messages_defaults() {
         config.anthropic_messages_base_url,
         "https://api.anthropic.com/v1"
     );
-    assert_eq!(config.anthropic_messages_model, "claude-3-5-sonnet-latest");
+    assert_eq!(config.anthropic_messages_model, "claude-sonnet-4-5");
 }
 
 #[test]

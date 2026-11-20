@@ -1,4 +1,4 @@
-use crate::storage::{AuthStorage, AuthStore, StoredChatgptAuth};
+use crate::storage::{AuthStorage, StoredChatgptAuth};
 use crate::token_data::{ChatgptTokenData, parse_chatgpt_jwt_claims};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
@@ -12,8 +12,13 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 mod browser;
+mod refresh;
+mod session;
 
 pub use browser::{BrowserLoginCompletion, BrowserLoginOptions, PendingBrowserLogin};
+pub use session::new_chatgpt_session_id;
+
+use refresh::RefreshMode;
 
 #[derive(Debug)]
 pub struct BrowserLoginCallbackReceipt {
@@ -334,16 +339,14 @@ impl ChatgptAuthManager {
         self.request_auth_for_account(None).await
     }
 
+    /// Return credentials for a request, refreshing first when the access token is
+    /// expired or expires within the safety window.
     pub async fn request_auth_for_account(
         &self,
         expected_account_id: Option<&str>,
     ) -> Result<ChatgptRequestAuth, ChatgptAuthError> {
-        let auth = self.refresh_if_needed(false).await?;
-        ensure_expected_account_matches(expected_account_id, &auth)?;
-        Ok(ChatgptRequestAuth {
-            access_token: auth.tokens.access_token,
-            account_id: auth.account_id,
-        })
+        self.request_auth_with_mode(expected_account_id, RefreshMode::IfNeeded)
+            .await
     }
 
     pub async fn force_refresh_auth(&self) -> Result<ChatgptRequestAuth, ChatgptAuthError> {
@@ -354,12 +357,24 @@ impl ChatgptAuthManager {
         &self,
         expected_account_id: Option<&str>,
     ) -> Result<ChatgptRequestAuth, ChatgptAuthError> {
-        let auth = self.refresh_if_needed(true).await?;
-        ensure_expected_account_matches(expected_account_id, &auth)?;
-        Ok(ChatgptRequestAuth {
-            access_token: auth.tokens.access_token,
-            account_id: auth.account_id,
-        })
+        self.request_auth_with_mode(expected_account_id, RefreshMode::Force)
+            .await
+    }
+
+    /// Recover from a backend `401` for `rejected_access_token`.
+    ///
+    /// Refreshes only while the rejected token is still the stored one, so concurrent
+    /// requests that were all rejected with the same token share a single refresh.
+    pub async fn refresh_rejected_auth_for_account(
+        &self,
+        expected_account_id: Option<&str>,
+        rejected_access_token: &str,
+    ) -> Result<ChatgptRequestAuth, ChatgptAuthError> {
+        self.request_auth_with_mode(
+            expected_account_id,
+            RefreshMode::Rejected(rejected_access_token),
+        )
+        .await
     }
 
     pub fn import_token_bundle(
@@ -393,103 +408,10 @@ impl ChatgptAuthManager {
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
         })?;
-        let mut store = self.inner.storage.load()?;
-        store.version = 1;
-        store.chatgpt = Some(persisted.clone());
-        self.inner.storage.save(&store)?;
-        Ok(persisted)
-    }
-
-    async fn refresh_if_needed(&self, force: bool) -> Result<StoredChatgptAuth, ChatgptAuthError> {
-        let maybe_auth = self.inner.storage.load()?.chatgpt;
-        let auth = maybe_auth.ok_or(ChatgptAuthError::NotLoggedIn)?;
-        let now = Utc::now();
-
-        if !force && !auth.should_refresh(now) {
-            return Ok(auth);
-        }
-
-        let observed = auth;
-        let _guard = self.inner.refresh_lock.lock().await;
-        let storage = self.inner.storage.clone();
-        let _store_guard = tokio::task::spawn_blocking(move || storage.lock("auth.refresh.lock"))
-            .await
-            .map_err(io::Error::other)??;
-        let store = self.inner.storage.load()?;
-        let auth = store
-            .chatgpt
-            .as_ref()
-            .ok_or(ChatgptAuthError::NotLoggedIn)?;
-        if *auth != observed || (!force && !auth.should_refresh(Utc::now())) {
-            return Ok(auth.clone());
-        }
-
-        if auth.tokens.refresh_token.trim().is_empty() {
-            return Err(ChatgptAuthError::TokenExpired);
-        }
-
-        self.refresh_inner(store).await
-    }
-
-    async fn refresh_inner(
-        &self,
-        expected: AuthStore,
-    ) -> Result<StoredChatgptAuth, ChatgptAuthError> {
-        #[derive(Deserialize)]
-        struct RefreshResponse {
-            id_token: Option<String>,
-            access_token: String,
-            refresh_token: Option<String>,
-        }
-
-        let existing = expected
-            .chatgpt
-            .as_ref()
-            .ok_or(ChatgptAuthError::NotLoggedIn)?;
-        let response = self
-            .inner
-            .client
-            .post(format!(
-                "{}/oauth/token",
-                self.inner.config.issuer.trim_end_matches('/')
-            ))
-            .timeout(Duration::from_secs(30))
-            .json(&serde_json::json!({
-                "client_id": self.inner.config.client_id,
-                "grant_type": "refresh_token",
-                "refresh_token": existing.tokens.refresh_token,
-            }))
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            let error = if status == StatusCode::UNAUTHORIZED {
-                ChatgptAuthError::RefreshFailed(body)
-            } else {
-                ChatgptAuthError::RefreshFailed(format!("{status}: {body}"))
-            };
-            return Err(error);
-        }
-
-        let refreshed: RefreshResponse = response.json().await?;
-        let mut store = expected.clone();
-        let id_token = refreshed
-            .id_token
-            .unwrap_or_else(|| existing.tokens.id_token.raw_jwt.clone());
-        let access_token = refreshed.access_token;
-        let refresh_token = refreshed
-            .refresh_token
-            .unwrap_or_else(|| existing.tokens.refresh_token.clone());
-        let persisted = StoredChatgptAuth::from_tokens(ChatgptTokenData {
-            id_token: parse_chatgpt_id_token(&id_token)?,
-            access_token,
-            refresh_token,
+        let persisted_clone = persisted.clone();
+        self.inner.storage.update(move |store| {
+            store.chatgpt = Some(persisted_clone);
         })?;
-        store.version = 1;
-        store.chatgpt = Some(persisted.clone());
-        self.inner.storage.save_if_unchanged(&expected, &store)?;
         Ok(persisted)
     }
 
@@ -586,290 +508,10 @@ fn to_login_success(auth: &StoredChatgptAuth) -> ChatgptLoginSuccess {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::browser::{
-        build_authorize_url, parse_http_request_target, read_http_request_headers,
-    };
-    use super::{
-        BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthErrorKind,
-        ChatgptAuthManager, ImportedChatgptTokenBundle,
-    };
-    use crate::storage::{AuthStorage, AuthStore, StoredChatgptAuth};
-    use crate::token_data::{ChatgptIdTokenInfo, ChatgptTokenData};
-    use base64::Engine;
-    use serde_json::json;
-    use std::time::Duration;
-    use tempfile::TempDir;
-    use tokio::io::AsyncWriteExt;
-
-    pub(super) fn build_jwt(payload: serde_json::Value) -> String {
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(r#"{"alg":"none","typ":"JWT"}"#);
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
-        format!("{header}.{payload}.sig")
-    }
-
-    fn test_manager() -> (TempDir, ChatgptAuthManager) {
-        let temp_dir = TempDir::new().expect("temp dir");
-        let manager = ChatgptAuthManager::new(ChatgptAuthConfig {
-            storage_path: temp_dir.path().join("auth.json"),
-            issuer: "https://auth.example.com".to_string(),
-            client_id: "client_123".to_string(),
-            browser_callback_port: 1455,
-        })
-        .expect("manager");
-        (temp_dir, manager)
-    }
-
-    #[test]
-    fn authorize_url_includes_workspace_binding_when_requested() {
-        let url = build_authorize_url(
-            "https://auth.example.com",
-            "client_123",
-            "http://localhost:1455/auth/callback",
-            "challenge",
-            "state",
-            Some("workspace_123"),
-        );
-        assert!(url.contains("allowed_workspace_id=workspace_123"));
-        assert!(url.contains("code_challenge=challenge"));
-        assert!(url.contains("originator=codex_cli_rs"));
-    }
-
-    #[tokio::test]
-    async fn status_returns_none_when_not_logged_in() {
-        let (_temp_dir, manager) = test_manager();
-        assert!(manager.status().await.expect("status").is_none());
-    }
-
-    #[tokio::test]
-    async fn request_auth_requires_login() {
-        let (_temp_dir, manager) = test_manager();
-        let error = manager.request_auth().await.expect_err("missing auth");
-        assert!(matches!(error, ChatgptAuthError::NotLoggedIn));
-        assert_eq!(error.kind(), Some(ChatgptAuthErrorKind::NotLoggedIn));
-    }
-
-    #[tokio::test]
-    async fn status_reports_saved_login() {
-        let (_temp_dir, manager) = test_manager();
-        let storage = AuthStorage::new(manager.storage_path().to_path_buf()).expect("storage");
-        let id_token = build_jwt(json!({
-            "email": "user@example.com",
-            "https://api.openai.com/auth": {
-                "chatgpt_plan_type": "pro",
-                "chatgpt_user_id": "user_123",
-                "chatgpt_account_id": "acct_123"
-            }
-        }));
-        let access_token = build_jwt(json!({"exp": 4_102_444_800_i64}));
-        storage
-            .save(&AuthStore {
-                version: 1,
-                chatgpt: Some(
-                    StoredChatgptAuth::from_tokens(ChatgptTokenData {
-                        id_token: ChatgptIdTokenInfo {
-                            email: Some("user@example.com".to_string()),
-                            plan_type: Some("pro".to_string()),
-                            user_id: Some("user_123".to_string()),
-                            account_id: Some("acct_123".to_string()),
-                            raw_jwt: id_token,
-                        },
-                        access_token,
-                        refresh_token: "refresh".to_string(),
-                    })
-                    .expect("stored auth"),
-                ),
-            })
-            .expect("save");
-
-        let snapshot = manager.status().await.expect("status").expect("snapshot");
-        assert_eq!(snapshot.account_id, "acct_123");
-        assert_eq!(snapshot.email.as_deref(), Some("user@example.com"));
-    }
-
-    #[tokio::test]
-    async fn browser_login_options_default_to_open_browser() {
-        let options = BrowserLoginOptions::default();
-        assert!(options.open_browser);
-    }
-
-    #[test]
-    fn begin_browser_login_returns_pending_flow_descriptor() {
-        let (_temp_dir, manager) = test_manager();
-        let pending = manager
-            .begin_browser_login(BrowserLoginOptions {
-                open_browser: false,
-                forced_workspace_id: Some("ws_123".to_string()),
-                timeout: Duration::from_secs(120),
-                redirect_uri: None,
-                login_id: None,
-            })
-            .expect("pending login");
-
-        assert!(
-            pending
-                .auth_url
-                .contains("https://auth.example.com/oauth/authorize")
-        );
-        assert!(pending.auth_url.contains("allowed_workspace_id=ws_123"));
-        assert_eq!(pending.redirect_uri, "http://localhost:1455/auth/callback");
-        assert!(!pending.login_id.is_empty());
-    }
-
-    #[test]
-    fn begin_browser_login_supports_host_owned_callback_descriptor() {
-        let (_temp_dir, manager) = test_manager();
-        let pending = manager
-            .begin_browser_login(BrowserLoginOptions {
-                open_browser: false,
-                forced_workspace_id: None,
-                timeout: Duration::from_secs(120),
-                redirect_uri: Some(
-                    "https://alan.example.com/custom/browser/callback/browser_test".to_string(),
-                ),
-                login_id: Some("browser_test".to_string()),
-            })
-            .expect("pending login");
-
-        assert_eq!(pending.login_id, "browser_test");
-        assert_eq!(
-            pending.redirect_uri,
-            "https://alan.example.com/custom/browser/callback/browser_test"
-        );
-        assert!(pending.auth_url.contains(
-            "redirect_uri=https%3A%2F%2Falan.example.com%2Fcustom%2Fbrowser%2Fcallback%2Fbrowser_test"
-        ));
-    }
-
-    #[tokio::test]
-    async fn read_http_request_headers_waits_for_complete_header_block() {
-        let (mut writer, mut reader) = tokio::io::duplex(256);
-        let writer_task = tokio::spawn(async move {
-            writer
-                .write_all(b"GET /auth/callback?code=abc")
-                .await
-                .expect("partial request");
-            writer
-                .write_all(b"&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
-                .await
-                .expect("remaining request");
-        });
-
-        let request = read_http_request_headers(&mut reader)
-            .await
-            .expect("request headers");
-        writer_task.await.expect("writer task");
-
-        assert_eq!(
-            parse_http_request_target(&request),
-            Some("/auth/callback?code=abc&state=xyz".to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn import_token_bundle_persists_login_state() {
-        let (_temp_dir, manager) = test_manager();
-        let id_token = build_jwt(json!({
-            "email": "user@example.com",
-            "https://api.openai.com/auth": {
-                "chatgpt_plan_type": "pro",
-                "chatgpt_user_id": "user_123",
-                "chatgpt_account_id": "acct_123"
-            }
-        }));
-        let access_token = build_jwt(json!({"exp": 4_102_444_800_i64}));
-
-        let login = manager
-            .import_token_bundle(
-                ImportedChatgptTokenBundle {
-                    id_token,
-                    access_token,
-                    refresh_token: "refresh".to_string(),
-                },
-                None,
-            )
-            .expect("import login");
-
-        assert_eq!(login.account_id, "acct_123");
-        let snapshot = manager.status().await.expect("status").expect("snapshot");
-        assert_eq!(snapshot.account_id, "acct_123");
-    }
-
-    #[tokio::test]
-    async fn import_token_bundle_requires_account_identity() {
-        let (_temp_dir, manager) = test_manager();
-
-        let error = manager
-            .import_token_bundle(
-                ImportedChatgptTokenBundle {
-                    id_token: build_jwt(json!({
-                        "email": "user@example.com",
-                        "https://api.openai.com/auth": {
-                            "chatgpt_plan_type": "pro",
-                            "chatgpt_user_id": "user_123"
-                        }
-                    })),
-                    access_token: build_jwt(json!({"exp": 4_102_444_800_i64})),
-                    refresh_token: "refresh".to_string(),
-                },
-                None,
-            )
-            .expect_err("missing account identity");
-
-        assert!(matches!(error, ChatgptAuthError::MissingAccountIdentity));
-        assert_eq!(
-            error.kind(),
-            Some(ChatgptAuthErrorKind::MissingAccountIdentity)
-        );
-    }
-
-    #[tokio::test]
-    async fn request_auth_rejects_mismatched_account_constraint() {
-        let (_temp_dir, manager) = test_manager();
-        let storage = AuthStorage::new(manager.storage_path().to_path_buf()).expect("storage");
-        let id_token = build_jwt(json!({
-            "email": "user@example.com",
-            "https://api.openai.com/auth": {
-                "chatgpt_plan_type": "pro",
-                "chatgpt_user_id": "user_123",
-                "chatgpt_account_id": "acct_123"
-            }
-        }));
-        let access_token = build_jwt(json!({"exp": 4_102_444_800_i64}));
-        storage
-            .save(&AuthStore {
-                version: 1,
-                chatgpt: Some(
-                    StoredChatgptAuth::from_tokens(ChatgptTokenData {
-                        id_token: ChatgptIdTokenInfo {
-                            email: Some("user@example.com".to_string()),
-                            plan_type: Some("pro".to_string()),
-                            user_id: Some("user_123".to_string()),
-                            account_id: Some("acct_123".to_string()),
-                            raw_jwt: id_token,
-                        },
-                        access_token,
-                        refresh_token: "refresh".to_string(),
-                    })
-                    .expect("stored auth"),
-                ),
-            })
-            .expect("save");
-
-        let error = manager
-            .request_auth_for_account(Some("acct_other"))
-            .await
-            .expect_err("workspace mismatch");
-        assert!(matches!(
-            error,
-            ChatgptAuthError::WorkspaceMismatch { ref expected, ref actual }
-            if expected == "acct_other" && actual.as_deref() == Some("acct_123")
-        ));
-        assert_eq!(error.kind(), Some(ChatgptAuthErrorKind::WorkspaceMismatch));
-    }
-}
+mod tests;
 
 #[cfg(test)]
-#[path = "chatgpt/concurrency_tests.rs"]
 mod concurrency_tests;
+
+#[cfg(test)]
+mod refresh_tests;

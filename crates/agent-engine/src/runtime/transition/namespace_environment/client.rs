@@ -252,6 +252,79 @@ impl NamespaceClient {
         }
     }
 
+    pub(super) async fn try_read_file_bounded(
+        &self,
+        path: &str,
+        max_bytes: usize,
+    ) -> Result<Option<Vec<u8>>> {
+        let fid = Fid(NEXT_FID.fetch_add(1, Ordering::Relaxed));
+        match self
+            .fs
+            .call(Request::Walk {
+                fid: Fid::ROOT,
+                newfid: fid,
+                names: split_path(path),
+            })
+            .await
+        {
+            Ok(Response::Walk { .. }) => {}
+            Ok(_) => bail!("unexpected walk response for {path}"),
+            Err(ErrorCode::NotFound | ErrorCode::NoAccess | ErrorCode::NotDirectory) => {
+                return Ok(None);
+            }
+            Err(err) => return Err(err).with_context(|| format!("walk to {path}")),
+        }
+
+        let guarded = match self
+            .fs
+            .call(Request::Open {
+                fid,
+                mode: OpenMode::Read,
+            })
+            .await
+        {
+            Ok(Response::Open { .. }) => NamespaceFidGuard::new(self.clone(), fid),
+            Ok(_) => {
+                let _ = self.clunk(fid).await;
+                bail!("unexpected open response for {path}");
+            }
+            Err(ErrorCode::NotFound | ErrorCode::NoAccess | ErrorCode::IsDirectory) => {
+                let _ = self.clunk(fid).await;
+                return Ok(None);
+            }
+            Err(err) => {
+                let _ = self.clunk(fid).await;
+                return Err(err).with_context(|| format!("open {path} failed"));
+            }
+        };
+
+        let read_limit = max_bytes.saturating_add(1);
+        let data = async {
+            if self.stat(guarded.fid()).await?.qid.kind != FileKind::File {
+                return Ok(None);
+            }
+            let mut out = Vec::with_capacity(read_limit.min(8192));
+            let mut offset = 0_u64;
+            while out.len() < read_limit {
+                let want = (read_limit - out.len()).min(64 * 1024) as u32;
+                let chunk = self.read_at(guarded.fid(), offset, want).await?;
+                if chunk.is_empty() {
+                    break;
+                }
+                offset += chunk.len() as u64;
+                out.extend_from_slice(&chunk);
+            }
+            Ok(Some(out))
+        }
+        .await;
+        let clunk = guarded.close().await;
+        match (data, clunk) {
+            (Ok(data), Ok(())) => Ok(data),
+            (Err(err), _) => Err(err),
+            (_, Err(err)) => Err(err),
+        }
+    }
+
     pub(super) async fn read_file_range(
         &self,
         path: &str,

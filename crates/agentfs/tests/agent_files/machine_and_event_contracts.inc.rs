@@ -28,7 +28,10 @@ async fn machine_ui_subtree_exposes_default_snapshots() {
     entries.sort();
     assert_eq!(
         entries,
-        vec!["activity", "events", "models", "notice", "plan", "queue", "skills", "thinking"]
+        vec![
+            "activity", "events", "models", "notice", "plan", "queue", "skills", "thinking",
+            "usage"
+        ]
     );
 
     assert!(
@@ -46,6 +49,25 @@ async fn machine_ui_subtree_exposes_default_snapshots() {
             .await
             .contains("\"kind\":\"none\"")
     );
+    assert_eq!(
+        read_text(&fs, &["machine", "ui", "usage"], Fid(6)).await,
+        r#"{"version":1}"#
+    );
+}
+
+#[tokio::test]
+async fn machine_ui_usage_commits_on_clunk_and_announces_invalidation() {
+    let fs = AgentFs::new();
+    let usage = br#"{"version":1,"input_tokens":10,"output_tokens":2,"context_window":1000}"#;
+    write_doc(&fs, &["machine", "ui", "usage"], Fid(1), usage)
+        .await
+        .unwrap();
+    assert_eq!(
+        read_text(&fs, &["machine", "ui", "usage"], Fid(2)).await.as_bytes(),
+        usage
+    );
+    let events = read_text(&fs, &["events"], Fid(3)).await;
+    assert!(events.lines().any(|line| line == "ui:usage"), "{events}");
 }
 
 #[tokio::test]

@@ -11,10 +11,9 @@ use std::{
 };
 
 use alan_agent_engine::{
-    AGENT_DEFINITION_FD, AgentExecutableRequest, AgentExecutableResult, AgentExecutableStatus,
-    AgentProcessConfig, ContentPart, MEMORY_STORE_FD, Op, RuntimeController, RuntimeHandle,
-    SpawnHandle, SpawnTarget, Submission, UiActivitySnapshot, UiActivityState, UiNoticeKind,
-    UiNoticeSnapshot,
+    AGENT_DEFINITION_FD, AgentExecutableRequest, AgentExecutableStatus, AgentProcessConfig,
+    ContentPart, MEMORY_STORE_FD, Op, RuntimeHandle, SpawnHandle, SpawnMountAccess, SpawnTarget,
+    Submission,
     skills::SkillHostCapabilities,
     spawn_with_namespace_environment,
     tools::{ToolExecutionAuthority, ToolProcessRunner},
@@ -32,15 +31,20 @@ use crate::{
     runtime::{namespace_with_package_references, validate_package_reference_mounts},
 };
 
+mod child_wait;
+#[path = "agent_runtime/history_discovery.rs"]
+mod history_discovery;
 mod pause_answer;
 mod pause_record;
 mod process_cleanup;
 mod resume_content;
 #[path = "agent_runtime/root_recovery.rs"]
 mod root_recovery;
+pub(crate) mod sessions;
 
-use pause_answer::{ChildTerminal, decide_child_terminal};
-use pause_record::read_child_pause;
+use child_wait::{
+    process_error, wait_for_child_terminal, wait_for_process_exit, wait_for_root_stop,
+};
 use process_cleanup::ProcessCleanup;
 use resume_content::resume_content;
 
@@ -51,6 +55,9 @@ static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
 pub(crate) struct RootAgentTemplate {
     process: AgentProcessConfig,
     pub(crate) resume_persisted_rollout: bool,
+    pub(crate) resume_rollout_id: Option<String>,
+    /// Never read or overwrite the selected-rollout channel for this invocation.
+    pub(crate) ephemeral_rollout: bool,
     launch_context: ProcessLaunchContext,
     host_capabilities: SkillHostCapabilities,
     generation_capabilities: ProviderCapabilities,
@@ -73,12 +80,28 @@ impl RootAgentTemplate {
             task_budget_binding: Default::default(),
             process,
             resume_persisted_rollout,
+            resume_rollout_id: None,
+            ephemeral_rollout: false,
             input_shadow,
             launch_context,
             host_capabilities,
             generation_capabilities,
             llm_connection,
         }
+    }
+}
+
+impl RootAgentTemplate {
+    /// Keep this invocation's rollout out of the `metadata/root-rollout` selector.
+    pub(crate) fn with_ephemeral_rollout(mut self, ephemeral_rollout: bool) -> Self {
+        self.ephemeral_rollout = ephemeral_rollout;
+        self
+    }
+
+    /// Pin an explicit persisted rollout ID to recover on Root Agent startup.
+    pub(crate) fn with_resume_rollout_id(mut self, resume_rollout_id: Option<String>) -> Self {
+        self.resume_rollout_id = resume_rollout_id;
+        self
     }
 }
 
@@ -119,9 +142,14 @@ pub(crate) struct AgentRuntimeService {
     connection: Arc<ConnectionService>,
     tool_runner: ToolProcessRunner,
     pending_roots: Mutex<HashMap<u64, PendingRootLaunch>>,
+    session_stops: Mutex<sessions::SessionStopMap>,
     process_templates: Mutex<HashMap<u64, RootAgentTemplate>>,
     root_runtime_handles: Mutex<HashMap<u64, RuntimeHandle>>,
     current_root_rollout: Mutex<root_recovery::RootRolloutState>,
+    last_root_template: Mutex<Option<RootAgentTemplate>>,
+    active_root_pid: Mutex<Option<u64>>,
+    next_root_rollout: Mutex<Option<history_discovery::PendingRootRolloutSwitch>>,
+    history_bound: tokio::sync::OnceCell<()>,
 }
 
 struct PendingRootLaunch {
@@ -129,6 +157,8 @@ struct PendingRootLaunch {
     namespace: LiveNamespace,
     ready: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
     stop: tokio::sync::oneshot::Receiver<()>,
+    is_primary_root: bool,
+    parent_for_host_mounts: Option<Pid>,
 }
 
 struct AgentLaunch {
@@ -137,7 +167,8 @@ struct AgentLaunch {
     request: Option<AgentExecutableRequest>,
     ready: Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>,
     stop: Option<tokio::sync::oneshot::Receiver<()>>,
-    root: bool,
+    is_primary_root: bool,
+    parent_for_host_mounts: Option<Pid>,
 }
 
 impl AgentRuntimeService {
@@ -155,9 +186,14 @@ impl AgentRuntimeService {
             connection,
             tool_runner,
             pending_roots: Mutex::new(HashMap::new()),
+            session_stops: Mutex::new(HashMap::new()),
             process_templates: Mutex::new(HashMap::new()),
             root_runtime_handles: Mutex::new(HashMap::new()),
             current_root_rollout: Mutex::new(root_recovery::RootRolloutState::NotStarted),
+            last_root_template: Mutex::new(None),
+            active_root_pid: Mutex::new(None),
+            next_root_rollout: Mutex::new(None),
+            history_bound: tokio::sync::OnceCell::new(),
         })
     }
 
@@ -179,16 +215,10 @@ impl AgentRuntimeService {
             unit.executable == AGENT_EXECUTABLE,
             "Root Agent Boot Unit must execute {AGENT_EXECUTABLE}"
         );
+        self.ensure_history_service_bound().await;
         let mut template = template.clone();
         template.task_budget_binding = Default::default();
-        root_recovery::select(
-            &mut template.process,
-            template.resume_persisted_rollout,
-            &mut self
-                .current_root_rollout
-                .lock()
-                .expect("current Root rollout mutex poisoned"),
-        )?;
+        self.prepare_root_template_recovery(&mut template).await?;
         let source = namespace_with_package_references(
             system_namespace.snapshot(),
             &template.launch_context,
@@ -223,6 +253,8 @@ impl AgentRuntimeService {
                     namespace: live_namespace.clone(),
                     ready: ready_tx,
                     stop: stop_rx,
+                    is_primary_root: true,
+                    parent_for_host_mounts: None,
                 },
             );
         let descriptors = unit
@@ -315,7 +347,8 @@ impl AgentRuntimeService {
                 request: None,
                 ready: Some(pending.ready),
                 stop: Some(pending.stop),
-                root: true,
+                is_primary_root: pending.is_primary_root,
+                parent_for_host_mounts: pending.parent_for_host_mounts,
             });
         }
         ensure!(
@@ -341,7 +374,8 @@ impl AgentRuntimeService {
             request: Some(request),
             ready: None,
             stop: None,
-            root: false,
+            is_primary_root: false,
+            parent_for_host_mounts: Some(parent_pid),
         })
     }
 
@@ -361,24 +395,21 @@ impl AgentRuntimeService {
             )),
             Access::ReadWrite,
         );
-        if launch.root {
-            self.host_mount
-                .register_process(pid, launch.namespace.clone());
-        } else {
-            let parent = invocation
-                .parent
-                .context("child Agent Process has no parent")?;
+        if let Some(parent) = launch.parent_for_host_mounts {
+            let requested_mounts = launch
+                .request
+                .as_ref()
+                .map(|request| request.spawn.host_mounts.as_slice())
+                .unwrap_or(&[]);
             self.host_mount.register_child_process(
                 parent,
                 pid,
                 launch.namespace.clone(),
-                &launch
-                    .request
-                    .as_ref()
-                    .expect("child request exists")
-                    .spawn
-                    .host_mounts,
+                requested_mounts,
             )?;
+        } else {
+            self.host_mount
+                .register_process(pid, launch.namespace.clone());
         }
         validate_process_cwd(&launch.namespace, &launch.template.launch_context.cwd)?;
         self.tool_runner
@@ -397,7 +428,7 @@ impl AgentRuntimeService {
         self.agent_root
             .bind_process(pid.0.to_string(), agent.clone())
             .await;
-        if launch.root {
+        if launch.is_primary_root {
             self.agent_root.set_root_process(pid.0.to_string()).await;
         }
 
@@ -486,6 +517,10 @@ impl AgentRuntimeService {
                 profile: launch.template.llm_connection.clone(),
                 namespace: launch.namespace.clone(),
                 evaluator: evaluator.clone(),
+                guardian_profile: alan_agent_engine::runtime::effective_core_config_for_runtime(
+                    &launch.template.process,
+                )?
+                .guardian_profile,
             },
         ))
         .with_namespace_cwd(&launch.template.launch_context.cwd)
@@ -505,7 +540,13 @@ impl AgentRuntimeService {
             launch.template.host_capabilities.clone(),
             launch.template.generation_capabilities,
         )?;
-        if launch.root {
+        if launch.is_primary_root {
+            *self
+                .active_root_pid
+                .lock()
+                .expect("active root pid mutex poisoned") = Some(pid.0);
+        }
+        if launch.request.is_none() {
             self.root_runtime_handles
                 .lock()
                 .expect("Root runtime handles mutex poisoned")
@@ -515,8 +556,30 @@ impl AgentRuntimeService {
             .wait_until_ready()
             .await
             .context("Agent Machine failed to start")?;
-        if launch.root {
-            root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
+        if launch.is_primary_root {
+            if !launch.template.ephemeral_rollout {
+                root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
+                if let (Some(stores), Some(rollout_path)) = (
+                    launch.template.process.store_bindings.as_ref(),
+                    startup.rollout_path.as_deref().or(launch
+                        .template
+                        .process
+                        .recovery_rollout_path
+                        .as_deref()),
+                ) {
+                    let scope = self
+                        .resolve_active_project_scope(
+                            Some(pid.0),
+                            &launch.template.process.namespace_cwd,
+                        )
+                        .await;
+                    let _ = history_discovery::record_rollout_project_index(
+                        stores,
+                        rollout_path,
+                        &scope,
+                    );
+                }
+            }
             let rollout = startup
                 .rollout_path
                 .clone()
@@ -634,6 +697,10 @@ impl AgentRuntimeService {
             .lock()
             .expect("pending roots mutex poisoned")
             .remove(&pid.0);
+        self.session_stops
+            .lock()
+            .expect("session stops mutex poisoned")
+            .remove(&pid.0);
         self.agent_root.unbind_process(&pid.0.to_string()).await;
         self.host_mount.unregister_process(pid);
         self.connection.release_process(pid.0);
@@ -647,15 +714,17 @@ impl AgentRuntimeService {
         launch_context: &ProcessLaunchContext,
         scratch_dir: Option<PathBuf>,
     ) -> Result<()> {
-        let Some(scratch_dir) = scratch_dir else {
-            return Ok(());
-        };
+        let scratch_dir = scratch_dir.unwrap_or_default();
         let binding = alan_agent_engine::tools::ToolExecutionBinding::awaiting_host_projection(
             Path::new(&launch_context.cwd).to_path_buf(),
             scratch_dir,
         );
         let binding = self.host_mount.reconcile(pid.0, binding)?;
         self.tool_runner.register_process_binding(pid.0, binding);
+        if !launch_context.packaged_tools.is_empty() {
+            self.tool_runner
+                .register_process_tools(pid.0, launch_context.packaged_tools.clone())?;
+        }
         Ok(())
     }
 }
@@ -668,6 +737,14 @@ fn child_template(
     let spec = &request.spawn;
     spec.validate_agent_process_launch()?;
     ensure!(
+        !spec.runtime_overrides.read_only
+            || spec
+                .host_mounts
+                .iter()
+                .all(|mount| mount.access == SpawnMountAccess::ReadOnly),
+        "read-only child Agent Process cannot request read_write Host Mounts"
+    );
+    ensure!(
         invocation
             .exec
             .descriptors
@@ -675,18 +752,25 @@ fn child_template(
             .all(|descriptor| matches!(*descriptor, AGENT_DEFINITION_FD | MEMORY_STORE_FD)),
         "child Agent Process contains an unsupported descriptor"
     );
-    let definition_path = invocation
-        .exec
-        .descriptors
-        .get(&AGENT_DEFINITION_FD)
-        .context("child Agent Process has no Agent Definition descriptor")?;
+    let definition_path = invocation.exec.descriptors.get(&AGENT_DEFINITION_FD);
     let definition = match &spec.target {
-        SpawnTarget::DefinitionDescriptor { descriptor } => parent
-            .launch_context
-            .descriptor(descriptor)
-            .cloned()
-            .with_context(|| format!("parent Process has no `{descriptor}` descriptor"))?,
+        SpawnTarget::DefinitionDescriptor { descriptor } => {
+            let definition_path = definition_path
+                .context("child Agent Process has no Agent Definition descriptor")?;
+            let definition = parent
+                .launch_context
+                .descriptor(descriptor)
+                .cloned()
+                .with_context(|| format!("parent Process has no `{descriptor}` descriptor"))?;
+            ensure!(
+                definition.path == *definition_path,
+                "child Agent Definition descriptor does not match SpawnSpec target"
+            );
+            Some(definition)
+        }
         target @ SpawnTarget::PackageChildAgent { .. } => {
+            let definition_path = definition_path
+                .context("child Agent Process has no Agent Definition descriptor")?;
             let export = parent
                 .process
                 .agent_definition
@@ -700,16 +784,32 @@ fn child_template(
             let file_tree = export
                 .file_tree
                 .context("package child Agent Executable has no immutable descriptor")?;
-            alan_agent_engine::ProcessDescriptor::with_file_tree(
+            let definition = alan_agent_engine::ProcessDescriptor::with_file_tree(
                 export.root_dir.to_string_lossy(),
                 file_tree,
-            )?
+            )?;
+            ensure!(
+                definition.path == *definition_path,
+                "child Agent Definition descriptor does not match SpawnSpec target"
+            );
+            Some(definition)
         }
+        SpawnTarget::AdHocSubagent { .. } => match definition_path {
+            Some(definition_path) => {
+                let definition = parent
+                    .launch_context
+                    .descriptor(alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR)
+                    .cloned()
+                    .context("parent Process has no Agent Definition descriptor")?;
+                ensure!(
+                    definition.path == *definition_path,
+                    "child Agent Definition descriptor does not match SpawnSpec target"
+                );
+                Some(definition)
+            }
+            None => None,
+        },
     };
-    ensure!(
-        definition.path == *definition_path,
-        "child Agent Definition descriptor does not match SpawnSpec target"
-    );
 
     let mut launch_context = parent.launch_context.child();
     launch_context.namespace = invocation.namespace.clone();
@@ -721,10 +821,12 @@ fn child_template(
         .map(|path| path.to_string_lossy().to_string())
         .unwrap_or_else(|| "/".to_string());
     launch_context.descriptors.clear();
-    launch_context.descriptors.insert(
-        alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR.to_string(),
-        definition,
-    );
+    if let Some(definition) = definition {
+        launch_context.descriptors.insert(
+            alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR.to_string(),
+            definition,
+        );
+    }
     let memory_path = invocation.exec.descriptors.get(&MEMORY_STORE_FD);
     let parent_memory = parent
         .launch_context
@@ -789,9 +891,15 @@ fn child_template(
         task_budget_binding: parent.task_budget_binding.child()?,
         process,
         resume_persisted_rollout: false,
+        resume_rollout_id: None,
+        ephemeral_rollout: false,
         input_shadow: None,
         launch_context,
-        host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(tools, true),
+        host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(
+            tools,
+            !matches!(spec.target, SpawnTarget::AdHocSubagent { .. })
+                && !spec.runtime_overrides.read_only,
+        ),
         generation_capabilities: alan_agent_engine::provider_capabilities_for_config(&effective),
         llm_connection,
     })
@@ -828,32 +936,7 @@ fn project_boot_unit_namespace(
     base: &alan_kernel::Namespace,
     unit: &BootUnit,
 ) -> Result<alan_kernel::Namespace> {
-    let namespace = base
-        .project_mounts(unit.mounts.iter().map(|mount| {
-            (
-                mount.path.as_str(),
-                mount.source.as_str(),
-                match mount.access {
-                    crate::MountAccess::Read => Access::ReadOnly,
-                    crate::MountAccess::Write => Access::ReadWrite,
-                },
-            )
-        }))
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "Boot Unit `{}` requests an unavailable mount projection",
-                unit.name
-            )
-        })?;
-    for descriptor in &unit.descriptors {
-        ensure!(
-            namespace.resolve(&descriptor.path).is_ok(),
-            "Boot Unit `{}` descriptor {} is outside its namespace",
-            unit.name,
-            descriptor.number
-        );
-    }
-    Ok(namespace)
+    crate::runtime::embed_mounts::project_boot_unit_with_caller_mnt(base, unit)
 }
 
 fn validate_process_cwd(namespace: &LiveNamespace, cwd: &str) -> Result<()> {
@@ -884,116 +967,6 @@ async fn commit_clone(server: &impl FileServer, fid: Fid, exec: &ExecSpec) -> Re
 
 fn next_agent_fid() -> Fid {
     Fid(NEXT_AGENT_FID.fetch_add(1, Ordering::Relaxed))
-}
-
-async fn wait_for_root_stop(
-    mut stop: tokio::sync::oneshot::Receiver<()>,
-    controller: &RuntimeController,
-) -> i32 {
-    loop {
-        tokio::select! {
-            _ = &mut stop => return 0,
-            _ = tokio::time::sleep(Duration::from_millis(25)) => {
-                if controller.is_finished() {
-                    return 1;
-                }
-            }
-        }
-    }
-}
-
-pub(super) async fn wait_for_child_terminal(
-    root: &InProcessTransport,
-    pid: Pid,
-    controller: &RuntimeController,
-    run_timeout: Option<Duration>,
-) -> Result<AgentExecutableResult> {
-    // The run's own timeout bounds the wait; a clock is never the reason a paused
-    // Process stops being answerable.
-    let deadline = run_timeout.map(|timeout| std::time::Instant::now() + timeout);
-    let shell = alan_shell::Shell::new(root.clone());
-    let activity_path = format!("/agent/{}/machine/ui/activity", pid.0);
-    let events_path = format!("/agent/{}/machine/ui/events", pid.0);
-    let notice_path = format!("/agent/{}/machine/ui/notice", pid.0);
-    loop {
-        if controller.is_finished() {
-            anyhow::bail!("child Agent Machine stopped before publishing a terminal result");
-        }
-        let stopped = deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
-        let events_started = shell.stat(&events_path).await.map(|stat| stat.length > 0)?;
-        if events_started {
-            let activity: UiActivitySnapshot =
-                serde_json::from_slice(&shell.cat(&activity_path).await?)?;
-            if matches!(
-                activity.state,
-                UiActivityState::Idle | UiActivityState::Paused
-            ) {
-                let notice: UiNoticeSnapshot =
-                    serde_json::from_slice(&shell.cat(&notice_path).await?)?;
-                let output_text =
-                    String::from_utf8(shell.cat(&format!("/agent/{}/io/output", pid.0)).await?)
-                        .context("child Agent output is utf8")?;
-                let warnings = (notice.kind == UiNoticeKind::Warning)
-                    .then(|| notice.message.clone())
-                    .into_iter()
-                    .collect();
-                let pause = read_child_pause(&shell, pid).await?;
-                let terminal = decide_child_terminal(
-                    activity.state,
-                    pause.is_some(),
-                    notice.kind == UiNoticeKind::Error,
-                    stopped,
-                );
-                if terminal == ChildTerminal::Wait {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                    continue;
-                }
-                if terminal == ChildTerminal::Failed {
-                    return Ok(AgentExecutableResult::failed_with_output(
-                        output_text,
-                        warnings,
-                        notice.message,
-                    ));
-                }
-                let Some(pause) = pause.filter(|_| terminal == ChildTerminal::Paused) else {
-                    return Ok(AgentExecutableResult::completed(output_text, warnings));
-                };
-                return Ok(AgentExecutableResult::paused(output_text, warnings, pause));
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-}
-
-async fn wait_for_process_exit(
-    procfs: &alan_kernel::ProcFs,
-    pid: Pid,
-    timeout: Duration,
-) -> Result<()> {
-    tokio::time::timeout(timeout, async {
-        loop {
-            if procfs
-                .try_observe_process_lifecycle(pid)
-                .is_some_and(|(status, _)| status == alan_kernel::Status::Exited)
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .context("timed out waiting for Agent Process exit")?;
-    Ok(())
-}
-
-fn process_error(error: anyhow::Error) -> ProcessOutcome {
-    let result = AgentExecutableResult::failed(format!("alan-agent: {error:#}"));
-    ProcessOutcome::exited(
-        1,
-        result
-            .to_process_output_record()
-            .unwrap_or_else(|_| format!("alan-agent: {error:#}\n").into_bytes()),
-    )
 }
 
 #[cfg(test)]

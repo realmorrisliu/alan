@@ -44,11 +44,13 @@ use input_projection::is_non_empty;
 #[cfg(test)]
 use input_projection::openai_chat_completions_message_value;
 use request_projection::build_chat_completions_request_for_model;
-pub(crate) use request_projection::build_responses_request_for_model;
 #[cfg(test)]
 use request_projection::{
     build_max_completion_tokens, build_reasoning_effort,
     build_responses_input_tokens_request_for_model, convert_messages_for_openai_chat_completions,
+};
+pub(crate) use request_projection::{
+    build_responses_compact_request_for_model, build_responses_request_for_model,
 };
 #[cfg(test)]
 use streaming::{
@@ -62,12 +64,24 @@ pub struct OpenAiChatCompletionsClient {
     base_url: String,
     model: String,
     api_flavor: OpenAiChatCompletionsApiFlavor,
+    /// Stable per-client headers (for example Magpie session affinity).
+    extra_headers: Vec<(String, String)>,
+    /// Canonical effort name → wire `reasoning_effort` (`None` omits the field).
+    reasoning_effort_map: Option<std::sync::Arc<ReasoningEffortMap>>,
 }
 
+/// Canonical reasoning-effort name to provider wire value; `None` omits the field.
+pub use crate::ReasoningEffortMap;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OpenAiChatCompletionsApiFlavor {
+pub(crate) enum OpenAiChatCompletionsApiFlavor {
     Official,
     Compatible,
+    #[cfg_attr(
+        not(feature = "provider-magpie"),
+        allow(dead_code, reason = "constructed only when provider-magpie is enabled")
+    )]
+    Magpie,
 }
 
 // ============================================================================
@@ -78,11 +92,13 @@ impl OpenAiChatCompletionsClient {
     fn instruction_role_name(&self) -> &'static str {
         match self.api_flavor {
             OpenAiChatCompletionsApiFlavor::Official => "developer",
-            OpenAiChatCompletionsApiFlavor::Compatible => "system",
+            OpenAiChatCompletionsApiFlavor::Compatible | OpenAiChatCompletionsApiFlavor::Magpie => {
+                "system"
+            }
         }
     }
 
-    fn new(
+    pub(crate) fn new(
         api_key: &str,
         base_url: &str,
         model: &str,
@@ -91,10 +107,71 @@ impl OpenAiChatCompletionsClient {
         Self {
             client: reqwest::Client::new(),
             api_key: api_key.to_string(),
-            base_url: base_url.to_string(),
+            base_url: base_url.trim_end_matches('/').to_string(),
             model: model.to_string(),
             api_flavor,
+            extra_headers: Vec::new(),
+            reasoning_effort_map: None,
         }
+    }
+
+    /// Attach stable headers sent on every Chat Completions request.
+    #[cfg(feature = "provider-magpie")]
+    pub(crate) fn with_extra_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.extra_headers = headers;
+        self
+    }
+
+    /// Remap canonical reasoning effort names onto provider-specific wire values.
+    #[cfg(feature = "provider-magpie")]
+    pub(crate) fn with_reasoning_effort_map(mut self, map: Option<ReasoningEffortMap>) -> Self {
+        self.reasoning_effort_map = map.map(std::sync::Arc::new);
+        self
+    }
+
+    /// Bearer auth (omitted for an empty key, e.g. local routers) plus stable extra headers.
+    pub(crate) fn authorize(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let builder = if self.api_key.trim().is_empty() {
+            builder
+        } else {
+            builder.header("Authorization", format!("Bearer {}", self.api_key))
+        };
+        self.extra_headers
+            .iter()
+            .fold(builder, |builder, (name, value)| {
+                builder.header(name, value)
+            })
+    }
+
+    /// Apply the configured effort map to a built Chat Completions request.
+    pub(crate) fn apply_reasoning_effort_map(&self, request: &mut OpenAiChatCompletionsRequest) {
+        let Some(map) = self.reasoning_effort_map.as_deref() else {
+            return;
+        };
+        if let Some(effort) = request.reasoning_effort.take() {
+            request.reasoning_effort = match map.get(&effort) {
+                Some(mapped) => mapped.clone(),
+                None => Some(effort),
+            };
+        }
+    }
+
+    #[cfg(feature = "provider-magpie")]
+    pub(crate) fn http(&self) -> &reqwest::Client {
+        &self.client
+    }
+
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub(crate) fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// Bearer secret for transports that cannot use `authorize` (Responses WebSocket).
+    pub(crate) fn api_key(&self) -> &str {
+        &self.api_key
     }
 
     /// Create a client for official OpenAI endpoints.
@@ -124,6 +201,8 @@ impl OpenAiChatCompletionsClient {
             base_url: self.base_url.clone(),
             model: self.model.clone(),
             api_flavor: self.api_flavor,
+            extra_headers: self.extra_headers.clone(),
+            reasoning_effort_map: self.reasoning_effort_map.clone(),
         }
     }
 
@@ -143,9 +222,7 @@ impl OpenAiChatCompletionsClient {
         debug!(url = %url, model = %request.model, "Sending chat completion request");
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .authorize(self.client.post(&url))
             .json(&request)
             .send()
             .await
@@ -165,6 +242,7 @@ impl OpenAiChatCompletionsClient {
         Ok(result)
     }
 
+    #[cfg(feature = "provider-openai")]
     #[instrument(skip(self, request))]
     pub async fn openai_responses(
         &self,
@@ -179,9 +257,7 @@ impl OpenAiChatCompletionsClient {
         debug!(url = %url, model = %request.model, "Sending responses request");
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .authorize(self.client.post(&url))
             .json(&request)
             .send()
             .await
@@ -199,6 +275,7 @@ impl OpenAiChatCompletionsClient {
             .context("Failed to parse OpenAI Responses API response")
     }
 
+    #[cfg(feature = "provider-openai")]
     #[instrument(skip(self))]
     pub async fn retrieve_openai_response(
         &self,
@@ -212,9 +289,7 @@ impl OpenAiChatCompletionsClient {
         debug!(url = %url, response_id, "Retrieving Responses API response");
 
         let response = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .authorize(self.client.get(&url))
             .send()
             .await
             .context("Failed to retrieve OpenAI Responses API response")?;
@@ -245,9 +320,7 @@ impl OpenAiChatCompletionsClient {
         debug!(url = %url, model = %request.model, "Sending Responses compact request");
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .authorize(self.client.post(&url))
             .json(&request)
             .send()
             .await
@@ -290,9 +363,7 @@ impl OpenAiChatCompletionsClient {
         );
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .authorize(self.client.post(&url))
             .json(&request)
             .send()
             .await
@@ -327,9 +398,7 @@ impl OpenAiChatCompletionsClient {
         debug!(url = %url, response_id, "Cancelling Responses API response");
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .authorize(self.client.post(&url))
             .send()
             .await
             .context("Failed to cancel OpenAI Responses API response")?;
@@ -371,12 +440,13 @@ impl OpenAiChatCompletionsClient {
         if let Some(system) = system {
             generation_request = generation_request.with_system_prompt(system);
         }
-        let request = build_chat_completions_request_for_model(
+        let mut request = build_chat_completions_request_for_model(
             self.model.clone(),
             self.instruction_role_name(),
             generation_request,
             false,
         )?;
+        self.apply_reasoning_effort_map(&mut request);
 
         let response = self.openai_chat_completions(request).await?;
 
@@ -392,7 +462,7 @@ impl OpenAiChatCompletionsClient {
 // Helper functions
 // ============================================================================
 
-fn convert_openai_responses_usage(usage: OpenAiResponsesUsage) -> TokenUsage {
+pub(crate) fn convert_openai_responses_usage(usage: OpenAiResponsesUsage) -> TokenUsage {
     TokenUsage {
         prompt_tokens: usage.input_tokens,
         cached_prompt_tokens: usage
@@ -403,6 +473,7 @@ fn convert_openai_responses_usage(usage: OpenAiResponsesUsage) -> TokenUsage {
         reasoning_tokens: usage
             .output_tokens_details
             .and_then(|details| details.reasoning_tokens),
+        ..Default::default()
     }
 }
 
@@ -574,7 +645,7 @@ fn convert_openai_chat_completions_response(
     })
 }
 
-fn responses_finish_reason(saw_tool_calls: bool) -> &'static str {
+pub(crate) fn responses_finish_reason(saw_tool_calls: bool) -> &'static str {
     if saw_tool_calls { "tool_calls" } else { "stop" }
 }
 
@@ -670,6 +741,7 @@ fn convert_usage(usage: OpenAiChatCompletionsUsage) -> TokenUsage {
         reasoning_tokens: usage
             .completion_tokens_details
             .and_then(|details| details.reasoning_tokens),
+        ..Default::default()
     }
 }
 
@@ -704,6 +776,7 @@ impl LlmProvider for OpenAiChatCompletionsClient {
         match self.api_flavor {
             OpenAiChatCompletionsApiFlavor::Official => "openai_chat_completions",
             OpenAiChatCompletionsApiFlavor::Compatible => "openai_chat_completions_compatible",
+            OpenAiChatCompletionsApiFlavor::Magpie => "magpie",
         }
     }
 }
@@ -713,12 +786,13 @@ impl OpenAiChatCompletionsClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<GenerationResponse> {
-        let chat_request = build_chat_completions_request_for_model(
+        let mut chat_request = build_chat_completions_request_for_model(
             self.model.clone(),
             self.instruction_role_name(),
             request,
             false,
         )?;
+        self.apply_reasoning_effort_map(&mut chat_request);
 
         let response = self.openai_chat_completions(chat_request).await?;
         convert_openai_chat_completions_response(response)

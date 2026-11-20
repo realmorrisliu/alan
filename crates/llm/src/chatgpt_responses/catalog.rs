@@ -32,10 +32,14 @@ struct ReasoningLevel {
 impl ChatgptResponsesClient {
     pub(super) async fn fetch_model_catalog(&self) -> Result<Vec<ProviderModel>> {
         tokio::time::timeout(Duration::from_secs(15), async {
-            let mut response = self.send_models_request(false).await?;
-            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-                response = self.send_models_request(true).await?;
-            }
+            let mut url = reqwest::Url::parse(&format!("{}/models", self.base_url))?;
+            url.query_pairs_mut()
+                .append_pair("client_version", CODEX_MODELS_API_VERSION);
+            let mut response = self
+                .send_with_auth_retry("request ChatGPT model catalog", || {
+                    self.client.get(url.clone())
+                })
+                .await?;
             // Do not include a provider response body or auth material in diagnostics.
             ensure!(
                 response.status().is_success(),
@@ -64,20 +68,6 @@ impl ChatgptResponsesClient {
         })
         .await
         .context("ChatGPT model catalog timed out")?
-    }
-
-    async fn send_models_request(&self, refresh: bool) -> Result<reqwest::Response> {
-        let auth = self.request_auth(refresh).await?;
-        let mut url = reqwest::Url::parse(&format!("{}/models", self.base_url))?;
-        url.query_pairs_mut()
-            .append_pair("client_version", CODEX_MODELS_API_VERSION);
-        let request = self.apply_custom_headers(self.client.get(url));
-        request
-            .header("Authorization", format!("Bearer {}", auth.access_token))
-            .header("ChatGPT-Account-ID", auth.account_id)
-            .send()
-            .await
-            .context("Cannot request ChatGPT model catalog")
     }
 }
 

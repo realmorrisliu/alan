@@ -34,5 +34,6 @@ uuid.workspace = true
 [dev-dependencies]
 alan-agent-protocol.workspace = true
 jsonschema.workspace = true
-alan-llm = { workspace = true, features = ["mock"] }
+alan-llm = { workspace = true, features = ["mock", "all-providers"] }
+alan-agent-engine = { workspace = true, features = ["tree-sitter-sandbox"] }
 tempfile.workspace = true

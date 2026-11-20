@@ -2,6 +2,80 @@ use super::*;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 #[tokio::test]
+async fn live_secret_provider_reuses_http_client_pool_until_secret_changes() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = SecretStore::from_directory(temp.path()).unwrap();
+    store.save("secret", "steady-key").unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        // First TCP connection must serve BOTH requests while the secret is unchanged.
+        // If LiveSecretProvider rebuilt reqwest::Client per request, the second request
+        // would never arrive on this keep-alive socket.
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut reader = BufReader::new(socket);
+        for _ in 0..2 {
+            let mut headers = String::new();
+            loop {
+                let mut line = String::new();
+                assert_ne!(reader.read_line(&mut line).await.unwrap(), 0);
+                if line == "\r\n" {
+                    break;
+                }
+                headers.push_str(&line);
+            }
+            assert!(
+                headers
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer steady-key\r\n")
+            );
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap();
+            reader.read_exact(&mut vec![0; length]).await.unwrap();
+            reader
+                .get_mut()
+                .write_all(
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n{}",
+                )
+                .await
+                .unwrap();
+        }
+    });
+
+    let connections: ConnectionsFile = serde_json::from_value(serde_json::json!({
+        "version": 1,
+        "profiles": {"main": {"provider": "openai_chat_completions", "credential_id": "secret",
+            "settings": {"base_url": format!("http://{address}"), "model": "gpt-5.4"}}},
+        "credentials": {"secret": {"kind": "secret_string", "provider_family": "openai_chat_completions",
+            "label": "test", "backend": "host_credential_store"}}
+    }))
+    .unwrap();
+    let factory = ProductLlmClientFactory {
+        credentials_dir: temp.path().to_path_buf(),
+        managed_auth: None,
+        _installation_access: None,
+    };
+    let mut captured = factory
+        .create(&Config::default(), Some("main"), &connections)
+        .unwrap();
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        assert!(captured.chat(None, "first").await.is_err());
+        assert!(captured.chat(None, "second").await.is_err());
+        server.await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn captured_clients_read_rotated_secrets_and_reject_logout_on_every_request_path() {
     let temp = tempfile::tempdir().unwrap();
     let store = SecretStore::from_directory(temp.path()).unwrap();
@@ -281,17 +355,23 @@ async fn live_typesafe_profile_through_root_machine() {
         ToolRegistry::new(),
     )
     .with_input_shadow("evaluation", EvaluationSurface::Redirected);
-    host.0.process.agent_config.core_config.memory.enabled = false;
-    host.0.process.store_bindings = Some(alan_agent_engine::AgentRuntimeStoreBindings {
-        rollouts: temp.path().join("rollouts"),
-        checkpoints: temp.path().join("checkpoints"),
-        cache: temp.path().join("cache"),
-        tmp: temp.path().join("tmp"),
-        metadata: temp.path().join("runtime-metadata"),
-    });
-    host.0.connection_store =
+    host.service_manager
+        .process
+        .agent_config
+        .core_config
+        .memory
+        .enabled = false;
+    host.service_manager.process.store_bindings =
+        Some(alan_agent_engine::AgentRuntimeStoreBindings {
+            rollouts: temp.path().join("rollouts"),
+            checkpoints: temp.path().join("checkpoints"),
+            cache: temp.path().join("cache"),
+            tmp: temp.path().join("tmp"),
+            metadata: temp.path().join("runtime-metadata"),
+        });
+    host.service_manager.connection_store =
         Some(alan_service_manager::ConnectionStoreBindings::new(metadata).unwrap());
-    host.0.llm_factory = Arc::new(Factory(
+    host.service_manager.llm_factory = Arc::new(Factory(
         ProductLlmClientFactory {
             credentials_dir: credentials,
             managed_auth: None,

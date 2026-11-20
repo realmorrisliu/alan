@@ -1,7 +1,21 @@
+use crate::theme::{DotState, Theme};
+
 use super::*;
 
+const COMPACT_DIFF_PREVIEW_LINES: usize = 8;
+
 /// Routine Action projection, distinct from retained full presentation/detail.
+#[cfg(test)]
 pub(crate) fn action_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    action_summary_with_theme(cell, width, Theme::default())
+}
+
+/// Routine Action projection rendered with the active [`Theme`].
+pub(crate) fn action_summary_with_theme(
+    cell: &HistoryCell,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
     let HistoryCell::Tool {
         title,
         status,
@@ -10,32 +24,43 @@ pub(crate) fn action_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'stat
         ..
     } = cell
     else {
-        return cell.render_styled_lines(RenderOpts::new(width, false));
+        return cell.render_styled_lines(RenderOpts::new(width, false).with_theme(theme));
     };
     let width = width.max(1);
-    let style = status.style();
-    let header = format!(
-        "{} · {}",
-        summary_row(
-            &bounded(title, 256),
-            width.saturating_sub(status.label().len() + 3),
-            style
-        ),
-        status.label()
+    let style = status.style(theme);
+    let (dot, dot_style) = status.dot(theme);
+    let dot_prefix = format!("{dot} ");
+    let dot_width = unicode_width::UnicodeWidthStr::width(dot_prefix.as_str());
+    let status_suffix = format!(" · {}", status.label());
+    let suffix_width = unicode_width::UnicodeWidthStr::width(status_suffix.as_str());
+    let title_budget = width.saturating_sub(dot_width + suffix_width).max(1);
+    let clamped_title = clamp_text_width(&clean_text(&bounded(title, 256)), title_budget);
+    let header_line = fit_line_to_width(
+        Line::from(vec![
+            Span::styled(dot_prefix, dot_style),
+            Span::styled(clamped_title, style),
+            Span::styled(status_suffix, style),
+        ]),
+        width,
     );
-    let child = match presentation {
-        Some(ToolResultPresentation::Diff { path, hunks }) => {
-            let mut added = 0;
-            let mut removed = 0;
-            for line in hunks.iter().flat_map(|h| &h.lines) {
-                match line {
-                    DiffLine::Added { .. } => added += 1,
-                    DiffLine::Removed { .. } => removed += 1,
-                    _ => {}
-                }
+    if let Some(ToolResultPresentation::Diff { path, hunks }) = presentation {
+        let mut added = 0usize;
+        let mut removed = 0usize;
+        for line in hunks.iter().flat_map(|h| &h.lines) {
+            match line {
+                DiffLine::Added { .. } => added += 1,
+                DiffLine::Removed { .. } => removed += 1,
+                _ => {}
             }
-            format!("{}+{added} -{removed}", distinct_path(title, path))
         }
+        let mut rows = vec![header_line];
+        let stats_line = format!("  {}+{added} -{removed}", distinct_path(title, path));
+        rows.push(summary_row(&stats_line, width, style));
+        append_compact_diff_rows(hunks, width, theme, &mut rows);
+        return rows;
+    }
+    let child = match presentation {
+        Some(ToolResultPresentation::Diff { .. }) => unreachable!("handled above"),
         Some(ToolResultPresentation::FileContent {
             path,
             lines,
@@ -81,35 +106,183 @@ pub(crate) fn action_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'stat
             .as_deref()
             .map_or(String::new(), |v| bounded(v, 256)),
     };
-    let mut rows = vec![header];
+    let mut rows = vec![header_line];
     if !child.trim().is_empty() {
-        rows.push(format!("  {child}"));
+        rows.push(summary_row(&format!("  {child}"), width, style));
     }
-    rows.into_iter()
-        .map(|s| summary_row(&s, width, style))
-        .collect()
+    rows
 }
 
+fn append_compact_diff_rows(
+    hunks: &[alan_agent_protocol::DiffHunk],
+    width: usize,
+    theme: Theme,
+    rows: &mut Vec<Line<'static>>,
+) {
+    let total_lines: usize = hunks.iter().map(|h| h.lines.len()).sum();
+    if total_lines == 0 {
+        return;
+    }
+    let include_context = total_lines <= COMPACT_DIFF_PREVIEW_LINES;
+    let gutter = theme.gutter();
+    let mut candidates: Vec<(Style, String, Style)> = Vec::new();
+    for hunk in hunks {
+        if let Some(header) = &hunk.header
+            && hunks.len() > 1
+        {
+            candidates.push((theme.rule_style(), header.clone(), theme.muted_style()));
+        }
+        for line in &hunk.lines {
+            match line {
+                DiffLine::Added { text } => {
+                    candidates.push((
+                        theme.diff_add_style(),
+                        format!("+{text}"),
+                        theme.diff_add_style(),
+                    ));
+                }
+                DiffLine::Removed { text } => {
+                    candidates.push((
+                        theme.diff_remove_style(),
+                        format!("-{text}"),
+                        theme.diff_remove_style(),
+                    ));
+                }
+                DiffLine::Context { text } if include_context => {
+                    candidates.push((theme.rule_style(), format!(" {text}"), Style::default()));
+                }
+                DiffLine::Context { .. } => {}
+            }
+        }
+    }
+    let hidden = candidates.len().saturating_sub(COMPACT_DIFF_PREVIEW_LINES);
+    for (gstyle, text, style) in candidates.into_iter().take(COMPACT_DIFF_PREVIEW_LINES) {
+        let line = Line::from(vec![
+            Span::raw("  "),
+            Span::styled(gutter.to_string(), gstyle),
+            Span::styled(clean_text(&text), style),
+        ]);
+        rows.push(fit_line_to_width(line, width));
+    }
+    if hidden > 0 {
+        let line = Line::from(vec![
+            Span::raw("  "),
+            Span::styled(gutter.to_string(), theme.rule_style()),
+            Span::styled(
+                format!("… +{hidden} more diff lines (Ctrl+O for full diff)"),
+                theme.muted_style(),
+            ),
+        ]);
+        rows.push(fit_line_to_width(line, width));
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "convenience wrapper kept alongside theme-aware variant"
+)]
 pub(crate) fn group_summary_header(count: usize, width: usize) -> Line<'static> {
-    summary_row(
-        &format!("{count} read-only actions · completed"),
+    group_summary_header_with_theme(count, width, Theme::default())
+}
+
+pub(crate) fn group_summary_header_with_theme(
+    count: usize,
+    width: usize,
+    theme: Theme,
+) -> Line<'static> {
+    let (dot, dot_style) = theme.status_dot(DotState::Run);
+    fit_line_to_width(
+        Line::from(vec![
+            Span::styled(format!("{dot} "), dot_style),
+            Span::styled(
+                format!("{count} read-only actions · completed"),
+                ToolStatus::Complete.style(theme),
+            ),
+        ]),
         width,
-        ToolStatus::Complete.style(),
     )
 }
 
+#[allow(
+    dead_code,
+    reason = "convenience wrapper kept alongside theme-aware variant"
+)]
 pub(crate) fn group_summary_member(cell: &HistoryCell, width: usize) -> Line<'static> {
+    group_summary_member_with_theme(cell, width, Theme::default())
+}
+
+pub(crate) fn group_summary_member_with_theme(
+    cell: &HistoryCell,
+    width: usize,
+    theme: Theme,
+) -> Line<'static> {
     let HistoryCell::Tool { title, .. } = cell else {
         unreachable!("eligible Action")
     };
-    let rows = action_summary(cell, 512);
+    let rows = action_summary_with_theme(cell, 512, theme);
     let detail = rows.get(1).map(ToString::to_string).unwrap_or_default();
     let text = if detail.trim().is_empty() {
         format!("  {}", bounded(title, 256))
     } else {
         format!("  {} · {}", bounded(title, 256), detail.trim())
     };
-    summary_row(&text, width, ToolStatus::Complete.style())
+    summary_row(&text, width, ToolStatus::Complete.style(theme))
+}
+
+fn clamp_text_width(text: &str, max_width: usize) -> String {
+    if unicode_width::UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "…".to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + w >= max_width {
+            break;
+        }
+        out.push(ch);
+        used += w;
+    }
+    out.push('…');
+    out
+}
+
+fn fit_line_to_width(line: Line<'static>, width: usize) -> Line<'static> {
+    let width = width.max(1);
+    if line.width() <= width {
+        return line;
+    }
+    let mut spans = Vec::new();
+    let mut used = 0usize;
+    let limit = width.saturating_sub(1);
+    for span in line.spans {
+        let style = span.style;
+        let mut chunk = String::new();
+        for grapheme in span.styled_graphemes(style) {
+            let w = unicode_width::UnicodeWidthStr::width(grapheme.symbol);
+            if used + w > limit {
+                if !chunk.is_empty() {
+                    spans.push(Span::styled(chunk, style));
+                }
+                if width > 1 {
+                    spans.push(Span::styled("…", style));
+                }
+                return Line::from(spans);
+            }
+            chunk.push_str(grapheme.symbol);
+            used += w;
+        }
+        if !chunk.is_empty() {
+            spans.push(Span::styled(chunk, style));
+        }
+    }
+    Line::from(spans)
 }
 
 pub(super) fn summary_row(text: &str, width: usize, style: Style) -> Line<'static> {

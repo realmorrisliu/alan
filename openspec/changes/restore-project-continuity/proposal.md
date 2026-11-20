@@ -10,7 +10,7 @@ A foreground Root should be able to continue project work across invocations wit
 - Keep project-scoped goal/progress/verification summaries inspectable, correctable and deletable, with source provenance.
 - Revalidate current authority and remaining budgets; never replay completed effects or restore revoked grants from memory.
 - Preserve independent foreground invocation lifetime and avoid automatic cross-project memory propagation.
-- Replace only the bounded history-selection planning from the parked expose-agent-rollout-history draft; do not revive its clone/background launch path or proactive permission learning.
+- Replace only the bounded history-selection planning from the retired (archived) expose-agent-rollout-history draft; do not revive its clone/background launch path or proactive permission learning.
 
 ## Capabilities
 

@@ -1,7 +1,7 @@
 use super::materializer::{MAX_SOURCE_FILE_BYTES, MaterializationManifest};
 use super::store;
 use super::*;
-use alan_agent_engine::skills::{SkillScope, parse_skill_metadata};
+use alan_agent_engine::skills::{SkillScope, SkillTypedDependency, parse_skill_metadata};
 use std::fs::File;
 
 #[cfg(unix)]
@@ -11,6 +11,7 @@ mod bootstrap_wait_budget;
 mod concurrency;
 mod embedded;
 mod file_surface;
+mod four_kinds;
 mod inspection;
 #[cfg(unix)]
 mod lock_boundaries;

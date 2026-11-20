@@ -10,14 +10,15 @@ use std::{
 };
 
 use alan_agent_engine::SpawnHostMount;
-use alan_agent_engine::tools::{
-    ToolExecutionAdapter, ToolExecutionAuthority, ToolExecutionBinding,
-};
+use alan_agent_engine::tools::ToolExecutionAdapter;
+#[cfg(test)]
+use alan_agent_engine::tools::ToolExecutionAuthority;
 use alan_ap::{ErrorCode, FileServer, InProcessTransport};
 use alan_kernel::{Access, LiveNamespace, Pid};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
+mod authority;
 mod delegation;
 mod file_server;
 
@@ -185,6 +186,7 @@ struct Grant {
     owner: Pid,
     export: Arc<dyn HostMountExport>,
     projections: Vec<Projection>,
+    git_push_scopes: Vec<alan_agent_engine::GitPushDelegationScope>,
 }
 
 struct RequestState {
@@ -375,6 +377,7 @@ impl HostMountService {
                 owner: Pid(request.requesting_pid),
                 export,
                 projections: Vec::new(),
+                git_push_scopes: Vec::new(),
             },
         );
         drop(state);
@@ -824,85 +827,6 @@ impl HostMountService {
         let mut bytes = serde_json::to_vec(&event).expect("Host Mount event serializes");
         bytes.push(b'\n');
         self.events.append_for_many(affected_processes, &bytes);
-    }
-}
-
-impl ToolExecutionAuthority for HostMountService {
-    fn presentation_scope(&self, pid: u64) -> Option<String> {
-        let state = self.state.lock().ok()?;
-        let grants = state
-            .grants
-            .iter()
-            .flat_map(|(id, grant)| {
-                grant
-                    .projections
-                    .iter()
-                    .filter(move |p| grant.public.active && p.pid.0 == pid)
-                    .map(move |p| (id, &p.namespace_path, p.access))
-            })
-            .collect::<Vec<_>>();
-        if grants.is_empty() {
-            return None;
-        }
-        serde_json::to_string(&(self.generation(), grants)).ok()
-    }
-
-    fn reconcile(
-        &self,
-        pid: u64,
-        mut binding: ToolExecutionBinding,
-    ) -> Result<ToolExecutionBinding> {
-        let pid = Pid(pid);
-        let requested_namespace_cwd = binding.namespace_cwd.clone();
-        let state = self.state.lock().unwrap();
-        let mut cwd_grants = Vec::new();
-        let projections = state
-            .grants
-            .values()
-            .filter_map(|grant| {
-                if !grant.public.active {
-                    return None;
-                }
-                grant
-                    .projections
-                    .iter()
-                    .find(|projection| projection.pid == pid)
-                    .map(|projection| {
-                        cwd_grants.push((
-                            PathBuf::from(&projection.namespace_path),
-                            grant.public.id.clone(),
-                        ));
-                        HostMountToolProjection {
-                            namespace_path: PathBuf::from(&projection.namespace_path),
-                            access: projection.access,
-                            export: grant.export.clone(),
-                        }
-                    })
-            })
-            .collect::<Vec<_>>();
-        drop(state);
-
-        binding.clear_adapter();
-        if !projections.is_empty() {
-            binding.set_adapter(
-                self.adapter
-                    .tool_execution_adapter(&projections, &requested_namespace_cwd)?,
-            );
-        }
-        let selected_grant = cwd_grants
-            .iter()
-            .filter(|(path, _)| binding.namespace_cwd.starts_with(path))
-            .max_by_key(|(path, _)| path.components().count())
-            .map(|(_, id)| id.clone());
-        ensure!(
-            binding
-                .cwd_grant_id
-                .as_ref()
-                .is_none_or(|id| Some(id) == selected_grant.as_ref()),
-            "Process cwd grant was revoked or replaced; choose an explicit directory"
-        );
-        binding.cwd_grant_id = selected_grant;
-        Ok(binding)
     }
 }
 

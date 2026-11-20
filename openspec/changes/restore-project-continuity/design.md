@@ -4,7 +4,7 @@
 
 Explicit --resume and durable no-repeat controls already ship. This delivery adds
 bounded project-oriented discovery and continuity, not a second recovery system.
-The older expose-agent-rollout-history draft is parked and includes rejected
+The older expose-agent-rollout-history draft is retired and archived and includes rejected
 renderer launch exceptions; only its user need for inspectable history is retained.
 
 ## Goals / Non-Goals
@@ -61,3 +61,9 @@ rules remain in force. No model-authored credential or permission persistence.
 Do not reactivate parked background-launch tasks. Extend existing explicit recovery
 with backward-readable records and explicit missing-evidence states. No migration
 of old user installations is required for this personal-development delivery.
+
+## Project instruction files
+
+Summaries may reference `AGENTS.md` and `CLAUDE.md` from an explicitly mounted
+project as knowledge sources. Their content is data, not authority: it cannot widen
+grants, change approval posture or isolation, or alter reviewer policy.

@@ -11,42 +11,33 @@
 //! --local`), utility actions like `find -delete`, build or task runner
 //! recipes, or utility-specific script/DSL modes such as `sed -f`.
 
+mod command_guard;
 mod command_interpreters;
 pub(in crate::tools) mod command_options;
 pub(in crate::tools) mod command_process;
 pub(in crate::tools) mod command_wrappers;
 mod path_literals;
 mod path_safety;
+mod program_command;
 mod sandbox_spec;
 mod shell_syntax;
 
+pub use command_process::OutputProgressCallback;
 #[cfg(any(target_os = "linux", all(test, unix)))]
 pub(in crate::tools) use command_wrappers::command_and_args;
-pub(crate) use path_safety::protected_path_component;
 pub use sandbox_spec::{NetworkPosture, SandboxHostMount, SandboxSpec};
 
-use command_wrappers::{
-    shell_wrapper_inline_script, validate_direct_command_shapes,
-    validate_nested_command_evaluators, validate_protected_command_evaluators,
-};
-use path_literals::{
-    TokenPathRole, absolute_path_literal_candidates, is_allowed_absolute_command_path,
-    is_file_redirection_operator, lexically_normalize_path,
-    looks_like_bare_protected_subpath_token, looks_like_path_token, path_like_subtokens,
-    token_path_role,
-};
-use path_safety::{existing_regular_file_has_multiple_links, is_path_guard_reason};
-use shell_syntax::{
-    ShellToken, normalize_shell_line_continuations, shell_tokens_with_spans,
-    validate_shell_features,
-};
+#[cfg(test)]
+use command_wrappers::{shell_wrapper_inline_script, validate_nested_command_evaluators};
+use path_literals::lexically_normalize_path;
+use path_safety::is_path_guard_reason;
 
 use anyhow::{Result, anyhow};
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(crate) use shell_syntax::parse_standalone_cd;
+#[cfg(any(target_os = "linux", test))]
 pub(in crate::tools) use shell_syntax::shell_commands;
 
 const SANDBOX_BACKEND_PATH_GUARD: &str = "host_mount_path_guard";
@@ -75,6 +66,8 @@ pub struct Sandbox {
     excluded_host_roots: Vec<PathBuf>,
     /// Forces a specific backend instead of host detection (tests only).
     backend_override: Option<super::sandbox_backend::SandboxBackendKind>,
+    /// Explicit invocation-only trust posture governing sandbox and guard enforcement.
+    trust_posture: crate::policy::TrustPosture,
 }
 
 impl Sandbox {
@@ -94,6 +87,7 @@ impl Sandbox {
             spec,
             excluded_host_roots: Vec::new(),
             backend_override: None,
+            trust_posture: crate::policy::TrustPosture::Governed,
         }
     }
 
@@ -122,6 +116,50 @@ impl Sandbox {
             spec,
             excluded_host_roots: Vec::new(),
             backend_override: Some(backend),
+            trust_posture: crate::policy::TrustPosture::Governed,
+        }
+    }
+
+    /// Return the underlying projected confinement spec.
+    pub fn spec(&self) -> &SandboxSpec {
+        &self.spec
+    }
+
+    /// Configure explicit invocation trust posture on this sandbox.
+    pub fn with_trust_posture(mut self, trust_posture: crate::policy::TrustPosture) -> Self {
+        self.trust_posture = trust_posture;
+        self
+    }
+
+    /// Return the active invocation trust posture on this sandbox.
+    pub const fn trust_posture(&self) -> crate::policy::TrustPosture {
+        self.trust_posture
+    }
+
+    /// Configure explicit trust posture on this sandbox (`ConfinedTrusted` vs `Governed`).
+    pub fn with_explicit_trust(mut self, explicit_trust: bool) -> Self {
+        self.trust_posture = if explicit_trust {
+            crate::policy::TrustPosture::ConfinedTrusted
+        } else {
+            crate::policy::TrustPosture::Governed
+        };
+        self
+    }
+
+    /// Return whether explicit trust bypasses action approvals on this sandbox.
+    pub fn explicit_trust(&self) -> bool {
+        self.trust_posture.bypasses_action_approvals()
+    }
+
+    fn os_sandbox_or_explicit_trust(&self) -> bool {
+        self.active_backend().is_os_enforced() || self.trust_posture.bypasses_action_approvals()
+    }
+
+    fn path_check_mode(&self) -> PathCheckMode {
+        if self.os_sandbox_or_explicit_trust() {
+            PathCheckMode::ProtectedOnly
+        } else {
+            PathCheckMode::Full
         }
     }
 
@@ -153,7 +191,7 @@ impl Sandbox {
 
     /// Name of the active sandbox backend.
     pub fn backend_name(&self) -> &'static str {
-        Self::backend_name_static()
+        self.active_backend().name()
     }
 
     /// Name of the built-in host_mount path guard backend.
@@ -164,7 +202,7 @@ impl Sandbox {
     /// Return a stable rejection reason when a bash command shape is incompatible
     /// with the host_mount path guard backend.
     pub fn bash_preflight_reason(cmd: &str) -> Option<String> {
-        validate_bash_command_shape(cmd)
+        command_guard::validate_bash_command_shape(cmd)
             .err()
             .map(|err| err.to_string())
     }
@@ -180,7 +218,7 @@ impl Sandbox {
             ));
         }
 
-        match self.validate_command_paths(cmd, cwd, PathCheckMode::Full, None) {
+        match self.validate_command_paths(cmd, cwd, self.path_check_mode(), None) {
             Ok(()) => None,
             Err(err) => {
                 let reason = err.to_string();
@@ -337,6 +375,37 @@ impl Sandbox {
         timeout: Option<Duration>,
         capability: Option<alan_agent_protocol::ToolCapability>,
     ) -> Result<ExecResult> {
+        self.exec_with_timeout_capability_and_progress(cmd, cwd, timeout, capability, None)
+            .await
+    }
+
+    /// Execute a command within the host_mount, optionally streaming incremental
+    /// bounded `(stdout_tail, stderr_tail, truncated)` snapshots while running.
+    pub async fn exec_with_timeout_capability_and_progress(
+        &self,
+        cmd: &str,
+        cwd: &Path,
+        timeout: Option<Duration>,
+        capability: Option<alan_agent_protocol::ToolCapability>,
+        progress: Option<command_process::OutputProgressCallback>,
+    ) -> Result<ExecResult> {
+        if self.trust_posture.is_unsandboxed_host_account() {
+            let mut command = tokio::process::Command::new("/bin/sh");
+            command.arg("-p").arg("-c").arg(cmd);
+            command.current_dir(cwd);
+            command
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            let output =
+                command_process::output_with_progress(command, timeout, None, progress).await?;
+            return Ok(ExecResult {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                exit_code: output.status.code().unwrap_or(-1),
+            });
+        }
+
         if !self.command_cwd_is_authorized(cwd, capability) {
             return Err(anyhow!(
                 "Working directory outside host_mount roots: {} (allowed roots: {})",
@@ -346,38 +415,44 @@ impl Sandbox {
         }
         self.ensure_path_not_protected(cwd, "process cwd")?;
 
-        // Reject shell expansion ($VAR, $(...), backticks, globs, braces) in EVERY
-        // mode. Expansion defeats the static path-containment check — the parser
-        // sees a literal, in-host_mount-looking token (`$HOME/.ssh/id_rsa`) but
-        // `/bin/sh -c` then expands it to escape the host_mount. Seatbelt permits
-        // reads, so an auto-approved read must not be able to exfiltrate this way.
-        self.validate_shell_features(cmd)?;
-
-        if self.active_backend().permits_autonomous_bash() {
-            // Seatbelt kernel-confines the host_mount fs + network, so the syntactic
-            // *shape* checks are dropped — they would reject commands the sandbox
-            // safely contains (`bash -c ...`, `python -c ...`). Path containment
-            // and the protected-subpath check (incl. shell-wrapper-nested) still
-            // run in ProtectedOnly mode.
+        if self.os_sandbox_or_explicit_trust() {
+            // An OS-enforced backend (Seatbelt, Landlock, LinuxReifiedNamespace)
+            // or explicit trust confines host_mount writes/network at the kernel
+            // boundary, so shell expansion (`$VAR`, `$(...)`, backticks), globs,
+            // brace expansion, and shell wrappers are permitted while protected
+            // `.git`/`.alan`/`.agents` subpaths and literal out-of-mount paths
+            // remain guarded in ProtectedOnly mode.
             self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly, capability)?;
         } else {
-            // No kernel protected-subpath enforcement (Landlock cannot carve a
-            // protected subdir out of the writable tree, or the path-guard
-            // fallback): keep the full shape parser so opaque writers — which could
-            // hide a protected write the kernel won't deny — are rejected.
+            // Unconfined host_mount_path_guard fallback without explicit trust:
+            // keep full static shell feature and shape guards.
+            self.validate_shell_features(cmd)?;
             self.validate_command_paths(cmd, cwd, PathCheckMode::Full, capability)?;
         }
 
-        // A command only reaches execution after policy/reviewer/human clearance.
-        // If it is classified as a network capability, run it with the sandbox's
-        // network restriction lifted (still filesystem-confined) so an approved
-        // network call actually runs instead of failing under a deny-all profile.
+        // In Governed mode, a command only reaches execution after policy/reviewer/human
+        // clearance, so an approved network command lifts network confinement.
+        // In ConfinedTrusted (`--trust`), per-action prompts are bypassed, so OS network
+        // confinement MUST NOT be silently widened beyond the SandboxSpec posture.
         let allow_network = self.spec.network.allows_network()
-            || matches!(
+            || (!self.trust_posture.bypasses_action_approvals()
+                && matches!(
+                    capability,
+                    Some(alan_agent_protocol::ToolCapability::Network)
+                ));
+        let backend = self.active_backend();
+        if !allow_network
+            && !backend.is_os_enforced()
+            && self.trust_posture.bypasses_action_approvals()
+            && matches!(
                 capability,
                 Some(alan_agent_protocol::ToolCapability::Network)
-            );
-        let backend = self.active_backend();
+            )
+        {
+            return Err(anyhow!(
+                "network access is confined under `--trust` without an OS network sandbox"
+            ));
+        }
         if !self.excluded_host_roots.is_empty()
             && !matches!(
                 backend,
@@ -398,13 +473,13 @@ impl Sandbox {
                 .await;
         }
 
-        let mut command = self.build_confined_command(cmd, allow_network, backend)?;
-        command.current_dir(cwd);
+        let mut command = self.build_confined_command(cmd, cwd, allow_network, backend)?;
         command
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
-        let output = command_process::output(command, timeout).await?;
+        let output =
+            command_process::output_with_progress(command, timeout, None, progress).await?;
 
         Ok(ExecResult {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -420,66 +495,19 @@ impl Sandbox {
     fn build_confined_command(
         &self,
         cmd: &str,
+        cwd: &Path,
         allow_network: bool,
         backend: super::sandbox_backend::SandboxBackendKind,
     ) -> Result<tokio::process::Command> {
-        // Pin the system shell; -p ignores inherited shell functions/startup hooks,
-        // and -f disables pathname expansion after preflight has validated the script.
-        let command = match backend {
-            super::sandbox_backend::SandboxBackendKind::Seatbelt => {
-                let mut profile = super::sandbox_backend::seatbelt_profile(
-                    &self.spec.writable_roots,
-                    &self.spec.read_denylist,
-                    allow_network,
-                );
-                profile.push_str(&super::sandbox_backend::seatbelt_read_only(&self.spec));
-                profile.push_str(&super::sandbox_backend::seatbelt_host_mount_exclusions(
-                    &self.excluded_host_roots,
-                    &self.spec.readable_roots,
-                ));
-                let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
-                command
-                    .arg("-p")
-                    .arg(profile)
-                    .arg("/bin/sh")
-                    .arg("-p")
-                    .arg("-f")
-                    .arg("-c")
-                    .arg(cmd);
-                command
-            }
-            super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace => {
-                return Err(anyhow!(
-                    "linux_reified_namespace backend is detectable but no runner is installed yet"
-                ));
-            }
-            #[cfg(target_os = "linux")]
-            super::sandbox_backend::SandboxBackendKind::Landlock => {
-                use std::os::unix::process::CommandExt;
-                let writable_roots = self.spec.writable_roots.clone();
-                let read_denylist = self.spec.read_denylist.clone();
-                let mut command = std::process::Command::new("/bin/sh");
-                command.arg("-p").arg("-f").arg("-c").arg(cmd);
-                // SAFETY: pre_exec runs in the forked child before exec; it only
-                // applies a Landlock ruleset (no shared-state mutation).
-                unsafe {
-                    command.pre_exec(move || {
-                        super::sandbox_backend::apply_landlock(
-                            &writable_roots,
-                            &read_denylist,
-                            allow_network,
-                        )
-                    });
-                }
-                tokio::process::Command::from(command)
-            }
-            _ => {
-                let mut command = tokio::process::Command::new("/bin/sh");
-                command.arg("-p").arg("-f").arg("-c").arg(cmd);
-                command
-            }
-        };
-        Ok(command)
+        // Pin the system shell; -p ignores inherited shell functions/startup hooks.
+        // Disable pathname expansion (-f) only on the untrusted path-guard fallback.
+        let mut argv = vec![std::ffi::OsString::from("-p")];
+        if !backend.is_os_enforced() && !self.trust_posture.bypasses_action_approvals() {
+            argv.push(std::ffi::OsString::from("-f"));
+        }
+        argv.push(std::ffi::OsString::from("-c"));
+        argv.push(std::ffi::OsString::from(cmd));
+        self.build_confined_argv(Path::new("/bin/sh"), &argv, cwd, allow_network, backend)
     }
 
     async fn exec_reified_namespace(
@@ -530,7 +558,6 @@ impl Sandbox {
             vec![
                 "/bin/sh".to_string(),
                 "-p".to_string(),
-                "-f".to_string(),
                 "-c".to_string(),
                 cmd.to_string(),
             ],
@@ -581,418 +608,6 @@ impl Sandbox {
     fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         Ok(dunce::canonicalize(path)?)
     }
-
-    fn validate_command_paths(
-        &self,
-        cmd: &str,
-        cwd: &Path,
-        mode: PathCheckMode,
-        capability: Option<alan_agent_protocol::ToolCapability>,
-    ) -> Result<()> {
-        let protected_only = matches!(mode, PathCheckMode::ProtectedOnly);
-        let normalized = normalize_shell_line_continuations(cmd);
-        let trimmed = normalized.trim();
-        if trimmed.is_empty() {
-            // Under an OS sandbox an empty command is the executor's problem.
-            return if protected_only {
-                Ok(())
-            } else {
-                Err(anyhow!("Command cannot be empty"))
-            };
-        }
-
-        // In ProtectedOnly mode an unparseable shape is tolerated (the OS sandbox
-        // confines writes + network), but parseable path operands are still
-        // containment-checked below — only the syntactic shape checks are dropped.
-        let tokens = match shell_tokens_with_spans(trimmed) {
-            Ok(tokens) => tokens,
-            Err(err) => return if protected_only { Ok(()) } else { Err(err) },
-        };
-        let commands = match shell_commands(trimmed) {
-            Ok(commands) => commands,
-            Err(err) => return if protected_only { Ok(()) } else { Err(err) },
-        };
-        if !protected_only {
-            self.validate_direct_command_shapes(&commands)?;
-            self.validate_nested_command_evaluators(&commands)?;
-        }
-
-        // Wrapper forms (`bash -c 'echo x > .git/config'`) hide their operands
-        // inside a quoted script the outer tokenizer can't decompose. Under an OS
-        // sandbox these are allowed to run, so recurse into the inline script and
-        // apply the same protected-subpath checks to the wrapped command.
-        if protected_only {
-            for words in &commands {
-                if let Some(inner) = shell_wrapper_inline_script(words)? {
-                    self.validate_command_paths(
-                        &inner,
-                        cwd,
-                        PathCheckMode::ProtectedOnly,
-                        capability,
-                    )?;
-                }
-            }
-        }
-
-        if protected_only {
-            validate_protected_command_evaluators(&commands, self.backend_name())?;
-        }
-        let mut expects_redirection_target = false;
-        for token in &tokens {
-            let role = token_path_role(trimmed, token);
-            let token = &token.decoded;
-            if expects_redirection_target {
-                self.validate_redirection_target(token, cwd)?;
-                expects_redirection_target = false;
-                continue;
-            }
-
-            if is_file_redirection_operator(token) {
-                expects_redirection_target = true;
-                continue;
-            }
-
-            if !matches!(role, TokenPathRole::Check | TokenPathRole::Read) {
-                continue;
-            }
-            let capability = role.capability(capability, self.active_backend().is_os_enforced());
-            for candidate in path_like_subtokens(token) {
-                self.validate_command_path_candidate(candidate, cwd, capability)?;
-            }
-        }
-
-        self.validate_absolute_path_literals(trimmed, &tokens, cwd, capability)?;
-
-        Ok(())
-    }
-
-    fn validate_direct_command_shapes(&self, commands: &[Vec<String>]) -> Result<()> {
-        validate_direct_command_shapes(commands, self.backend_name())
-    }
-
-    fn validate_shell_features(&self, cmd: &str) -> Result<()> {
-        validate_shell_features(cmd, self.backend_name())
-    }
-
-    fn validate_nested_command_evaluators(&self, commands: &[Vec<String>]) -> Result<()> {
-        validate_nested_command_evaluators(commands, self.backend_name())
-    }
-
-    fn ensure_path_not_protected(&self, path: &Path, action: &str) -> Result<()> {
-        if let Some(component) = self.protected_subpath_component(path) {
-            return Err(anyhow!(
-                "Sandbox backend {} blocks {} under protected subpath {}: {}",
-                self.backend_name(),
-                action,
-                component,
-                path.display()
-            ));
-        }
-        Ok(())
-    }
-
-    fn ensure_path_not_multiply_linked(&self, path: &Path, action: &str) -> Result<()> {
-        if existing_regular_file_has_multiple_links(path)? {
-            return Err(anyhow!(
-                "Sandbox backend {} blocks {} via multiply-linked file because hardlink aliases cannot be validated safely: {}",
-                self.backend_name(),
-                action,
-                path.display()
-            ));
-        }
-        Ok(())
-    }
-
-    fn ensure_path_not_read_denied(&self, path: &Path, action: &str) -> Result<()> {
-        let resolved_path = self.normalized_path(path);
-        for deny_path in &self.spec.read_denylist {
-            let canonical_deny = self
-                .canonicalize(deny_path)
-                .unwrap_or_else(|_| lexically_normalize_path(deny_path));
-            let normalized_deny = lexically_normalize_path(deny_path);
-            if resolved_path.starts_with(&canonical_deny)
-                || resolved_path.starts_with(&normalized_deny)
-            {
-                return Err(anyhow!(
-                    "Sandbox backend {} blocks {} under sensitive read-deny path: {}",
-                    self.backend_name(),
-                    action,
-                    path.display()
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    fn protected_subpath_component(&self, path: &Path) -> Option<&'static str> {
-        let resolved_path = self.resolved_path_with_existing_parents(path);
-        for root in &self.spec.writable_roots {
-            let canonical_root = self
-                .canonicalize(root)
-                .unwrap_or_else(|_| lexically_normalize_path(root));
-            let normalized_root = lexically_normalize_path(root);
-            let root_protected = protected_path_component(&canonical_root)
-                .or_else(|| protected_path_component(&normalized_root));
-            let Ok(relative) = resolved_path
-                .strip_prefix(&canonical_root)
-                .or_else(|_| resolved_path.strip_prefix(&normalized_root))
-            else {
-                continue;
-            };
-            if let Some(component) = root_protected {
-                return Some(component);
-            }
-            if let Some(component) = protected_path_component(relative) {
-                return Some(component);
-            }
-        }
-        None
-    }
-
-    fn normalized_path(&self, path: &Path) -> PathBuf {
-        let absolute_path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            self.primary_host_root().join(path)
-        };
-        if absolute_path.exists() {
-            self.canonicalize(&absolute_path)
-                .unwrap_or_else(|_| lexically_normalize_path(&absolute_path))
-        } else {
-            lexically_normalize_path(&absolute_path)
-        }
-    }
-
-    fn resolved_path_with_existing_parents(&self, path: &Path) -> PathBuf {
-        let absolute_path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            self.primary_host_root().join(path)
-        };
-        if absolute_path.exists() {
-            return self.normalized_path(&absolute_path);
-        }
-
-        let normalized = lexically_normalize_path(&absolute_path);
-        let mut current = absolute_path.as_path();
-        let mut suffix = Vec::<OsString>::new();
-        while !current.exists() {
-            let Some(name) = current.file_name() else {
-                return self.resolved_path_with_existing_parents(&normalized);
-            };
-            suffix.push(name.to_os_string());
-            let Some(parent) = current.parent() else {
-                return lexically_normalize_path(&absolute_path);
-            };
-            current = parent;
-        }
-
-        let mut resolved = self
-            .canonicalize(current)
-            .unwrap_or_else(|_| lexically_normalize_path(current));
-        for component in suffix.iter().rev() {
-            resolved.push(component);
-        }
-        resolved
-    }
-    // HostMount containment is enforced for ALL modes, including ProtectedOnly.
-    // The OS sandbox confines *writes* (and network) to the host_mount, but Seatbelt
-    // permits reads by default, so an auto-approved read like `cat ~/.ssh/id_rsa`
-    // would otherwise exfiltrate secrets into tool output. ProtectedOnly only drops
-    // the syntactic *shape* checks (so wrappers may run), never path containment.
-    fn validate_command_path_candidate(
-        &self,
-        token: &str,
-        cwd: &Path,
-        capability: Option<alan_agent_protocol::ToolCapability>,
-    ) -> Result<()> {
-        if token.is_empty() || token.starts_with('-') {
-            return Ok(());
-        }
-
-        if token.starts_with('~') {
-            return Err(anyhow!(
-                "Command references HOME paths outside host_mount: {}",
-                token
-            ));
-        }
-
-        if token.contains("://") {
-            return Ok(());
-        }
-
-        if looks_like_path_token(token) || looks_like_bare_protected_subpath_token(token) {
-            let candidate = if Path::new(token).is_absolute() {
-                PathBuf::from(token)
-            } else {
-                cwd.join(token)
-            };
-            if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
-                return Ok(());
-            }
-            let validation_path = candidate;
-            let read_only_command =
-                matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
-            let path_is_authorized = if read_only_command {
-                self.is_readable(&validation_path)
-            } else {
-                self.is_writable(&validation_path)
-            };
-            if !path_is_authorized {
-                return Err(anyhow!(
-                    "Command references path outside host_mount: {}",
-                    token
-                ));
-            }
-            self.ensure_path_not_protected(&validation_path, "process path reference")?;
-            if read_only_command {
-                self.ensure_path_not_read_denied(&validation_path, "process path reference")?;
-            } else {
-                self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn validate_redirection_target(&self, token: &str, cwd: &Path) -> Result<()> {
-        if token.is_empty() {
-            return Err(anyhow!("Command ends with an incomplete redirection"));
-        }
-
-        if token.starts_with('~') {
-            return Err(anyhow!(
-                "Command references HOME paths outside host_mount: {}",
-                token
-            ));
-        }
-
-        let candidate = if Path::new(token).is_absolute() {
-            PathBuf::from(token)
-        } else {
-            cwd.join(token)
-        };
-        if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
-            return Ok(());
-        }
-        let validation_path = candidate;
-        if !self.is_writable(&validation_path) {
-            return Err(anyhow!(
-                "Command references path outside host_mount: {}",
-                token
-            ));
-        }
-        self.ensure_path_not_protected(&validation_path, "process path reference")?;
-        self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
-        Ok(())
-    }
-
-    fn validate_absolute_path_literals(
-        &self,
-        command: &str,
-        tokens: &[ShellToken],
-        cwd: &Path,
-        capability: Option<alan_agent_protocol::ToolCapability>,
-    ) -> Result<()> {
-        for token in tokens {
-            let role = token_path_role(command, token);
-            if role == TokenPathRole::Data {
-                continue;
-            }
-            let capability = role.capability(capability, self.active_backend().is_os_enforced());
-            let path_literals = if let TokenPathRole::ExecutableData(offset) = role {
-                let Some(getline_paths) =
-                    command_interpreters::awk_getline_file_paths(&token.decoded[offset..])
-                else {
-                    return Err(anyhow!(
-                        "Sandbox backend {} rejects AWK getline file paths unless they are simple unescaped string literals; other paths cannot be validated against host_mount",
-                        self.backend_name()
-                    ));
-                };
-                for path in getline_paths {
-                    self.validate_command_path_candidate(&path, cwd, capability)?;
-                }
-                Vec::new()
-            } else {
-                absolute_path_literal_candidates(&token.decoded)
-            };
-            for candidates in path_literals {
-                let literal = candidates
-                    .iter()
-                    .find(|candidate| {
-                        self.absolute_path_literal_is_allowed_or_in_host_mount(
-                            candidate, capability,
-                        )
-                    })
-                    .unwrap_or_else(|| &candidates[0]);
-                self.validate_absolute_path_literal(literal, capability)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn absolute_path_literal_is_allowed_or_in_host_mount(
-        &self,
-        literal: &str,
-        capability: Option<alan_agent_protocol::ToolCapability>,
-    ) -> bool {
-        let literal_path = Path::new(literal);
-        if is_allowed_absolute_command_path(literal_path) {
-            return true;
-        }
-        if matches!(capability, Some(alan_agent_protocol::ToolCapability::Read)) {
-            self.is_readable(literal_path)
-        } else {
-            self.is_writable(literal_path)
-        }
-    }
-
-    fn validate_absolute_path_literal(
-        &self,
-        literal: &str,
-        capability: Option<alan_agent_protocol::ToolCapability>,
-    ) -> Result<()> {
-        let literal_path = Path::new(literal);
-        if !literal_path.is_absolute() || is_allowed_absolute_command_path(literal_path) {
-            return Ok(());
-        }
-        // Containment applies in every mode: the OS sandbox does not confine
-        // reads, so an out-of-host_mount absolute path (e.g. a read of a secret)
-        // must still be rejected by the parser.
-        let read_only_command =
-            matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
-        let path_is_authorized = if read_only_command {
-            self.is_readable(literal_path)
-        } else {
-            self.is_writable(literal_path)
-        };
-        if !path_is_authorized {
-            return Err(anyhow!(
-                "Command contains absolute path outside host_mount: {}",
-                literal
-            ));
-        }
-        self.ensure_path_not_protected(literal_path, "process path reference")?;
-        if read_only_command {
-            self.ensure_path_not_read_denied(literal_path, "process path reference")?;
-        }
-        Ok(())
-    }
-}
-
-fn validate_bash_command_shape(cmd: &str) -> Result<()> {
-    let normalized = normalize_shell_line_continuations(cmd);
-    let trimmed = normalized.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow!("Command cannot be empty"));
-    }
-
-    let commands = shell_commands(trimmed)?;
-    validate_direct_command_shapes(&commands, Sandbox::backend_name_static())?;
-    validate_nested_command_evaluators(&commands, Sandbox::backend_name_static())?;
-    validate_shell_features(trimmed, Sandbox::backend_name_static())?;
-
-    Ok(())
 }
 
 #[cfg(test)]

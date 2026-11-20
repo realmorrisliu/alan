@@ -304,13 +304,21 @@ async fn details_polish_newest_numeric_default_navigation_and_refresh() {
             .collect::<Vec<_>>(),
         ["a0", "a1"]
     );
-    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
     load(&shell, &mut app).await;
     assert_eq!(app.modal.actions[app.modal.selected].id, "a9");
     app.modal.pending = true;
     load(&shell, &mut app).await;
     assert_eq!(app.modal.actions[app.modal.selected].id, "a9");
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
     load(&shell, &mut app).await;
     assert_eq!(app.modal.actions[app.modal.selected].id, "a10");
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.modal.scroll, 1);
+    app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+    assert_eq!(app.modal.scroll, 2);
+    app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+    assert_eq!(app.modal.scroll, 1);
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(app.modal.scroll, 0);
 }

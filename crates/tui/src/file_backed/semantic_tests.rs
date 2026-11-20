@@ -7,6 +7,7 @@ use ratatui::{
 
 #[test]
 fn semantic_empty_tail_does_not_block_completed_action_drain() {
+    let theme = crate::theme::Theme::default();
     for width in [40, 48, 60, 80, 120] {
         let source = "```diff\n+committed";
         let delta = "\n-literal\n+next\n```";
@@ -19,7 +20,7 @@ fn semantic_empty_tail_does_not_block_completed_action_drain() {
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>(),
-            [": task", "", "╭─ diff", "+committed"]
+            [": task", "", "▎ diff", "▎ +committed"]
         );
         assert!(app.styled_history_lines(width).is_empty());
         for id in ["first", "second"] {
@@ -66,10 +67,10 @@ fn semantic_empty_tail_does_not_block_completed_action_drain() {
         let expected = app.styled_history_lines(width);
         assert_eq!(
             expected.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            ["-literal", "+next", "╰──"]
+            ["▎ -literal", "▎ +next", "▎"]
         );
-        assert_eq!(expected[0].spans[0].style.fg, Some(Color::Red));
-        assert_eq!(expected[1].spans[0].style.fg, Some(Color::Green));
+        assert_eq!(expected[0].spans[0].style.fg, Some(theme.status_block));
+        assert_eq!(expected[1].spans[0].style.fg, Some(theme.status_run));
         app.apply_tape_record(tests::tape_message("assistant", &full));
         assert_eq!(app.styled_history_lines(width), expected);
         // Restored viewport/history retains the source boundary, not committed tool cells.
@@ -93,10 +94,10 @@ fn semantic_empty_tail_does_not_block_completed_action_drain() {
         let mut terminal = Terminal::new(TestBackend::new(width as u16, 12)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer.cell((0, 1)).unwrap().symbol(), "-");
-        assert_eq!(buffer.cell((0, 1)).unwrap().fg, Color::Red);
-        assert_eq!(buffer.cell((0, 2)).unwrap().symbol(), "+");
-        assert_eq!(buffer.cell((0, 2)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((2, 1)).unwrap().symbol(), "-");
+        assert_eq!(buffer.cell((2, 1)).unwrap().fg, theme.status_block);
+        assert_eq!(buffer.cell((2, 2)).unwrap().symbol(), "+");
+        assert_eq!(buffer.cell((2, 2)).unwrap().fg, theme.status_run);
         assert!(app.action_cells.is_empty());
 
         // A bounded prefix drain shifts a still-retained action past the tail.
@@ -133,6 +134,7 @@ fn semantic_empty_tail_does_not_block_completed_action_drain() {
 
 #[test]
 fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
+    let theme = crate::theme::Theme::default();
     for width in [40, 48, 60, 80, 120] {
         let source = "```diff\n+committed";
         let delta = "\n-\t**literal**\n+new\n```\n**done**";
@@ -143,7 +145,7 @@ fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
         let drained = app.drain_committed_scrollback(width, 1);
         assert_eq!(
             drained.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            [": task", "", "╭─ diff", "+committed"]
+            [": task", "", "▎ diff", "▎ +committed"]
         );
         assert!(app.styled_history_lines(width).is_empty());
         assert!(app.drain_committed_scrollback(width, 1).is_empty());
@@ -162,10 +164,10 @@ fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
                 .render_styled_lines(crate::history::RenderOpts::new(width, false));
             assert_eq!(
                 lines.iter().map(ToString::to_string).collect::<Vec<_>>(),
-                ["-    **literal**", "+new", "╰──", "done"]
+                ["▎ -    **literal**", "▎ +new", "▎", "done"]
             );
-            assert_eq!(lines[0].spans[0].style.fg, Some(Color::Red));
-            assert_eq!(lines[1].spans[0].style.fg, Some(Color::Green));
+            assert_eq!(lines[0].spans[0].style.fg, Some(theme.status_block));
+            assert_eq!(lines[1].spans[0].style.fg, Some(theme.status_run));
         };
         check(&app);
         app.apply_tape_record(tests::tape_message("assistant", &full));
@@ -190,10 +192,10 @@ fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
         let mut terminal = Terminal::new(TestBackend::new(width as u16, 12)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer.cell((0, 1)).unwrap().symbol(), "-");
-        assert_eq!(buffer.cell((0, 1)).unwrap().fg, Color::Red);
-        assert_eq!(buffer.cell((5, 1)).unwrap().symbol(), "*");
-        assert_eq!(buffer.cell((0, 2)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((2, 1)).unwrap().symbol(), "-");
+        assert_eq!(buffer.cell((2, 1)).unwrap().fg, theme.status_block);
+        assert_eq!(buffer.cell((7, 1)).unwrap().symbol(), "*");
+        assert_eq!(buffer.cell((2, 2)).unwrap().fg, theme.status_run);
         assert!(
             buffer
                 .cell((0, 4))
@@ -234,17 +236,17 @@ fn semantic_late_closures_repeated_drain_and_hydration_own_content() {
             let expected = format!(
                 "{}{}: literal! literaltool> literal",
                 "a".repeat(238 - owned),
-                if fenced { "**╰──" } else { "" }
+                if fenced { "**▎" } else { "" }
             );
             let check = |app: &FileBackedApp| {
                 assert_eq!(app.transcript.len(), 2);
                 assert_eq!(app.transcript[1].assistant_source(), Some(full.as_str()));
-                assert_eq!(
-                    app.transcript[1]
-                        .render_lines(RenderOpts::new(resized, false))
-                        .concat(),
-                    expected
-                );
+                let normalized = app.transcript[1]
+                    .render_lines(RenderOpts::new(resized, false))
+                    .into_iter()
+                    .map(|l| l.strip_prefix("▎ ").unwrap_or(&l).to_string())
+                    .collect::<String>();
+                assert_eq!(normalized, expected);
             };
             check(&app);
             app.merge_reconnected_idle_history(vec![
@@ -280,10 +282,11 @@ fn semantic_late_closures_repeated_drain_and_hydration_own_content() {
             let mut terminal = Terminal::new(TestBackend::new(resized as u16, 20)).unwrap();
             terminal.draw(|frame| draw(frame, &app)).unwrap();
             let buffer = terminal.backend().buffer();
-            assert_eq!(buffer.cell((0, 1)).unwrap().symbol(), "a");
+            let col = if fenced { 2 } else { 0 };
+            assert_eq!(buffer.cell((col, 1)).unwrap().symbol(), "a");
             assert_eq!(
                 buffer
-                    .cell((0, 1))
+                    .cell((col, 1))
                     .unwrap()
                     .modifier
                     .contains(Modifier::BOLD),
@@ -355,18 +358,19 @@ fn semantic_tabs_survive_production_code_and_typed_diff_projection() {
                 }],
             }),
         });
+        let theme = crate::theme::Theme::default();
         let mut terminal = Terminal::new(TestBackend::new(width, 16)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
         assert_eq!(
-            buffer.cell((4, 2)).unwrap().symbol(),
+            buffer.cell((6, 2)).unwrap().symbol(),
             "l",
             "code tab indentation at {width}"
         );
-        assert_eq!(buffer.cell((7, 9)).unwrap().symbol(), "n");
-        assert_eq!(buffer.cell((7, 9)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((7, 10)).unwrap().symbol(), "o");
-        assert_eq!(buffer.cell((7, 10)).unwrap().fg, Color::Red);
+        assert_eq!(buffer.cell((9, 9)).unwrap().symbol(), "n");
+        assert_eq!(buffer.cell((9, 9)).unwrap().fg, theme.status_run);
+        assert_eq!(buffer.cell((9, 10)).unwrap().symbol(), "o");
+        assert_eq!(buffer.cell((9, 10)).unwrap().fg, theme.status_block);
         for row in 4..=6 {
             assert_eq!(buffer.cell((0, row)).unwrap().fg, Color::Reset);
         }
@@ -429,20 +433,21 @@ fn semantic_second_drain_stream_tape_and_both_merges_keep_fence_context() {
         ));
         app.transcript.remove(0);
         assert_eq!(app.styled_history_lines(resized), expected);
+        let theme = crate::theme::Theme::default();
         let mut terminal = Terminal::new(TestBackend::new(resized as u16, 16)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
         assert_eq!(
-            buffer.cell((0, 0)).unwrap().symbol(),
+            buffer.cell((2, 0)).unwrap().symbol(),
             "-",
             "retained: {:?}; first: {:?}; second: {:?}",
             expected,
             first,
             second
         );
-        assert_eq!(buffer.cell((0, 0)).unwrap().fg, Color::Red);
-        assert_eq!(buffer.cell((5, 2)).unwrap().symbol(), "f");
-        assert_eq!(buffer.cell((5, 2)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((2, 0)).unwrap().fg, theme.status_block);
+        assert_eq!(buffer.cell((7, 2)).unwrap().symbol(), "f");
+        assert_eq!(buffer.cell((7, 2)).unwrap().fg, theme.status_run);
         assert!(
             buffer
                 .cell((0, 4))

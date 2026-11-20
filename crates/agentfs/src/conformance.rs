@@ -91,6 +91,7 @@ impl AgentConformanceChecker {
             ("machine/ui/plan", FileKind::File),
             ("machine/ui/thinking", FileKind::File),
             ("machine/ui/notice", FileKind::File),
+            ("machine/ui/usage", FileKind::File),
             ("machine/ui/events", FileKind::Stream),
             ("requests", FileKind::Dir),
             ("requests/clone", FileKind::Clone),

@@ -13,8 +13,8 @@ use super::fs_safety::ensure_owned_directory;
 mod leases;
 use super::materializer::verify_materialized_revision;
 use super::{
-    MATERIALIZER_VERSION, MAX_PACKAGES, PackageCatalog, PackageRecord, PackageState,
-    validate_package_id,
+    LEGACY_SKILL_MATERIALIZER_VERSION, MATERIALIZER_VERSION, MAX_PACKAGES, PackageCatalog,
+    PackageExportKind, PackageRecord, PackageState, validate_package_id,
 };
 pub(super) use leases::PackageLease;
 
@@ -516,7 +516,10 @@ fn validate_catalog_structure(catalog: &PackageCatalog) -> Result<()> {
         validate_package_id(&record.id)?;
         validate_revision_id(&record.revision)?;
         ensure!(
-            record.materializer_version == MATERIALIZER_VERSION,
+            matches!(
+                record.materializer_version.as_str(),
+                LEGACY_SKILL_MATERIALIZER_VERSION | MATERIALIZER_VERSION
+            ),
             "catalog references an unsupported materializer version"
         );
     }
@@ -543,9 +546,44 @@ fn verify_revision(root: &Path, record: &PackageRecord) -> Result<()> {
     );
     let manifest = verify_materialized_revision(&revision_root, &record.revision)?;
     ensure!(
-        manifest.exports == record.exports
+        manifest.materializer_version == record.materializer_version
+            && manifest.export_kind == record.export_kind
+            && manifest.manifest_version == record.manifest_version
+            && manifest.description == record.description
+            && manifest.exports == record.exports
+            && manifest.tool_exports == record.tool_exports
+            && manifest.mcp_exports == record.mcp_exports
+            && manifest.provider_export == record.provider_export
             && manifest.tree_fingerprint == record.materialized_fingerprint,
         "catalog and materialization manifest disagree"
+    );
+    ensure!(
+        match record.export_kind {
+            PackageExportKind::Skill => {
+                record.tool_exports.is_empty()
+                    && record.mcp_exports.is_empty()
+                    && record.provider_export.is_none()
+            }
+            PackageExportKind::Tool => {
+                record.exports.is_empty()
+                    && !record.tool_exports.is_empty()
+                    && record.mcp_exports.is_empty()
+                    && record.provider_export.is_none()
+            }
+            PackageExportKind::Mcp => {
+                record.exports.is_empty()
+                    && record.tool_exports.is_empty()
+                    && !record.mcp_exports.is_empty()
+                    && record.provider_export.is_none()
+            }
+            PackageExportKind::Provider => {
+                record.exports.is_empty()
+                    && record.tool_exports.is_empty()
+                    && record.mcp_exports.is_empty()
+                    && record.provider_export.is_some()
+            }
+        },
+        "catalog record mixes multiple package export kinds"
     );
     ensure!(
         record.state == PackageState::Installed || record.reference_count > 0,

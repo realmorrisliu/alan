@@ -76,7 +76,11 @@ impl FileBackedApp {
             {
                 HistoryCell::Styled(rows.clone()).render_styled_lines(opts)
             } else if is_action {
-                crate::history::action_summary(&self.transcript[index], opts.width)
+                crate::history::action_summary_with_theme(
+                    &self.transcript[index],
+                    opts.width,
+                    opts.theme,
+                )
             } else {
                 self.transcript[index].render_styled_lines(opts)
             };
@@ -208,7 +212,7 @@ impl FileBackedApp {
         }
     }
 
-    pub(super) fn queued_receipt_at(&self, index: usize) -> bool {
+    pub(in crate::file_backed) fn queued_receipt_at(&self, index: usize) -> bool {
         self.local_inputs
             .values()
             .any(|input| input.cell == Some(index) && !input.tape_seen)
@@ -335,6 +339,9 @@ impl FileBackedApp {
                     let index = self
                         .pending_remote_turn_start
                         .unwrap_or(self.transcript.len());
+                    let is_cmd =
+                        record.input_intent == Some(alan_agent_protocol::InputIntent::Command);
+                    self.turn_prompts.push((record.content.clone(), is_cmd));
                     self.insert_user_boundary(record.into_user_cell().with_input_cut(cut));
                     for id in &ids {
                         if let Some(input) = self.local_inputs.get_mut(id) {
@@ -371,7 +378,9 @@ impl FileBackedApp {
     }
 
     pub(in crate::file_backed) fn push_error(&mut self, message: String) {
-        self.transcript.push(HistoryCell::Error(message));
+        self.transcript.push(HistoryCell::Error(
+            super::notice::humanize_protocol_message(&message),
+        ));
     }
 
     pub(in crate::file_backed) fn apply_ui_event(&mut self, event: UiEvent) {
@@ -411,6 +420,11 @@ impl FileBackedApp {
         &mut self,
         snapshot: UiActivitySnapshot,
     ) {
+        if snapshot.state == UiActivityState::Idle
+            && matches!(self.thinking.state, UiThinkingState::Streaming)
+        {
+            self.thinking = UiThinkingSnapshot::idle();
+        }
         self.activity = snapshot;
     }
 

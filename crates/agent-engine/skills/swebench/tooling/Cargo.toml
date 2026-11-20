@@ -3,6 +3,7 @@ name = "alan-swebench-tooling"
 description = "SWE-bench package-local tooling for alan"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "alan_swebench_tooling"

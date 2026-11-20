@@ -92,3 +92,92 @@ pub trait LlmProvider: Send + Sync {
     /// Get the provider name (for logging/debugging)
     fn provider_name(&self) -> &'static str;
 }
+
+/// Thread-safe, cloneable handle to an [`LlmProvider`] whose static capabilities are cached.
+///
+/// Useful when multiple embedded sessions, child runs, or retries share one in-memory
+/// provider instance without wrapping a fresh client for every spawn.
+#[derive(Clone)]
+pub struct SharedLlmProvider {
+    inner: std::sync::Arc<tokio::sync::Mutex<Box<dyn LlmProvider>>>,
+    provider_name: &'static str,
+    supports_generation: bool,
+    supports_choice_evaluation: bool,
+    account_identity: Option<String>,
+}
+
+impl std::fmt::Debug for SharedLlmProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedLlmProvider")
+            .field("provider_name", &self.provider_name)
+            .field("supports_generation", &self.supports_generation)
+            .field(
+                "supports_choice_evaluation",
+                &self.supports_choice_evaluation,
+            )
+            .finish()
+    }
+}
+
+impl SharedLlmProvider {
+    /// Wrap any concrete [`LlmProvider`] for thread-safe reuse across clones.
+    pub fn new<P: LlmProvider + 'static>(provider: P) -> Self {
+        Self::from_boxed(Box::new(provider))
+    }
+
+    /// Wrap a boxed [`LlmProvider`] for thread-safe reuse across clones.
+    pub fn from_boxed(provider: Box<dyn LlmProvider>) -> Self {
+        Self {
+            provider_name: provider.provider_name(),
+            supports_generation: provider.supports_generation(),
+            supports_choice_evaluation: provider.supports_choice_evaluation(),
+            account_identity: provider.account_identity().map(str::to_owned),
+            inner: std::sync::Arc::new(tokio::sync::Mutex::new(provider)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for SharedLlmProvider {
+    async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
+        self.inner.lock().await.generate(request).await
+    }
+
+    async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
+        self.inner.lock().await.chat(system, user).await
+    }
+
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> Result<mpsc::Receiver<StreamChunk>> {
+        self.inner.lock().await.generate_stream(request).await
+    }
+
+    fn supports_generation(&self) -> bool {
+        self.supports_generation
+    }
+
+    fn supports_choice_evaluation(&self) -> bool {
+        self.supports_choice_evaluation
+    }
+
+    async fn evaluate_choice(
+        &mut self,
+        request: crate::ChoiceEvaluationRequest,
+    ) -> Result<crate::ChoiceEvaluationResponse> {
+        self.inner.lock().await.evaluate_choice(request).await
+    }
+
+    fn account_identity(&self) -> Option<&str> {
+        self.account_identity.as_deref()
+    }
+
+    async fn model_catalog(&self) -> Result<Option<Vec<ProviderModel>>> {
+        self.inner.lock().await.model_catalog().await
+    }
+
+    fn provider_name(&self) -> &'static str {
+        self.provider_name
+    }
+}

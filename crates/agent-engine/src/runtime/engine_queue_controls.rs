@@ -1,5 +1,54 @@
 use super::*;
 
+/// Return unconsumed steering input to the Machine-owned ordinary queue.
+pub(super) async fn requeue_leftover_inband_submissions(
+    broker: &TurnInputBroker,
+    machine: &mut AgentMachine,
+    queued_submissions: &Arc<Mutex<MachineInputQueue>>,
+) -> usize {
+    let broker_drained = broker.drain().await;
+    let turn_drained = machine.drain_buffered_inband_submissions();
+    let count = broker_drained.len() + turn_drained.len();
+    for submission in turn_drained {
+        push_submission_ahead_of_deferred(
+            &mut queued_submissions
+                .lock()
+                .expect("input queue poisoned")
+                .pending,
+            submission,
+        );
+    }
+    for submission in broker_drained {
+        push_submission_ahead_of_deferred(
+            &mut queued_submissions
+                .lock()
+                .expect("input queue poisoned")
+                .pending,
+            submission,
+        );
+    }
+    count
+}
+
+/// Ordinary inputs precede deferred housekeeping without changing FIFO order.
+pub(super) fn push_submission_ahead_of_deferred(
+    outer_queue: &mut VecDeque<QueuedRuntimeItem>,
+    submission: Submission,
+) {
+    let insertion_index = outer_queue
+        .iter()
+        .position(|item| matches!(item, QueuedRuntimeItem::Deferred(_)))
+        .unwrap_or(outer_queue.len());
+    outer_queue.insert(insertion_index, QueuedRuntimeItem::Submission(submission));
+}
+
+pub(super) fn should_requeue_deferred_action(
+    requeue_requested: bool,
+    exit: DeferredRuntimeActionExit,
+) -> bool {
+    requeue_requested && matches!(exit, DeferredRuntimeActionExit::Cancelled)
+}
+
 impl RuntimeSubmissionQueues {
     pub(super) fn push_outer_deferred(
         &mut self,
@@ -176,6 +225,8 @@ impl RuntimeSubmissionQueues {
                     | Op::Resume { .. }
                     | Op::SelectModel { .. }
                     | Op::SelectProjectDirectory { .. }
+                    | Op::ResetSession
+                    | Op::SetTrustPosture { .. }
             ) {
                 return Some(input);
             }
@@ -227,8 +278,32 @@ impl RuntimeSubmissionQueues {
         if self.model_control(submission).await {
             return true;
         }
-        if matches!(submission.op, Op::SelectProjectDirectory { .. }) && cancel.is_some() {
-            self.reject_active_directory(files, submission).await;
+        if cancel.is_some()
+            && matches!(
+                submission.op,
+                Op::SelectProjectDirectory { .. } | Op::ResetSession | Op::SetTrustPosture { .. }
+            )
+        {
+            match &submission.op {
+                Op::SelectProjectDirectory { .. } => {
+                    self.reject_active_directory(files, submission).await;
+                }
+                Op::ResetSession => {
+                    let _ = crate::runtime::ui_surfaces::warning(
+                        files,
+                        "Session reset requires settled work; interrupt first.",
+                    )
+                    .await;
+                }
+                Op::SetTrustPosture { .. } => {
+                    let _ = crate::runtime::ui_surfaces::warning(
+                        files,
+                        "Trust posture change requires settled work; wait for completion or interrupt.",
+                    )
+                    .await;
+                }
+                _ => {}
+            }
             return true;
         }
         if submission.intent == alan_agent_protocol::InputIntent::Command
@@ -520,7 +595,7 @@ impl RuntimeSubmissionQueues {
     }
 }
 
-async fn publish_cancelled_input(
+pub(super) async fn publish_cancelled_input(
     files: &NamespaceAgentFiles,
     id: &str,
     message: &str,

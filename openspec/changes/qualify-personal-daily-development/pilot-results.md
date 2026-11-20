@@ -11,7 +11,7 @@ progress is **0 tasks / 0 days**. No readiness or bootstrap claim follows.
   `2893a1917d2adca3ce5571526767d09bc719bd228e3763e0a37ba5e73ce1e39f`.
   Its sixteen CI checks passed; the installed product was not changed.
 - Model `gpt-6.1-sol`, reasoning `medium`, memory disabled, explicit isolated
-  Host/System Store bindings, bare foreground invocations through Herdr.
+  Host/System Store bindings, bare foreground invocations through an ordinary terminal (the pilot pane ran in a terminal multiplexer host; no host-specific behavior was relied on).
 - Each task: 600 execution seconds, 30 Tool attempts, 10 model admissions;
   zero task retries and no extensions. A separate Host supervisor allowed at most
   660 seconds per invocation. It is additional containment, not proof that every

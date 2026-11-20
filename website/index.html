@@ -189,7 +189,7 @@
                 </p>
 
                 <div class="hero__actions">
-                  <a href="#cli" class="btn-primary">$ just install</a>
+                  <a href="#cli" class="btn-primary" data-select-cli-tab="install">$ curl -fsSL https://alanworks.app/install.sh | sh</a>
                   <a href="#architecture" class="link-quiet">Read the architecture ↓</a>
                 </div>
               </div>
@@ -300,8 +300,11 @@
             <article class="principle">
               <h3>Explicit boundaries</h3>
               <p>
-                Launching <code>alan</code> never exposes your host directory. Host Mounts, Skills
-                (<button type="button" class="cmd-link" data-exec="q list">/bin/q</button>), and
+                OS confinement (<code>Seatbelt</code>/<code>Landlock</code>) contains execution to
+                explicit grants. Your project <code>cwd</code> auto-mounts read-write (opt out with
+                <code>--no-auto-mount</code> or manage via <code>/project</code>), while Quartermaster
+                (<button type="button" class="cmd-link" data-exec="q list">/bin/q</button> —
+                <code>skill</code>, <code>mcp</code>, <code>tool</code>, <code>provider</code>) and
                 Host Store credentials stay strictly separated.
               </p>
             </article>
@@ -309,8 +312,9 @@
             <article class="principle">
               <h3>Terminal-first</h3>
               <p>
-                No Electron shell or sidebar. Run interactively inside modern terminal hosts like
-                <strong>Herdr</strong>, or pipe tasks cleanly through stdin and stdout.
+                No Electron shell or sidebar. Run interactively inside any standard POSIX/VT terminal
+                (Ghostty, iTerm2, Kitty, WezTerm, Terminal.app, tmux, SSH), or pipe tasks cleanly
+                through stdin and stdout.
               </p>
             </article>
           </div>
@@ -404,7 +408,7 @@
               </tr>
               <tr>
                 <td class="ns-table__path"><button type="button" class="cmd-link" data-exec="ls /lib/pkg">/lib</button></td>
-                <td class="ns-table__desc">Immutable Skill package content projected at <code>/lib/pkg/&lt;id&gt;</code> on explicit reference.</td>
+                <td class="ns-table__desc">Immutable Quartermaster packages (<code>skill</code>, <code>mcp</code>, <code>tool</code>, <code>provider</code>) projected at <code>/lib/pkg/&lt;id&gt;</code> on explicit reference.</td>
               </tr>
               <tr>
                 <td class="ns-table__path"><button type="button" class="cmd-link" data-exec="man alan">/man</button></td>
@@ -418,8 +422,10 @@
           </table>
 
           <p class="ns-footnote">
-            Quartermaster (<code>/bin/q</code>) installs Skills strictly from authorized namespace paths
-            (<code>q install --name my-skills /mnt/import/my-skills</code>) — never raw host paths or hidden URLs.
+            Quartermaster (<code>/bin/q</code>) installs <code>skill</code>, <code>mcp</code>,
+            <code>tool</code>, and <code>provider</code> packages strictly from authorized namespace
+            paths (<code>q install --name personal-notes-mcp /mnt/import/personal-notes-mcp</code>) with
+            zero installation-time authority — never raw host paths or hidden URLs.
           </p>
 
           <!-- Terminal-First CLI -->
@@ -433,16 +439,19 @@
                 <button type="button" class="cli-tab" role="tab" data-cli-tab="pipe" aria-selected="false">
                   UNIX Pipe — git diff | alan
                 </button>
+                <button type="button" class="cli-tab" role="tab" data-cli-tab="install" aria-selected="false">
+                  Install &amp; Auth — install.sh
+                </button>
               </div>
               <div class="install-inline">
-                <code>just install &amp;&amp; alan</code>
-                <button type="button" class="copy-btn" data-copy="just install && alan">copy</button>
+                <code>curl -fsSL https://alanworks.app/install.sh | sh</code>
+                <button type="button" class="copy-btn" data-copy="curl -fsSL https://alanworks.app/install.sh | sh">copy</button>
               </div>
             </div>
 
             <pre class="cli-screen" id="cli-screen">$ alan
 
-  project: /mnt/alan   model: chatgpt-main   state: idle
+  alan   v0.1.0   project: alan (rw)   model: chatgpt-main   trust: governed
 : summarize recent changes in crates/kernel
 
   ● tool  read_file crates/kernel/src/mountfs/mod.rs   [Ctrl+O details]
@@ -450,10 +459,10 @@
   Mount table enforces lock discipline across async select! arms.
   Namespace bindings remain process-local under /proc/&lt;pid&gt;/ns.
 
-  project: /mnt/alan   model: chatgpt-main   state: idle
+  [Shift+Tab] trust -> confined/trusted   [/login] [/model] [/new] [/fork] [/permissions] [Ctrl+Z]
 ! cargo test -p alan-kernel --quiet
   ok. 42 passed; 0 failed (0.18s)</pre>
-            <p class="cli-caption" id="cli-caption">Bare <code>alan</code> boots one foreground alan9 instance and attaches the file-backed terminal renderer to <code>/agent/root</code>, with progressive disclosure on <code>Ctrl+O</code>.</p>
+            <p class="cli-caption" id="cli-caption">Bare <code>alan</code> boots one foreground alan9 instance, auto-mounts your project <code>cwd</code> (<code>--no-auto-mount</code> opts out), and attaches the TUI to <code>/agent/root</code> — with <code>/login</code>, <code>/model</code>, <code>/new</code>, <code>/fork</code>, <code>/permissions</code>, <code>Shift+Tab</code> trust toggle, <code>Ctrl+O</code> details, and <code>Ctrl+Z</code> suspend.</p>
           </div>
         </div>
       </section>
@@ -477,9 +486,12 @@
           <div class="man-block">
             <h3>SEE ALSO</h3>
             <p>
+              <button type="button" class="cmd-link" data-exec="man alan">alan(1)</button>,
               <button type="button" class="cmd-link" data-exec="man alan9">alan9(7)</button>,
               <button type="button" class="cmd-link" data-exec="man agentfs">agentfs(4)</button>,
               <button type="button" class="cmd-link" data-exec="man q">q(1)</button>,
+              <button type="button" class="cmd-link" data-exec="man connection">connection(1)</button>,
+              <button type="button" class="cmd-link" data-exec="man update">update(1)</button>,
               <a href="https://github.com/realmorrisliu/alan" target="_blank" rel="noopener noreferrer">github.com/realmorrisliu/alan</a>,
               <a href="https://realmorrisliu.com/thoughts/tags/alan" target="_blank" rel="noopener noreferrer">realmorrisliu.com/thoughts/tags/alan</a>
             </p>

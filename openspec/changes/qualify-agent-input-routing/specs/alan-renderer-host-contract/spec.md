@@ -1,14 +1,17 @@
 ## MODIFIED Requirements
 
 ### Requirement: Composer prompts communicate one-shot input intent
-The ordinary composer SHALL default to `: ` for Agent input. A leading `!`
-in an empty entry SHALL be represented by `! `, with the command body after
-the prompt. The renderer SHALL preserve canonical submission intent while folding
-its prefix into presentation. Backspace on an empty command body SHALL restore
-`: `. After accepted submission a fresh composer SHALL default to `: `;
-rejection SHALL preserve the draft and intent. Explicit `:` SHALL force Agent
-intent without a duplicate displayed delimiter. No persistent command mode or
-renderer-owned execution path SHALL be introduced.
+Composer prompts SHALL reflect canonical one-shot intent using `: ` or `! `. Prefix folding, reset, rejection and history SHALL preserve the submitted body and intent without a persistent command mode or renderer-owned executor.
+
+#### Scenario: Composer intent survives presentation changes
+- **WHEN** the composer selects, accepts or rejects a submission route
+- **THEN** The ordinary composer SHALL default to `: ` for Agent input. A leading `!` in an
+  empty entry SHALL be represented by `! `, with the command body after the prompt. The renderer
+  SHALL preserve canonical submission intent while folding its prefix into presentation.
+  Backspace on an empty command body SHALL restore `: `. After accepted submission a fresh
+  composer SHALL default to `: `; rejection SHALL preserve the draft and intent. Explicit `:`
+  SHALL force Agent intent without a duplicate displayed delimiter. No persistent command mode
+  or renderer-owned execution path SHALL be introduced.
 
 #### Scenario: User selects a command
 - **WHEN** the user types `!` into an empty ordinary composer

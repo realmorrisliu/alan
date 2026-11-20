@@ -374,6 +374,9 @@ fn tool_error_payload(error: &anyhow::Error) -> Value {
         payload["process"] = json!(format!("/proc/{}", process_error.pid));
         payload["effect_status"] = json!("unknown");
         payload["reason"] = json!(process_error.category.reason());
+        if let Some(action_id) = &process_error.action_id {
+            payload["action_id"] = json!(action_id);
+        }
     }
     payload
 }
@@ -413,43 +416,54 @@ pub(super) async fn tool_payload_for_tape(
     agent_files: &NamespaceAgentFiles,
     payload: &Value,
 ) -> Value {
-    let redacted_payload = redact_evidence_payload(payload);
+    let mut redacted_payload = redact_evidence_payload(payload);
+    // Preserve structured multimodal `content_parts` (e.g. image attachments
+    // from read_file) without flattening them into text evidence projections.
+    let preserved_content_parts = redacted_payload
+        .as_object_mut()
+        .and_then(|map| map.remove("content_parts"));
     if !payload_needs_projection(&redacted_payload) {
+        if let (Some(parts), Some(map)) =
+            (preserved_content_parts, redacted_payload.as_object_mut())
+        {
+            map.insert("content_parts".to_string(), parts);
+        }
         return redacted_payload;
     }
 
-    let Some(action_id) = payload.get("action_id").and_then(Value::as_str) else {
-        return project_evidence_payload(
-            payload,
-            None,
-            Vec::new(),
-            Some("reference_unresolvable".to_string()),
-        );
-    };
-    if action_id.is_empty() || action_id.contains('/') {
-        return project_evidence_payload(
-            payload,
-            None,
-            Vec::new(),
-            Some("reference_unresolvable".to_string()),
-        );
-    }
-    let reference = agent_files.action_output_reference(action_id).await;
-    let redactions = if let Some(reference) = reference.as_ref() {
-        agent_files
-            .resolve_evidence_reference(reference, None, None)
-            .await
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .map(|text| redaction_markers_in_text(&text))
-            .unwrap_or_default()
+    let mut projected = if let Some(action_id) = payload
+        .get("action_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty() && !id.contains('/'))
+    {
+        let reference = agent_files.action_output_reference(action_id).await;
+        let redactions = if let Some(reference) = reference.as_ref() {
+            agent_files
+                .resolve_evidence_reference(reference, None, None)
+                .await
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .map(|text| redaction_markers_in_text(&text))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let fallback_reason = reference
+            .is_none()
+            .then(|| "reference_unresolvable".to_string());
+        project_evidence_payload(&redacted_payload, reference, redactions, fallback_reason)
     } else {
-        Vec::new()
+        project_evidence_payload(
+            &redacted_payload,
+            None,
+            Vec::new(),
+            Some("reference_unresolvable".to_string()),
+        )
     };
-    let fallback_reason = reference
-        .is_none()
-        .then(|| "reference_unresolvable".to_string());
-    project_evidence_payload(payload, reference, redactions, fallback_reason)
+    if let (Some(parts), Some(map)) = (preserved_content_parts, projected.as_object_mut()) {
+        map.insert("content_parts".to_string(), parts);
+    }
+    projected
 }
 
 pub(super) async fn execute_tool_effect(

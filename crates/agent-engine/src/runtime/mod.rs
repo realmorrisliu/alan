@@ -16,6 +16,8 @@ mod guardian;
 mod interaction_tools;
 mod launch_config;
 mod loop_guard;
+pub mod mcp;
+mod memory_domains;
 mod memory_flush;
 mod memory_promotion;
 mod memory_recall;
@@ -27,6 +29,7 @@ pub(crate) mod queue_publication;
 mod response_guardrails;
 mod shadow_evaluation;
 mod steering_queue;
+mod subagent_tool;
 mod submission_handlers;
 mod task_budget;
 #[cfg(test)]
@@ -35,11 +38,15 @@ mod tool_authorization;
 mod tool_batch;
 mod tool_effect_lifecycle;
 mod tool_execution;
-mod tool_packages;
+pub mod tool_packages;
+pub use tool_packages::ToolPackageManifest;
 mod tool_policy;
+mod tool_policy_hook;
+pub use tool_policy_hook::{HookDecision, ToolPolicyHook};
 mod tool_presentation;
 mod tool_resolution;
 mod transition;
+pub use transition::validate_response_schema;
 pub(crate) use transition::{NamespaceOperationUncertainty, read_action_evidence};
 mod turn_input;
 mod turn_memory;
@@ -57,6 +64,19 @@ pub use controller::{
 };
 pub use engine::spawn_with_namespace_environment;
 pub use launch_config::{AgentConfig, AgentProcessConfig, effective_core_config_for_runtime};
+pub use memory_domains::{
+    DomainRecallScope, MemoryDomain, list_existing_memory_domains, resolve_domain_store_dir,
+    validate_domain_slug,
+};
+pub use memory_recall::{
+    MemorySearchHit, build_turn_recall_bundle_for_domains, search_memory_domains,
+    search_memory_store,
+};
+pub use memory_surfaces::project_summary::{
+    ProjectContinuitySummary, ProjectContinuitySummaryView, ProjectSummaryDeleteOutcome,
+    ProjectSummaryEdit, ProjectSummaryOrigin, delete_project_summary, derive_project_key,
+    edit_project_summary, inspect_project_summary,
+};
 pub use shadow_evaluation::EvaluationSurface;
 pub use transition::{
     NamespaceEvaluation, NamespaceEvaluationFailure, NamespaceEvaluationUncertainty,
@@ -66,10 +86,9 @@ pub use transition::{
 
 // Re-export the memory-promotion job for internal runtime modules.
 pub(crate) use memory_promotion::TurnMemoryPromotionJob;
-pub use tool_packages::ToolPackageManifest;
 
 /// Configuration for the agent runtime
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RuntimeConfig {
     /// Maximum number of tool loops per turn (0 = unlimited)
     pub max_tool_loops: usize,
@@ -99,6 +118,12 @@ pub struct RuntimeConfig {
     pub governance: alan_agent_protocol::GovernanceConfig,
     /// Loaded policy engine for this runtime/machine.
     pub policy_engine: crate::policy::PolicyEngine,
+    /// Explicit invocation-only trust posture (never loaded from Config or rollouts).
+    pub trust_posture: crate::policy::TrustPosture,
+    /// Optional dedicated Connection profile for Guardian escalation reviews.
+    pub guardian_profile: Option<String>,
+    /// Guardian escalation budget, custom policy path, and fallback limits.
+    pub guardian: crate::config::GuardianConfig,
     /// Request-control intent carried by runtime/machine launch.
     pub request_control_intent: crate::RequestControlIntent,
     /// Streaming strategy (`auto`/`on`/`off`).
@@ -111,6 +136,29 @@ pub struct RuntimeConfig {
     pub store_bindings: Option<crate::AgentRuntimeStoreBindings>,
     /// Memory Service backing inherited only with an explicit Memory handle.
     pub memory_store_backing: Option<std::path::PathBuf>,
+    /// Whether this runtime is allowed to expose and invoke `spawn_subagent`.
+    /// Root Agents enable this when child launch is configured; spawned children disable it.
+    pub ad_hoc_subagent_spawn_enabled: bool,
+    /// Prompt composition mode (`Append` default or `Replace` custom prompt).
+    pub system_prompt_mode: crate::SystemPromptMode,
+    /// Optional default JSON Schema constraining assistant output.
+    pub response_schema: Option<serde_json::Value>,
+    /// Optional host-supplied synchronous Tool policy hook.
+    pub tool_policy_hook: Option<std::sync::Arc<dyn ToolPolicyHook>>,
+}
+
+impl std::fmt::Debug for RuntimeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeConfig")
+            .field("max_tool_loops", &self.max_tool_loops)
+            .field("tool_repeat_limit", &self.tool_repeat_limit)
+            .field("context_window_tokens", &self.context_window_tokens)
+            .field("trust_posture", &self.trust_posture)
+            .field("system_prompt_mode", &self.system_prompt_mode)
+            .field("has_response_schema", &self.response_schema.is_some())
+            .field("has_tool_policy_hook", &self.tool_policy_hook.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for RuntimeConfig {
@@ -120,7 +168,7 @@ impl Default for RuntimeConfig {
             tool_repeat_limit: 4,
             llm_request_timeout_secs: 180,
             temperature: 0.3,
-            max_tokens: 2048,
+            max_tokens: 16_384,
             prompt_snapshot_enabled: false,
             prompt_snapshot_max_chars: 8000,
             compaction_trigger_messages: 60,
@@ -133,12 +181,19 @@ impl Default for RuntimeConfig {
                 .effective_compaction_hard_trigger_ratio(),
             governance: alan_agent_protocol::GovernanceConfig::default(),
             policy_engine: crate::policy::PolicyEngine::autonomous(),
+            trust_posture: crate::policy::TrustPosture::Governed,
+            guardian_profile: None,
+            guardian: crate::config::GuardianConfig::default(),
             request_control_intent: crate::RequestControlIntent::default(),
             streaming_mode: crate::config::StreamingMode::Auto,
             partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode::ContinueOnce,
             durability_required: false,
             store_bindings: None,
             memory_store_backing: None,
+            ad_hoc_subagent_spawn_enabled: true,
+            system_prompt_mode: crate::SystemPromptMode::Append,
+            response_schema: None,
+            tool_policy_hook: None,
         }
     }
 }
@@ -150,7 +205,7 @@ impl From<&crate::config::Config> for RuntimeConfig {
             tool_repeat_limit: config.tool_repeat_limit,
             llm_request_timeout_secs: config.llm_request_timeout_secs as u64,
             temperature: 0.3,
-            max_tokens: 2048,
+            max_tokens: 16_384,
             prompt_snapshot_enabled: config.prompt_snapshot_enabled,
             prompt_snapshot_max_chars: config.prompt_snapshot_max_chars,
             compaction_trigger_messages: 60,
@@ -160,12 +215,19 @@ impl From<&crate::config::Config> for RuntimeConfig {
             compaction_hard_trigger_ratio: config.effective_compaction_hard_trigger_ratio(),
             governance: alan_agent_protocol::GovernanceConfig::default(),
             policy_engine: crate::policy::PolicyEngine::autonomous(),
+            trust_posture: crate::policy::TrustPosture::Governed,
+            guardian_profile: config.guardian_profile.clone(),
+            guardian: config.guardian.clone(),
             request_control_intent: crate::RequestControlIntent::from_config(config),
             streaming_mode: config.streaming_mode,
             partial_stream_recovery_mode: config.partial_stream_recovery_mode,
             durability_required: config.durability.required,
             store_bindings: None,
             memory_store_backing: None,
+            ad_hoc_subagent_spawn_enabled: true,
+            system_prompt_mode: crate::SystemPromptMode::Append,
+            response_schema: None,
+            tool_policy_hook: None,
         }
     }
 }
@@ -181,7 +243,7 @@ mod tests {
         assert_eq!(config.tool_repeat_limit, 4);
         assert_eq!(config.llm_request_timeout_secs, 180);
         assert_eq!(config.temperature, 0.3);
-        assert_eq!(config.max_tokens, 2048);
+        assert_eq!(config.max_tokens, 16_384);
         assert!(!config.prompt_snapshot_enabled);
         assert_eq!(config.prompt_snapshot_max_chars, 8000);
         assert_eq!(config.compaction_trigger_messages, 60);

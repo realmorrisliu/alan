@@ -103,6 +103,8 @@ pub enum SpawnTarget {
         package_id: String,
         export_name: String,
     },
+    /// Launch an ad-hoc subagent with an explicit inline role rather than a pre-declared skill.
+    AdHocSubagent { role: String },
 }
 
 /// Shared parent-side handle that may be explicitly bound into a child launch.
@@ -181,6 +183,9 @@ pub struct SpawnRuntimeOverrides {
     pub policy_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_profile: Option<SpawnToolProfileOverride>,
+    /// Constrain the launched child Process to read-only mounts and read-only tools.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
 }
 
 impl SpawnRuntimeOverrides {
@@ -192,6 +197,7 @@ impl SpawnRuntimeOverrides {
                 .tool_profile
                 .as_ref()
                 .is_none_or(SpawnToolProfileOverride::is_empty)
+            && !self.read_only
     }
 }
 
@@ -217,12 +223,29 @@ impl SpawnSpec {
 
     /// Validate the launch subset currently implemented by `/bin/alan-agent`.
     pub fn validate_agent_process_launch(&self) -> Result<(), SpawnSpecValidationError> {
-        if matches!(
-            &self.target,
+        match &self.target {
             SpawnTarget::DefinitionDescriptor { descriptor }
-                if descriptor != AGENT_DEFINITION_DESCRIPTOR_NAME
-        ) {
-            return Err(SpawnSpecValidationError::UnsupportedDefinitionDescriptor);
+                if descriptor != AGENT_DEFINITION_DESCRIPTOR_NAME =>
+            {
+                return Err(SpawnSpecValidationError::UnsupportedDefinitionDescriptor);
+            }
+            SpawnTarget::AdHocSubagent { role }
+                if role.is_empty()
+                    || role.trim() != role
+                    || role.chars().count() > 120
+                    || role.chars().any(char::is_control) =>
+            {
+                return Err(SpawnSpecValidationError::InvalidSubagentRole);
+            }
+            _ => {}
+        }
+        if self.runtime_overrides.read_only
+            && self
+                .host_mounts
+                .iter()
+                .any(|mount| mount.access == SpawnMountAccess::ReadWrite)
+        {
+            return Err(SpawnSpecValidationError::ReadOnlyHostMountConflict);
         }
         if self.has_handle(SpawnHandle::Artifacts) || self.launch.output_dir.is_some() {
             return Err(SpawnSpecValidationError::ArtifactRoutingUnsupported);
@@ -260,6 +283,8 @@ impl SpawnSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpawnSpecValidationError {
     UnsupportedDefinitionDescriptor,
+    InvalidSubagentRole,
+    ReadOnlyHostMountConflict,
     ArtifactRoutingUnsupported,
     CwdNotUtf8,
     CwdNotAbsolute,
@@ -271,6 +296,12 @@ impl std::fmt::Display for SpawnSpecValidationError {
         formatter.write_str(match self {
             Self::UnsupportedDefinitionDescriptor => {
                 "Child Agent Process launch uses an unsupported Agent Definition descriptor"
+            }
+            Self::InvalidSubagentRole => {
+                "Child Agent Process ad-hoc subagent role must be non-empty, trimmed, single-line, and at most 120 characters"
+            }
+            Self::ReadOnlyHostMountConflict => {
+                "Read-only child Agent Process cannot request a read_write Host Mount"
             }
             Self::ArtifactRoutingUnsupported => {
                 "Child Agent Process launches do not support artifact routing yet"
@@ -313,6 +344,7 @@ mod tests {
                 tool_profile: Some(SpawnToolProfileOverride {
                     allowed_tools: vec!["read_file".to_string(), "grep".to_string()],
                 }),
+                read_only: false,
             },
             delegated: Some(DelegatedSpawnContext {
                 requirements: vec![
@@ -424,5 +456,49 @@ mod tests {
             descriptor: AGENT_DEFINITION_DESCRIPTOR_NAME.to_string(),
         };
         assert!(spec.validate_agent_process_launch().is_ok());
+    }
+
+    #[test]
+    fn ad_hoc_subagent_and_read_only_validation() {
+        let mut spec = SpawnSpec {
+            target: SpawnTarget::AdHocSubagent {
+                role: "researcher".to_string(),
+            },
+            launch: SpawnLaunchInputs {
+                task: "Inspect auth flow".to_string(),
+                ..SpawnLaunchInputs::default()
+            },
+            handles: Vec::new(),
+            host_mounts: vec![SpawnHostMount {
+                grant: "grant-1".to_string(),
+                target: PathBuf::from("/mnt/project"),
+                access: SpawnMountAccess::ReadOnly,
+            }],
+            runtime_overrides: SpawnRuntimeOverrides {
+                read_only: true,
+                ..SpawnRuntimeOverrides::default()
+            },
+            delegated: None,
+        };
+        assert!(spec.validate_agent_process_launch().is_ok());
+        let encoded = serde_json::to_value(&spec).unwrap();
+        assert_eq!(encoded["target"]["kind"], "ad_hoc_subagent");
+        assert_eq!(encoded["target"]["role"], "researcher");
+        assert_eq!(encoded["runtime_overrides"]["read_only"], true);
+
+        spec.host_mounts[0].access = SpawnMountAccess::ReadWrite;
+        assert_eq!(
+            spec.validate_agent_process_launch(),
+            Err(SpawnSpecValidationError::ReadOnlyHostMountConflict)
+        );
+
+        spec.host_mounts[0].access = SpawnMountAccess::ReadOnly;
+        spec.target = SpawnTarget::AdHocSubagent {
+            role: " researcher ".to_string(),
+        };
+        assert_eq!(
+            spec.validate_agent_process_launch(),
+            Err(SpawnSpecValidationError::InvalidSubagentRole)
+        );
     }
 }

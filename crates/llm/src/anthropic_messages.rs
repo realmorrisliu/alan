@@ -1,23 +1,34 @@
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::debug;
 
-use crate::ReasoningEffort;
 use crate::message::reject_retired_message_overrides;
+use crate::{
+    GenerationRequest, GenerationResponse, LlmProvider, ReasoningEffort, SseEventParser,
+    StreamChunk, TokenUsage, ToolCall as LlmToolCall, ToolDefinition as LlmToolDefinition,
+};
 
 mod input_projection;
+mod prompt_cache;
 mod streaming;
+mod wire;
 
 use input_projection::convert_messages_for_anthropic_messages;
+use prompt_cache::apply_prompt_cache;
+pub use wire::*;
+
+/// Default Anthropic Messages model used when a caller leaves the model unset.
+pub const DEFAULT_ANTHROPIC_MESSAGES_MODEL: &str = "claude-sonnet-4-5";
 
 const MIN_THINKING_BUDGET_TOKENS: u32 = 1_024;
 const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 const FILES_API_BETA: &str = "files-api-2025-04-14";
 
 /// Client for the Anthropic Messages API.
+#[derive(Clone)]
 pub struct AnthropicMessagesClient {
     client: reqwest::Client,
     api_key: String,
@@ -26,164 +37,18 @@ pub struct AnthropicMessagesClient {
     custom_headers: HeaderMap,
 }
 
-#[derive(Debug, Serialize)]
-pub struct AnthropicMessagesRequest {
-    pub model: String,
-    pub messages: Vec<AnthropicMessagesMessage>,
-    pub max_tokens: i32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<AnthropicMessagesToolDefinition>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stream: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking: Option<ThinkingConfig>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ThinkingConfig {
-    #[serde(rename = "type")]
-    pub config_type: String,
-    pub budget_tokens: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AnthropicMessagesMessage {
-    pub role: String,
-    pub content: Vec<ContentBlockInput>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum ContentBlockInput {
-    #[serde(rename = "text")]
-    Text { text: String },
-    #[serde(rename = "image")]
-    Image { source: serde_json::Value },
-    #[serde(rename = "document")]
-    Document {
-        source: serde_json::Value,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        title: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        citations: Option<serde_json::Value>,
-    },
-    #[serde(rename = "thinking")]
-    Thinking {
-        thinking: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        signature: Option<String>,
-    },
-    #[serde(rename = "redacted_thinking")]
-    RedactedThinking { data: String },
-    #[serde(rename = "tool_result")]
-    ToolResult {
-        tool_use_id: String,
-        content: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        is_error: Option<bool>,
-    },
-    #[serde(rename = "tool_use")]
-    ToolUse {
-        id: String,
-        name: String,
-        input: serde_json::Value,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AnthropicMessagesToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub input_schema: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AnthropicMessagesResponse {
-    pub id: String,
-    #[serde(default)]
-    pub content: Vec<ContentBlock>,
-    pub usage: Option<Usage>,
-    pub stop_reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ContentBlock {
-    #[serde(rename = "type")]
-    pub block_type: String,
-    pub text: Option<String>,
-    pub thinking: Option<String>,
-    pub signature: Option<String>,
-    pub data: Option<String>,
-    pub id: Option<String>,
-    pub name: Option<String>,
-    pub input: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Usage {
-    pub input_tokens: i32,
-    pub cache_creation_input_tokens: Option<i32>,
-    pub cache_read_input_tokens: Option<i32>,
-    pub output_tokens: i32,
-}
-
-/// Streaming usage updates omit unchanged token counts.
-#[derive(Debug, Clone, Deserialize)]
-pub struct StreamUsageDelta {
-    pub input_tokens: Option<i32>,
-    pub cache_creation_input_tokens: Option<i32>,
-    pub cache_read_input_tokens: Option<i32>,
-    pub output_tokens: Option<i32>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct StreamEvent {
-    #[serde(rename = "type")]
-    pub event_type: String,
-    pub index: Option<i32>,
-    pub content_block: Option<ContentBlock>,
-    pub delta: Option<StreamDelta>,
-    pub message: Option<StreamMessage>,
-    pub usage: Option<StreamUsageDelta>,
-    pub error: Option<StreamError>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct StreamDelta {
-    #[serde(rename = "type")]
-    pub delta_type: Option<String>,
-    pub text: Option<String>,
-    pub thinking: Option<String>,
-    pub signature: Option<String>,
-    pub partial_json: Option<String>,
-    pub stop_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct StreamMessage {
-    pub id: Option<String>,
-    pub stop_reason: Option<String>,
-    pub usage: Option<Usage>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct StreamError {
-    pub error: Option<serde_json::Value>,
-    pub message: Option<String>,
-    pub r#type: Option<String>,
-}
-
 impl AnthropicMessagesClient {
     pub fn with_params(api_key: &str, base_url: &str, model: &str) -> Self {
+        let model = if model.trim().is_empty() {
+            DEFAULT_ANTHROPIC_MESSAGES_MODEL.to_string()
+        } else {
+            model.to_string()
+        };
         Self {
             client: reqwest::Client::new(),
             api_key: api_key.to_string(),
             base_url: base_url.trim_end_matches('/').to_string(),
-            model: model.to_string(),
+            model,
             custom_headers: HeaderMap::new(),
         }
     }
@@ -240,7 +105,6 @@ impl AnthropicMessagesClient {
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01");
 
-        // Apply custom headers
         for (name, value) in &self.custom_headers {
             req_builder = req_builder.header(name, value);
         }
@@ -297,7 +161,6 @@ impl AnthropicMessagesClient {
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01");
 
-        // Apply custom headers
         for (name, value) in &self.custom_headers {
             req_builder = req_builder.header(name, value);
         }
@@ -367,16 +230,18 @@ impl AnthropicMessagesClient {
     }
 
     pub async fn chat(&self, system: Option<&str>, user_message: &str) -> Result<String> {
-        let request = AnthropicMessagesRequest {
+        let mut request = AnthropicMessagesRequest {
             model: self.model.clone(),
-            system: system.map(ToString::to_string),
+            system: system.map(|text| SystemPrompt::Text(text.to_string())),
             messages: vec![AnthropicMessagesMessage::user_text(user_message)],
             max_tokens: 2048,
             temperature: Some(0.7),
             tools: None,
             stream: None,
             thinking: None,
+            output_config: None,
         };
+        apply_prompt_cache(&mut request);
 
         let response = self.anthropic_messages(request).await?;
         let text = response
@@ -390,6 +255,65 @@ impl AnthropicMessagesClient {
         Ok(text)
     }
 
+    fn build_generation_request(
+        &self,
+        request: GenerationRequest,
+        stream: bool,
+    ) -> Result<(AnthropicMessagesRequest, HeaderMap)> {
+        reject_retired_message_overrides(&request)?;
+        let GenerationRequest {
+            system_prompt,
+            messages: request_messages,
+            tools: request_tools,
+            temperature,
+            max_tokens,
+            reasoning,
+            session_key: _,
+            response_schema,
+            mut extra_params,
+        } = request;
+
+        let (messages, system_prompt) =
+            convert_messages_for_anthropic_messages(request_messages, system_prompt)?;
+        let tools = convert_tools_for_anthropic_messages(request_tools);
+        let request_headers = build_request_headers(&messages, &mut extra_params)?;
+        if !extra_params.is_empty() {
+            debug!(
+                keys = ?extra_params.keys().collect::<Vec<_>>(),
+                "Ignoring unsupported Anthropic extra_params keys"
+            );
+        }
+
+        let (thinking, temperature, max_tokens) = build_thinking_params_for_model(
+            &self.model,
+            reasoning.effort,
+            temperature,
+            max_tokens.unwrap_or(4096),
+        )?;
+
+        let mut anthropic_request = AnthropicMessagesRequest {
+            model: self.model.clone(),
+            messages,
+            max_tokens,
+            system: system_prompt.map(SystemPrompt::Text),
+            temperature,
+            tools,
+            stream: Some(stream),
+            thinking,
+            output_config: response_schema.map(|schema| {
+                serde_json::json!({
+                    "format": {
+                        "type": "json_schema",
+                        "schema": schema,
+                    }
+                })
+            }),
+        };
+        apply_prompt_cache(&mut anthropic_request);
+
+        Ok((anthropic_request, request_headers))
+    }
+
     fn anthropic_messages_url(&self) -> String {
         if self.base_url.ends_with("/v1") {
             format!("{}/messages", self.base_url)
@@ -398,53 +322,6 @@ impl AnthropicMessagesClient {
         }
     }
 }
-
-impl AnthropicMessagesMessage {
-    pub fn user_text(text: &str) -> Self {
-        Self {
-            role: "user".to_string(),
-            content: vec![ContentBlockInput::Text {
-                text: text.to_string(),
-            }],
-        }
-    }
-
-    pub fn assistant_text(text: &str) -> Self {
-        Self {
-            role: "assistant".to_string(),
-            content: vec![ContentBlockInput::Text {
-                text: text.to_string(),
-            }],
-        }
-    }
-
-    pub fn user_tool_result(tool_use_id: &str, content: String) -> Self {
-        Self {
-            role: "user".to_string(),
-            content: vec![ContentBlockInput::ToolResult {
-                tool_use_id: tool_use_id.to_string(),
-                content,
-                is_error: None,
-            }],
-        }
-    }
-}
-
-impl AnthropicMessagesToolDefinition {
-    pub fn new(name: &str, description: &str, input_schema: serde_json::Value) -> Self {
-        Self {
-            name: name.to_string(),
-            description: description.to_string(),
-            input_schema,
-        }
-    }
-}
-
-use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, SseEventParser, StreamChunk, TokenUsage,
-    ToolCall as LlmToolCall, ToolDefinition as LlmToolDefinition,
-};
-use async_trait::async_trait;
 
 fn is_non_empty(value: &str) -> bool {
     !value.trim().is_empty()
@@ -463,15 +340,62 @@ fn convert_tools_for_anthropic_messages(
                     name: tool.name,
                     description: tool.description,
                     input_schema: tool.parameters,
+                    cache_control: None,
                 })
                 .collect(),
         )
     }
 }
 
+const THINKING_OUTPUT_HEADROOM_TOKENS: i32 = 4096;
+
+fn anthropic_model_max_output_tokens(model: &str) -> Option<i32> {
+    let lower = model.trim().to_ascii_lowercase();
+    let slug = lower.strip_prefix("anthropic/").unwrap_or(&lower);
+    if slug.is_empty() {
+        return None;
+    }
+    let normalized = slug.replace('.', "-");
+    if normalized.contains("claude-opus-4-6") {
+        Some(128_000)
+    } else if normalized.contains("claude-sonnet-4-6")
+        || normalized.contains("claude-opus-4-5")
+        || normalized.contains("claude-sonnet-4-5")
+        || normalized.contains("claude-haiku-4-5")
+        || normalized.contains("claude-sonnet-4")
+        || normalized.contains("claude-3-7-sonnet")
+    {
+        Some(64_000)
+    } else if normalized.contains("claude-opus-4") {
+        Some(32_000)
+    } else if normalized.contains("claude-3-5-") {
+        Some(8_192)
+    } else if normalized.contains("claude-3-") {
+        Some(4_096)
+    } else {
+        None
+    }
+}
+
 /// Build thinking-related parameters for Anthropic API.
 /// When thinking is enabled: temperature must be 1.0, max_tokens must > budget_tokens.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "model-agnostic wrapper preserved for unit tests during thinking-headroom calibration"
+    )
+)]
 fn build_thinking_params(
+    reasoning_effort: Option<ReasoningEffort>,
+    temperature: Option<f32>,
+    max_tokens: i32,
+) -> Result<(Option<ThinkingConfig>, Option<f32>, i32)> {
+    build_thinking_params_for_model("", reasoning_effort, temperature, max_tokens)
+}
+
+fn build_thinking_params_for_model(
+    model: &str,
     reasoning_effort: Option<ReasoningEffort>,
     temperature: Option<f32>,
     max_tokens: i32,
@@ -481,6 +405,7 @@ fn build_thinking_params(
         Some(effort) => Some(anthropic_budget_for_effort(effort)?),
         None => None,
     };
+    let model_limit = anthropic_model_max_output_tokens(model);
 
     match resolved_budget {
         Some(budget) => {
@@ -494,11 +419,19 @@ fn build_thinking_params(
             let budget_i32 =
                 i32::try_from(budget).context("Anthropic budget_tokens exceeds supported range")?;
 
-            // Anthropic requires max_tokens > budget_tokens.
+            // Anthropic requires max_tokens > budget_tokens; reserve output headroom so
+            // thinking does not starve final text or tool calls to a single token.
             let min_max_tokens = budget_i32
-                .checked_add(1)
+                .checked_add(THINKING_OUTPUT_HEADROOM_TOKENS)
                 .context("Anthropic budget_tokens is too large")?;
-            let adjusted_max = max_tokens.max(min_max_tokens);
+            let desired_max = max_tokens.max(min_max_tokens);
+            let adjusted_max = match model_limit {
+                Some(limit) => {
+                    let strict_min = budget_i32.saturating_add(1);
+                    desired_max.min(limit).max(strict_min)
+                }
+                None => desired_max,
+            };
             if let Some(temp) = temperature
                 && (temp - 1.0).abs() > f32::EPSILON
             {
@@ -518,7 +451,13 @@ fn build_thinking_params(
                 adjusted_max,
             ))
         }
-        None => Ok((None, temperature, max_tokens)),
+        None => {
+            let capped_max = match model_limit {
+                Some(limit) => max_tokens.min(limit),
+                None => max_tokens,
+            };
+            Ok((None, temperature, capped_max))
+        }
     }
 }
 
@@ -612,6 +551,8 @@ fn convert_usage(u: Usage) -> TokenUsage {
         completion_tokens: u.output_tokens,
         total_tokens: prompt_tokens.saturating_add(u.output_tokens),
         reasoning_tokens: None,
+        cache_creation_tokens: u.cache_creation_input_tokens,
+        ..Default::default()
     }
 }
 
@@ -679,7 +620,7 @@ fn convert_anthropic_response(response: AnthropicMessagesResponse) -> Generation
 
 fn message_uses_anthropic_file_source(message: &AnthropicMessagesMessage) -> bool {
     message.content.iter().any(|block| match block {
-        ContentBlockInput::Image { source } | ContentBlockInput::Document { source, .. } => {
+        ContentBlockInput::Image { source, .. } | ContentBlockInput::Document { source, .. } => {
             source.get("type").and_then(serde_json::Value::as_str) == Some("file")
         }
         _ => false,
@@ -689,42 +630,7 @@ fn message_uses_anthropic_file_source(message: &AnthropicMessagesMessage) -> boo
 #[async_trait]
 impl LlmProvider for AnthropicMessagesClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
-        reject_retired_message_overrides(&request)?;
-        let GenerationRequest {
-            system_prompt,
-            messages: request_messages,
-            tools: request_tools,
-            temperature,
-            max_tokens,
-            reasoning,
-            mut extra_params,
-        } = request;
-
-        let (messages, system_prompt) =
-            convert_messages_for_anthropic_messages(request_messages, system_prompt)?;
-        let tools = convert_tools_for_anthropic_messages(request_tools);
-        let request_headers = build_request_headers(&messages, &mut extra_params)?;
-        if !extra_params.is_empty() {
-            debug!(
-                keys = ?extra_params.keys().collect::<Vec<_>>(),
-                "Ignoring unsupported Anthropic extra_params keys"
-            );
-        }
-
-        let (thinking, temperature, max_tokens) =
-            build_thinking_params(reasoning.effort, temperature, max_tokens.unwrap_or(4096))?;
-
-        let anthropic_request = AnthropicMessagesRequest {
-            model: self.model.clone(),
-            messages,
-            max_tokens,
-            system: system_prompt,
-            temperature,
-            tools,
-            stream: Some(false),
-            thinking,
-        };
-
+        let (anthropic_request, request_headers) = self.build_generation_request(request, false)?;
         let response = self
             .anthropic_messages_with_headers(anthropic_request, Some(&request_headers))
             .await?;
@@ -739,54 +645,17 @@ impl LlmProvider for AnthropicMessagesClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        reject_retired_message_overrides(&request)?;
-        let GenerationRequest {
-            system_prompt,
-            messages: request_messages,
-            tools: request_tools,
-            temperature,
-            max_tokens,
-            reasoning,
-            mut extra_params,
-        } = request;
-
-        let (messages, system_prompt) =
-            convert_messages_for_anthropic_messages(request_messages, system_prompt)?;
-        let tools = convert_tools_for_anthropic_messages(request_tools);
-        let request_headers = build_request_headers(&messages, &mut extra_params)?;
-        if !extra_params.is_empty() {
-            debug!(
-                keys = ?extra_params.keys().collect::<Vec<_>>(),
-                "Ignoring unsupported Anthropic extra_params keys"
-            );
-        }
-
-        let (thinking, temperature, max_tokens) =
-            build_thinking_params(reasoning.effort, temperature, max_tokens.unwrap_or(4096))?;
-
-        let anthropic_request = AnthropicMessagesRequest {
-            model: self.model.clone(),
-            messages,
-            max_tokens,
-            system: system_prompt,
-            temperature,
-            tools,
-            stream: Some(true),
-            thinking,
-        };
+        let (anthropic_request, request_headers) = self.build_generation_request(request, true)?;
 
         let (event_tx, event_rx) = tokio::sync::mpsc::channel(100);
-
-        let client =
-            AnthropicMessagesClient::with_params(&self.api_key, &self.base_url, &self.model);
-        let request_headers_for_task = request_headers;
+        let client = self.clone();
         let (status_tx, status_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             let outcome = client
                 .stream_anthropic_messages_with_headers(
                     anthropic_request,
                     event_tx,
-                    Some(&request_headers_for_task),
+                    Some(&request_headers),
                 )
                 .await;
             let _ = status_tx.send(outcome.err().as_ref().map(crate::safe_failure_reason));
@@ -802,5 +671,6 @@ impl LlmProvider for AnthropicMessagesClient {
         "anthropic_messages"
     }
 }
+
 #[cfg(test)]
 mod tests;

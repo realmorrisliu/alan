@@ -59,10 +59,21 @@ pub(super) fn start_pending_at(
         )];
         return;
     }
-    if app.modal.plan_mode {
-        super::plan_detail_io::start(shell, app, tx, owner_path);
-        return;
+    match app.modal.mode {
+        super::app::action_modal::ModalMode::Plans => {
+            super::plan_detail_io::start(shell, app, tx, owner_path);
+            return;
+        }
+        super::app::action_modal::ModalMode::Tape => {
+            super::tape_view::start(shell, app, tx, owner_path);
+            return;
+        }
+        super::app::action_modal::ModalMode::Man => {
+            return;
+        }
+        super::app::action_modal::ModalMode::Actions => {}
     }
+    let theme = app.theme;
     let shell = shell.clone();
     let tx = tx.clone();
     app.modal.owner_path = owner_path.into();
@@ -127,7 +138,7 @@ pub(super) fn start_pending_at(
             return;
         }
         let mut rows = match &selected {
-            Some(entry) => read_detail(&shell, &entry.owner, &entry.id).await,
+            Some(entry) => read_detail_with_theme(&shell, &entry.owner, &entry.id, theme).await,
             None => vec![Line::from("No retained Actions")],
         };
         if let Some(warning) = warning {
@@ -158,10 +169,20 @@ pub(super) async fn field(shell: &alan_shell::Shell, path: &str) -> Result<Strin
     reference::range(shell, path, 0, stat.length).await
 }
 
+#[cfg(test)]
 pub(super) async fn read_detail(
     shell: &alan_shell::Shell,
     path: &str,
     id: &str,
+) -> Vec<Line<'static>> {
+    read_detail_with_theme(shell, path, id, crate::theme::Theme::default()).await
+}
+
+pub(super) async fn read_detail_with_theme(
+    shell: &alan_shell::Shell,
+    path: &str,
+    id: &str,
+    theme: crate::theme::Theme,
 ) -> Vec<Line<'static>> {
     let base = format!("{path}/actions/{id}");
     // Output is the original evidence owner; do not silently substitute metadata.
@@ -213,8 +234,11 @@ pub(super) async fn read_detail(
         }
     }
     let mut header = vec![Line::from(format!("Action {id} · {path}"))];
+    if let Some(subagent_line) = format_subagent_header(&snapshot) {
+        header.push(Line::styled(subagent_line, theme.accent_style()));
+    }
     if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
-        let mut detail = crate::history::action_detail(&cell);
+        let mut detail = crate::history::action_detail_with_theme(&cell, theme);
         if readable {
             detail.truncate(1);
         } else if serde_json::from_str::<serde_json::Value>(&snapshot.result)
@@ -227,4 +251,34 @@ pub(super) async fn read_detail(
     }
     header.extend(rows);
     header
+}
+
+fn format_subagent_header(snapshot: &ActionSnapshot) -> Option<String> {
+    let parsed = serde_json::from_str::<serde_json::Value>(&snapshot.result).ok();
+    let role = parsed
+        .as_ref()
+        .and_then(|v| v.get("subagent_role"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| snapshot.name.trim().strip_prefix("subagent:"))?;
+    let pid = parsed
+        .as_ref()
+        .and_then(|v| v.get("child_pid"))
+        .and_then(|v| v.as_u64())
+        .filter(|pid| *pid > 0);
+    let state = parsed
+        .as_ref()
+        .and_then(|v| v.get("child_state"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let s = snapshot.status.trim();
+            if s.is_empty() { "running" } else { s }
+        });
+    let role = crate::history::clean_text(role);
+    Some(match pid {
+        Some(pid) => format!("Subagent: {role} · pid {pid} · {state}"),
+        None => format!("Subagent: {role} · {state}"),
+    })
 }

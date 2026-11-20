@@ -139,6 +139,7 @@ async fn managed_connection(
         profile: "managed".into(),
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
+        guardian_profile: None,
     };
     (service, authority)
 }
@@ -274,6 +275,7 @@ async fn implicit_account_replacement_cannot_select_or_restore_with_old_catalog_
         profile: "managed".into(),
         namespace: authority.namespace.clone(),
         evaluator: None,
+        guardian_profile: None,
     };
     let rebound = next.capture_initial().await.unwrap().unwrap();
     assert_eq!(
@@ -353,8 +355,208 @@ async fn slow_discovery_does_not_block_published_observation_or_publish_into_rep
         profile: "slow".into(),
         namespace: authority.namespace.clone(),
         evaluator: None,
+        guardian_profile: None,
     };
     let catalog = replaced.catalog().await.unwrap();
     assert_eq!(catalog["models"][0]["model"], "replacement-model");
     assert_eq!(catalog["models"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn magpie_and_openrouter_live_catalogs_and_static_provider_catalogs_publish_cleanly() {
+    for provider in [ProviderId::Magpie, ProviderId::OpenRouter] {
+        let factory = Arc::new(CatalogFactory::default());
+        *factory.account.lock().unwrap() = None;
+        *factory.models.lock().unwrap() = Some(vec![model("live-model-1"), model("live-model-2")]);
+        let service = ConnectionService::ephemeral().unwrap();
+        service
+            .attach_callable_registry(
+                Arc::new(alan_llmfs::LlmFs::new()),
+                factory.clone(),
+                Config::default(),
+                None,
+            )
+            .await
+            .unwrap();
+        let mut connections = service.metadata();
+        let mut prof = profile();
+        prof.provider = provider;
+        if !ConnectionsFile::profile_descriptor(provider).credential_optional {
+            let kind = ConnectionsFile::profile_descriptor(provider).credential_kind;
+            connections.credentials.insert(
+                "openrouter-cred".into(),
+                crate::connection_profile::ConnectionCredential {
+                    kind,
+                    provider_family: provider,
+                    label: "test".into(),
+                    backend: crate::connection_profile::default_credential_backend(kind).into(),
+                },
+            );
+            prof.credential_id = Some("openrouter-cred".into());
+        } else {
+            prof.credential_id = None;
+        }
+        prof.settings = crate::connection_profile::normalize_profile_settings(
+            provider,
+            &BTreeMap::from([("model".into(), "live-model-1".into())]),
+        );
+        connections.profiles.insert("p".into(), prof);
+        service
+            .apply(ConnectionCommand::ReplaceMetadata {
+                expected: service.metadata().fingerprint().unwrap(),
+                connections,
+            })
+            .await
+            .unwrap();
+        let authority = ProcessConnection {
+            service: service.clone(),
+            profile: "p".into(),
+            namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+            evaluator: None,
+            guardian_profile: None,
+        };
+        let cat = authority.catalog().await.unwrap();
+        let slugs: Vec<&str> = cat["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|m| m["model"].as_str())
+            .collect();
+        assert_eq!(slugs, vec!["live-model-1", "live-model-2"]);
+        let selected = authority.capture(Some("live-model-2")).await.unwrap();
+        assert_eq!(selected.config.effective_model(), "live-model-2");
+        assert!(authority.capture(Some("not-in-catalog")).await.is_err());
+    }
+
+    for (provider, expected_model) in [
+        (ProviderId::OpenAiResponses, "gpt-5.4"),
+        (ProviderId::GoogleGeminiGenerateContent, "gemini-2.5-flash"),
+        (ProviderId::AnthropicMessages, "claude-sonnet-4-6"),
+    ] {
+        let factory = Arc::new(CatalogFactory::default());
+        *factory.account.lock().unwrap() = None;
+        let service = ConnectionService::ephemeral().unwrap();
+        service
+            .attach_callable_registry(
+                Arc::new(alan_llmfs::LlmFs::new()),
+                factory,
+                Config::default(),
+                None,
+            )
+            .await
+            .unwrap();
+        let mut connections = service.metadata();
+        let kind = ConnectionsFile::profile_descriptor(provider).credential_kind;
+        connections.credentials.insert(
+            "cred-ref".into(),
+            crate::connection_profile::ConnectionCredential {
+                kind,
+                provider_family: provider,
+                label: "test".into(),
+                backend: crate::connection_profile::default_credential_backend(kind).into(),
+            },
+        );
+        let mut prof = profile();
+        prof.provider = provider;
+        prof.credential_id = Some("cred-ref".into());
+        prof.settings = crate::connection_profile::normalize_profile_settings(
+            provider,
+            &BTreeMap::from([
+                ("model".into(), expected_model.into()),
+                ("project_id".into(), "proj-1".into()),
+                ("location".into(), "global".into()),
+            ]),
+        );
+        prof.settings.retain(|key, _| {
+            let d = ConnectionsFile::profile_descriptor(provider);
+            d.required_settings.contains(&key.as_str())
+                || d.optional_settings.contains(&key.as_str())
+        });
+        connections.profiles.insert("p".into(), prof);
+        service
+            .apply(ConnectionCommand::ReplaceMetadata {
+                expected: service.metadata().fingerprint().unwrap(),
+                connections,
+            })
+            .await
+            .unwrap();
+        let authority = ProcessConnection {
+            service,
+            profile: "p".into(),
+            namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+            evaluator: None,
+            guardian_profile: None,
+        };
+        let cat = authority.catalog().await.unwrap();
+        let slugs: Vec<&str> = cat["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|m| m["model"].as_str())
+            .collect();
+        assert!(slugs.contains(&expected_model), "{provider:?}: {slugs:?}");
+    }
+}
+
+#[tokio::test]
+async fn reload_connections_redirects_unconfigured_default_after_live_login() {
+    let dir = tempfile::tempdir().unwrap();
+    let conn_path = dir.path().join("connections.toml");
+    let bindings = ConnectionStoreBindings {
+        metadata_path: conn_path.clone(),
+    };
+    let factory = Arc::new(CatalogFactory::default());
+    *factory.account.lock().unwrap() = None;
+    *factory.models.lock().unwrap() = Some(vec![model("moonshotai/kimi-k2.6")]);
+
+    let service = ConnectionService::open(&bindings).unwrap();
+    service
+        .attach_callable_registry(
+            Arc::new(alan_llmfs::LlmFs::new()),
+            factory,
+            Config::default(),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let authority = ProcessConnection {
+        service: service.clone(),
+        profile: "default".into(),
+        namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+        evaluator: None,
+        guardian_profile: None,
+    };
+    assert!(authority.capture_initial().await.unwrap().is_none());
+
+    let mut updated = ConnectionsFile::default();
+    updated.credentials.insert(
+        "openrouter-main".into(),
+        crate::connection_profile::ConnectionCredential {
+            kind: crate::connection_profile::CredentialKind::SecretString,
+            provider_family: ProviderId::OpenRouter,
+            label: "OpenRouter".into(),
+            backend: crate::connection_profile::default_credential_backend(
+                crate::connection_profile::CredentialKind::SecretString,
+            )
+            .into(),
+        },
+    );
+    let mut prof = profile();
+    prof.provider = ProviderId::OpenRouter;
+    prof.credential_id = Some("openrouter-main".into());
+    prof.settings = BTreeMap::from([("model".into(), "moonshotai/kimi-k2.6".into())]);
+    updated.profiles.insert("openrouter-main".into(), prof);
+    updated.default_profile = Some("openrouter-main".into());
+    updated.save_to_path(&conn_path).unwrap();
+
+    service.reload_connections().await.unwrap();
+    let captured = authority
+        .capture(Some("moonshotai/kimi-k2.6"))
+        .await
+        .unwrap();
+    assert_eq!(captured.identity.profile, "openrouter-main");
+    assert_eq!(captured.config.effective_model(), "moonshotai/kimi-k2.6");
+    let cat = authority.catalog().await.unwrap();
+    assert_eq!(cat["models"][0]["model"], "moonshotai/kimi-k2.6");
 }

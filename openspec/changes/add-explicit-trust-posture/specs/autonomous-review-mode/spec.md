@@ -83,16 +83,3 @@ The TUI SHALL surface reviewer activity and denial rationale so autonomous decis
 #### Scenario: Review and denial are shown
 - **WHEN** the reviewer reviews an escalation and denies it
 - **THEN** the TUI shows that a review occurred and the denial rationale
-
-### Requirement: Reviewer activation requires distinct shadow qualification
-This requirement applies to governed autonomous execution. Fully trusted execution SHALL bypass the reviewer and its action-decision circuit breaker, while retaining independent lifecycle and task-budget controls.
-
-A new reviewer configuration SHALL pass a frozen no-effect qualification separate from automatic input routing. Its corpus SHALL include ordinary development, prompt injection, revoked or wrong-resource authority, publication and uncontainable effects. High-impact unauthorized allows SHALL number zero in the measured corpus; false-denial, latency, cost and sample thresholds SHALL be frozen before formal runs. Missing cost evidence SHALL remain unknown and unmet mandatory gates SHALL prevent activation.
-
-#### Scenario: Classifier passes input routing only
-- **WHEN** a configuration passed a command-versus-Agent routing benchmark
-- **THEN** that result does not qualify its permission judgments
-
-#### Scenario: Reviewer misclassifies high-impact action
-- **WHEN** shadow evaluation allows an unauthorized high-impact case
-- **THEN** the candidate fails and remains inactive

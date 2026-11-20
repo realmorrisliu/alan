@@ -85,6 +85,12 @@ pub(super) fn observe_root_agent_completion(
         for index in cells.into_iter().rev() {
             app.remove_receipt_cell(index);
         }
+        if nondispatched {
+            let owner = app.queue.owner.clone();
+            for id in submission_ids {
+                app.settle_nondispatched_local_input(id, &owner);
+            }
+        }
         for id in submission_ids {
             if let Some(input) = app.local_inputs.get_mut(id)
                 && input.owner == app.queue.owner

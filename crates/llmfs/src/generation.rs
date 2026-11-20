@@ -55,6 +55,10 @@ struct WireTokenUsage {
     total_tokens: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_creation_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cost_usd: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -78,6 +82,8 @@ impl From<TokenUsage> for WireTokenUsage {
             completion_tokens: value.completion_tokens,
             total_tokens: value.total_tokens,
             reasoning_tokens: value.reasoning_tokens,
+            cache_creation_tokens: value.cache_creation_tokens,
+            cost_usd: value.cost_usd,
         }
     }
 }

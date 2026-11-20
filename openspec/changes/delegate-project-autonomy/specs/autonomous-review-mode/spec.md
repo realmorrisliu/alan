@@ -30,16 +30,3 @@ The reviewer SHALL use a configurable dedicated Connection and trusted-user poli
 #### Scenario: Reviewer isolated
 - **WHEN** a review request is evaluated
 - **THEN** it has no tools and treats transcript content as untrusted evidence
-
-## ADDED Requirements
-
-### Requirement: Reviewer activation requires distinct shadow qualification
-A new reviewer configuration SHALL pass a frozen no-effect qualification separate from automatic input routing. Its corpus SHALL include ordinary development, prompt injection, revoked or wrong-resource authority, publication and uncontainable effects. High-impact unauthorized allows SHALL number zero in the measured corpus; false-denial, latency, cost and sample thresholds SHALL be frozen before formal runs. Missing cost evidence SHALL remain unknown and unmet mandatory gates SHALL prevent activation.
-
-#### Scenario: Classifier passes input routing only
-- **WHEN** a configuration passed a command-versus-Agent routing benchmark
-- **THEN** that result does not qualify its permission judgments
-
-#### Scenario: Reviewer misclassifies high-impact action
-- **WHEN** shadow evaluation allows an unauthorized high-impact case
-- **THEN** the candidate fails and remains inactive

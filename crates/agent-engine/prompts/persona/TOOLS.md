@@ -1,13 +1,5 @@
 # TOOLS
 
-Keep workspace-specific tool notes here.
+Local environment notes and custom workflow hints for this Agent Definition.
 
-## Guidance
-
-- Document preferred commands, aliases, and environment quirks
-- Note safe defaults and risky commands that require confirmation
-- Capture naming conventions and locations (never store secrets)
-
-## Tool Selection Principle
-
-- Prefer tools when they provide verifiable evidence for the current task
+Add project-specific build commands, test runners, or mounted service conventions below when helpful. Runtime tool-selection rules (`read_file`/`edit_file`/`grep`/`glob` vs `bash`) are governed by core system instructions.

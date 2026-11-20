@@ -24,7 +24,7 @@ async fn outer_shell_ignores_path_replacements_and_inherited_functions() {
             ),
         ] {
             let mut command = sandbox
-                .build_confined_command(script, false, backend)
+                .build_confined_command(script, temp.path(), false, backend)
                 .unwrap();
             command
                 .env("PATH", search_path)
@@ -90,13 +90,45 @@ fn nested_shells_reject_startup_files_before_execution() {
         "sh -c \"bash -lc 'printf selected'\"",
     ] {
         let error = sandbox
-            .validate_command_paths(script, temp.path(), PathCheckMode::ProtectedOnly, None)
+            .validate_command_paths(script, temp.path(), PathCheckMode::Full, None)
             .unwrap_err();
+        let message = error.to_string();
         assert!(
-            error.to_string().contains("startup files"),
+            message.contains("startup files")
+                || message.contains("rejects nested command evaluators")
+                || message.contains("rejects shell wrappers")
+                || message.contains("rejects opaque script"),
             "{script}: {error}"
         );
     }
+    sandbox
+        .validate_command_paths(
+            "bash -lc 'printf selected'",
+            temp.path(),
+            PathCheckMode::ProtectedOnly,
+            None,
+        )
+        .unwrap();
+    sandbox
+        .validate_command_paths(
+            "zsh -c 'printf selected'",
+            temp.path(),
+            PathCheckMode::ProtectedOnly,
+            None,
+        )
+        .unwrap();
+    let protected_err = sandbox
+        .validate_command_paths(
+            "bash -lc 'echo x > .git/config'",
+            temp.path(),
+            PathCheckMode::ProtectedOnly,
+            None,
+        )
+        .unwrap_err();
+    assert!(
+        protected_err.to_string().contains("protected subpath"),
+        "{protected_err}"
+    );
     sandbox
         .validate_command_paths(
             "bash -c 'printf selected'",

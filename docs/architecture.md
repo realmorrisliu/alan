@@ -6,7 +6,8 @@ and rendering into explicit owners.
 ## Layering
 
 ```text
-Terminal host (prefer Herdr) → Alan CLI / terminal renderer / future apps
+Any POSIX/VT terminal (Ghostty, iTerm2, Kitty, WezTerm, Terminal.app, tmux, SSH)
+   → Alan CLI / terminal renderer / future apps
                   |
        mounted files and control writes
                   v
@@ -44,7 +45,7 @@ alan9 instance and its Root Agent Process. With terminal stdin and stdout it
 runs the file-backed Agent renderer against that instance's `/agent/root`;
 with redirected stdin it submits one task to the same instance and writes the
 answer to stdout and diagnostics to stderr without starting the interactive
-renderer. Herdr sessions using separate runtime directories have separate
+renderer. Terminal sessions using separate runtime directories have separate
 Roots and endpoints while using the same product stores. Reusing one explicit
 runtime directory allows only one owner; another invocation fails to acquire
 it rather than sharing its Root. Actual Alan process exit shuts down its
@@ -52,14 +53,15 @@ instance; a terminal-host view detach is separate from process exit. New
 invocations start fresh by default; `alan --resume` explicitly selects durable
 recovery with current-authority validation and paused pending work. Interactive
 `!` requests an exact command through the governed native Tool path; `:` selects
-Agent reasoning. PR #1032 records recovery, view-detach, revocation and no-repeat
-acceptance. Broader platform and workflow evidence remains separately qualified.
+Agent reasoning. Broader platform and workflow evidence is qualified through real Unix PTY
+acceptance on ordinary terminals, not a host-specific harness.
 See [ADR-0056](adr/0056-bare-alan-attaches-to-root-agent.md).
 
 Alan for macOS is retired; its App, helper and shell-core/FFI source has been
-removed. Rust Host platform adapters remain. Herdr supplies terminal topology,
-not Alan execution authority.
-See [ADR-0054](adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
+removed. Rust Host platform adapters remain. The terminal supplies presentation
+topology, never Alan execution authority; no terminal host is required or detected.
+See [ADR-0054](adr/0054-retire-desktop-client-prefer-terminal-hosts.md) and
+[ADR-0061](adr/0061-terminal-native-os-boundary-quartermaster-and-first-party-providers.md).
 
 The current engine is generation-driven. The accepted mixed Machine direction
 is in [ADR-0055](adr/0055-agent-machine-composes-typed-capabilities.md); finite-choice
@@ -69,7 +71,11 @@ unfinished; automatic input routing is disabled. Existing
 rollout/checkpoint recovery is not equivalent to the namespace text Tape alone.
 
 Package Service currently distributes Skills. Embedded boot units and Tool
-registry entries do not yet come from q executable installation. Target crate
+registry entries do not yet come from q executable installation. The accepted
+target is Quartermaster `q` v1 as the one extension hub for `skill`, `mcp`, `tool`
+and `provider` packages; first-party providers are exactly `magpie`, OpenAI
+Responses/Codex, Google Cloud Vertex AI and OpenRouter, with Anthropic available
+as a protocol adapter and `q` package (ADR-0061, not yet shipped). Target crate
 ownership is recorded in [ADR-0025](adr/0025-target-crate-architecture.md).
 
 ## Agent definitions
@@ -105,6 +111,9 @@ namespaces, and tasks are ephemeral.
 - derived UI state is not a second source of domain truth.
 - live child state is read from `/proc`; delegation metadata is bounded and
   Process-local.
+- the OS sandbox and explicit mount grants are the security boundary; inside a
+  confined sandbox Alan adds no static shell-text bans or redundant Guardian
+  prompts, and mounted `AGENTS.md`/`CLAUDE.md` are non-authoritative knowledge;
 - terminal-host integration cannot grant mounts, credentials or action approval;
   the foreground CLI composition owns instance shutdown, while a view detach is
   distinct from actual Alan process exit.
@@ -121,5 +130,6 @@ fixed default policy; dedicated reviewer configuration is a tracked delivery gap
 Project continuity extends existing evidence and Memory Stores. It does not make
 Root permanent or introduce a global Project executor. Fully trusted native
 Host-account execution is a separately accepted future option with no same-account
-tamper-resistance claim. No proposed CLI flags are available merely because this
-architecture note exists. See the [ordered plan](../openspec/changes/qualify-personal-daily-development/roadmap.md).
+tamper-resistance claim; it proceeds ahead of the full delegation corpus
+(ADR-0061). No proposed CLI flags are available merely because this
+architecture note exists. See the [M1–M5 ordered plan](../openspec/changes/qualify-personal-daily-development/roadmap.md).

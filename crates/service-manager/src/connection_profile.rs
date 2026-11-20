@@ -106,7 +106,12 @@ pub struct ResolvedConnectionProfile {
 pub struct ProviderDescriptor {
     pub provider_id: LlmProvider,
     pub display_name: &'static str,
+    /// Whether this provider is part of Alan's official first-party built-in set.
+    pub first_party: bool,
     pub credential_kind: CredentialKind,
+    /// Whether profiles for this provider may omit a credential (e.g. local Magpie
+    /// without auth, or Vertex AI using ambient ADC instead of Express Mode).
+    pub credential_optional: bool,
     pub supports_browser_login: bool,
     pub supports_device_login: bool,
     pub supports_secret_entry: bool,
@@ -260,7 +265,10 @@ impl ConnectionsFile {
                     credential.provider_family.as_str(),
                 );
             }
-            if credential.kind != descriptor.credential_kind {
+            let vertex_express_secret = profile.provider
+                == LlmProvider::GoogleGeminiGenerateContent
+                && credential.kind == CredentialKind::SecretString;
+            if credential.kind != descriptor.credential_kind && !vertex_express_secret {
                 anyhow::bail!(
                     "Profile `{selected_profile_id}` uses credential kind `{}` but provider `{}` requires `{}`",
                     credential.kind.as_str(),
@@ -270,13 +278,26 @@ impl ConnectionsFile {
             }
             credential.kind
         } else {
-            if descriptor.credential_kind != CredentialKind::AmbientCloudAuth {
+            if !descriptor.credential_optional
+                && descriptor.credential_kind != CredentialKind::AmbientCloudAuth
+            {
                 anyhow::bail!(
                     "Profile `{selected_profile_id}` requires a credential for provider `{}`",
                     profile.provider.as_str()
                 );
             }
-            CredentialKind::AmbientCloudAuth
+            if profile.provider == LlmProvider::GoogleGeminiGenerateContent
+                && normalized
+                    .get("project_id")
+                    .map(|value| value.trim())
+                    .unwrap_or_default()
+                    .is_empty()
+            {
+                anyhow::bail!(
+                    "Profile `{selected_profile_id}` uses Vertex AI ADC and requires setting `project_id` (or attach a Vertex Express API key credential)"
+                );
+            }
+            descriptor.credential_kind
         };
 
         Ok(ResolvedConnectionProfile {
@@ -299,7 +320,29 @@ impl ConnectionsFile {
     }
 }
 
+/// Official first-party built-in providers shown in connection wizards and defaults:
+/// Magpie, OpenAI (Responses + ChatGPT/Codex), Google Cloud Vertex AI, and OpenRouter.
+pub fn first_party_provider_catalog() -> &'static [ProviderDescriptor] {
+    static FIRST_PARTY: std::sync::OnceLock<Vec<ProviderDescriptor>> = std::sync::OnceLock::new();
+    FIRST_PARTY
+        .get_or_init(|| {
+            provider_catalog()
+                .iter()
+                .filter(|descriptor| descriptor.first_party)
+                .cloned()
+                .collect()
+        })
+        .as_slice()
+}
+
 pub fn provider_catalog() -> &'static [ProviderDescriptor] {
+    const MAGPIE_REQUIRED: &[&str] = &["base_url", "model"];
+    const MAGPIE_OPTIONAL: &[&str] = &["thinking_level_map"];
+    const MAGPIE_DEFAULTS: &[(&str, &str)] = &[
+        ("base_url", "http://127.0.0.1:3425/v1"),
+        ("model", "default"),
+    ];
+
     const CHATGPT_REQUIRED: &[&str] = &["base_url", "model"];
     const CHATGPT_OPTIONAL: &[&str] = &["account_id"];
     const CHATGPT_DEFAULTS: &[(&str, &str)] = &[
@@ -330,16 +373,17 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
     const ANTHROPIC_OPTIONAL: &[&str] = &["client_name", "user_agent"];
     const ANTHROPIC_DEFAULTS: &[(&str, &str)] = &[
         ("base_url", "https://api.anthropic.com/v1"),
-        ("model", "claude-3-5-sonnet-latest"),
+        ("model", "claude-sonnet-4-5"),
         ("client_name", ""),
         ("user_agent", ""),
     ];
 
-    const GEMINI_REQUIRED: &[&str] = &["project_id", "location", "model"];
+    const GEMINI_REQUIRED: &[&str] = &["location", "model"];
+    const GEMINI_OPTIONAL: &[&str] = &["project_id"];
     const GEMINI_DEFAULTS: &[(&str, &str)] = &[
         ("project_id", ""),
-        ("location", "us-central1"),
-        ("model", "gemini-2.0-flash"),
+        ("location", "global"),
+        ("model", "gemini-2.5-flash"),
     ];
 
     static CATALOG: std::sync::OnceLock<Vec<ProviderDescriptor>> = std::sync::OnceLock::new();
@@ -347,35 +391,26 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
         .get_or_init(|| {
             vec![
                 ProviderDescriptor {
-                    provider_id: LlmProvider::TypesafeEvaluation,
-                    display_name: "TypeSafe Choice",
+                    provider_id: LlmProvider::Magpie,
+                    display_name: "Magpie",
+                    first_party: true,
                     credential_kind: CredentialKind::SecretString,
+                    credential_optional: true,
                     supports_browser_login: false,
                     supports_device_login: false,
                     supports_secret_entry: true,
-                    supports_logout: true,
+                    supports_logout: false,
                     supports_test: true,
-                    required_settings: &["model"],
-                    optional_settings: &[],
-                    default_settings: &[("model", "jev-1.13.0")],
-                },
-                ProviderDescriptor {
-                    provider_id: LlmProvider::Chatgpt,
-                    display_name: "ChatGPT / Codex",
-                    credential_kind: CredentialKind::ManagedOauth,
-                    supports_browser_login: true,
-                    supports_device_login: true,
-                    supports_secret_entry: false,
-                    supports_logout: true,
-                    supports_test: true,
-                    required_settings: CHATGPT_REQUIRED,
-                    optional_settings: CHATGPT_OPTIONAL,
-                    default_settings: CHATGPT_DEFAULTS,
+                    required_settings: MAGPIE_REQUIRED,
+                    optional_settings: MAGPIE_OPTIONAL,
+                    default_settings: MAGPIE_DEFAULTS,
                 },
                 ProviderDescriptor {
                     provider_id: LlmProvider::OpenAiResponses,
                     display_name: "OpenAI Responses API",
+                    first_party: true,
                     credential_kind: CredentialKind::SecretString,
+                    credential_optional: false,
                     supports_browser_login: false,
                     supports_device_login: false,
                     supports_secret_entry: true,
@@ -386,9 +421,71 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
                     default_settings: OPENAI_DEFAULTS,
                 },
                 ProviderDescriptor {
+                    provider_id: LlmProvider::Chatgpt,
+                    display_name: "ChatGPT / Codex",
+                    first_party: true,
+                    credential_kind: CredentialKind::ManagedOauth,
+                    credential_optional: false,
+                    supports_browser_login: true,
+                    supports_device_login: true,
+                    supports_secret_entry: false,
+                    supports_logout: true,
+                    supports_test: true,
+                    required_settings: CHATGPT_REQUIRED,
+                    optional_settings: CHATGPT_OPTIONAL,
+                    default_settings: CHATGPT_DEFAULTS,
+                },
+                ProviderDescriptor {
+                    provider_id: LlmProvider::GoogleGeminiGenerateContent,
+                    display_name: "Google Cloud Vertex AI",
+                    first_party: true,
+                    credential_kind: CredentialKind::AmbientCloudAuth,
+                    credential_optional: true,
+                    supports_browser_login: true,
+                    supports_device_login: false,
+                    supports_secret_entry: true,
+                    supports_logout: true,
+                    supports_test: true,
+                    required_settings: GEMINI_REQUIRED,
+                    optional_settings: GEMINI_OPTIONAL,
+                    default_settings: GEMINI_DEFAULTS,
+                },
+                ProviderDescriptor {
+                    provider_id: LlmProvider::OpenRouter,
+                    display_name: "OpenRouter",
+                    first_party: true,
+                    credential_kind: CredentialKind::SecretString,
+                    credential_optional: false,
+                    supports_browser_login: true,
+                    supports_device_login: false,
+                    supports_secret_entry: true,
+                    supports_logout: false,
+                    supports_test: true,
+                    required_settings: OPENROUTER_REQUIRED,
+                    optional_settings: OPENROUTER_OPTIONAL,
+                    default_settings: OPENROUTER_DEFAULTS,
+                },
+                ProviderDescriptor {
+                    provider_id: LlmProvider::TypesafeEvaluation,
+                    display_name: "TypeSafe Choice",
+                    first_party: false,
+                    credential_kind: CredentialKind::SecretString,
+                    credential_optional: false,
+                    supports_browser_login: false,
+                    supports_device_login: false,
+                    supports_secret_entry: true,
+                    supports_logout: true,
+                    supports_test: true,
+                    required_settings: &["model"],
+                    optional_settings: &[],
+                    default_settings: &[("model", "jev-1.13.0")],
+                },
+                ProviderDescriptor {
                     provider_id: LlmProvider::OpenAiChatCompletions,
                     display_name: "OpenAI Chat Completions API",
+                    first_party: false,
                     credential_kind: CredentialKind::SecretString,
+                    credential_optional: false,
                     supports_browser_login: false,
                     supports_device_login: false,
                     supports_secret_entry: true,
@@ -401,7 +498,9 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
                 ProviderDescriptor {
                     provider_id: LlmProvider::OpenAiChatCompletionsCompatible,
                     display_name: "OpenAI Chat Completions API-compatible",
+                    first_party: false,
                     credential_kind: CredentialKind::SecretString,
+                    credential_optional: false,
                     supports_browser_login: false,
                     supports_device_login: false,
                     supports_secret_entry: true,
@@ -412,22 +511,11 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
                     default_settings: OPENAI_COMPAT_DEFAULTS,
                 },
                 ProviderDescriptor {
-                    provider_id: LlmProvider::OpenRouter,
-                    display_name: "OpenRouter",
-                    credential_kind: CredentialKind::SecretString,
-                    supports_browser_login: false,
-                    supports_device_login: false,
-                    supports_secret_entry: true,
-                    supports_logout: false,
-                    supports_test: true,
-                    required_settings: OPENROUTER_REQUIRED,
-                    optional_settings: OPENROUTER_OPTIONAL,
-                    default_settings: OPENROUTER_DEFAULTS,
-                },
-                ProviderDescriptor {
                     provider_id: LlmProvider::AnthropicMessages,
-                    display_name: "Anthropic Messages API",
+                    display_name: "Anthropic Messages API (protocol)",
+                    first_party: false,
                     credential_kind: CredentialKind::SecretString,
+                    credential_optional: false,
                     supports_browser_login: false,
                     supports_device_login: false,
                     supports_secret_entry: true,
@@ -436,19 +524,6 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
                     required_settings: ANTHROPIC_REQUIRED,
                     optional_settings: ANTHROPIC_OPTIONAL,
                     default_settings: ANTHROPIC_DEFAULTS,
-                },
-                ProviderDescriptor {
-                    provider_id: LlmProvider::GoogleGeminiGenerateContent,
-                    display_name: "Google Gemini GenerateContent API",
-                    credential_kind: CredentialKind::AmbientCloudAuth,
-                    supports_browser_login: false,
-                    supports_device_login: false,
-                    supports_secret_entry: false,
-                    supports_logout: false,
-                    supports_test: true,
-                    required_settings: GEMINI_REQUIRED,
-                    optional_settings: &[],
-                    default_settings: GEMINI_DEFAULTS,
                 },
             ]
         })
@@ -515,6 +590,21 @@ pub fn validate_profile_settings(
     if provider == LlmProvider::TypesafeEvaluation {
         alan_llm::TypesafeEvaluationClient::validate_model(&settings["model"])?;
     }
+    if provider == LlmProvider::Magpie
+        && let Some(raw_map) = settings
+            .get("thinking_level_map")
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    {
+        let parsed: serde_json::Value = serde_json::from_str(raw_map).with_context(
+            || "Provider `magpie` setting `thinking_level_map` must be a JSON object",
+        )?;
+        anyhow::ensure!(
+            alan_llm::magpie::parse_reasoning_effort_map(&parsed).is_some(),
+            "Provider `magpie` setting `thinking_level_map` must map reasoning efforts to strings or null"
+        );
+    }
     Ok(())
 }
 
@@ -565,6 +655,19 @@ fn apply_resolved_profile_metadata_to_config(
     config.reset_internal_provider_config();
     config.connection_profile = Some(resolved.profile_id.clone());
     match resolved.provider {
+        LlmProvider::Magpie => {
+            config.llm_provider = LlmProvider::Magpie;
+            config.magpie_base_url = resolved.settings["base_url"].clone();
+            config.magpie_model = resolved.settings["model"].clone();
+            config.magpie_thinking_level_map = resolved
+                .settings
+                .get("thinking_level_map")
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                .and_then(|value| alan_llm::magpie::parse_reasoning_effort_map(&value));
+        }
         LlmProvider::TypesafeEvaluation => {
             config.llm_provider = LlmProvider::TypesafeEvaluation;
             config.typesafe_model = resolved.settings.get("model").cloned().unwrap_or_default();
@@ -645,8 +748,11 @@ fn apply_resolved_profile_metadata_to_config(
         }
         LlmProvider::GoogleGeminiGenerateContent => {
             config.llm_provider = LlmProvider::GoogleGeminiGenerateContent;
-            config.google_gemini_generate_content_project_id =
-                Some(resolved.settings["project_id"].clone());
+            config.google_gemini_generate_content_project_id = resolved
+                .settings
+                .get("project_id")
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
             config.google_gemini_generate_content_location = resolved.settings["location"].clone();
             config.google_gemini_generate_content_model = resolved.settings["model"].clone();
         }
@@ -654,243 +760,5 @@ fn apply_resolved_profile_metadata_to_config(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn normalize_profile_settings_applies_defaults() {
-        let settings = BTreeMap::from([("model".to_string(), "gpt-5".to_string())]);
-        let normalized = normalize_profile_settings(LlmProvider::OpenAiResponses, &settings);
-        assert_eq!(
-            normalized.get("base_url").map(String::as_str),
-            Some("https://api.openai.com/v1")
-        );
-        assert_eq!(normalized.get("model").map(String::as_str), Some("gpt-5"));
-    }
-
-    #[test]
-    fn openrouter_descriptor_exposes_default_model_and_metadata_settings() {
-        let descriptor = ConnectionsFile::profile_descriptor(LlmProvider::OpenRouter);
-        assert_eq!(descriptor.provider_id, LlmProvider::OpenRouter);
-        assert_eq!(descriptor.credential_kind, CredentialKind::SecretString);
-        assert!(descriptor.supports_secret_entry);
-        assert!(descriptor.required_settings.contains(&"model"));
-        assert!(descriptor.optional_settings.contains(&"base_url"));
-        assert!(descriptor.optional_settings.contains(&"http_referer"));
-        assert!(descriptor.optional_settings.contains(&"x_title"));
-        assert!(descriptor.optional_settings.contains(&"app_categories"));
-
-        let normalized = normalize_profile_settings(LlmProvider::OpenRouter, &BTreeMap::new());
-        assert_eq!(
-            normalized.get("base_url").map(String::as_str),
-            Some("https://openrouter.ai/api/v1")
-        );
-        assert_eq!(
-            normalized.get("model").map(String::as_str),
-            Some("moonshotai/kimi-k2.6")
-        );
-        validate_profile_settings(LlmProvider::OpenRouter, &normalized).unwrap();
-    }
-
-    #[test]
-    fn openrouter_settings_are_not_accepted_by_generic_compatible_provider() {
-        let settings = BTreeMap::from([
-            (
-                "base_url".to_string(),
-                "https://proxy.example/v1".to_string(),
-            ),
-            ("model".to_string(), "qwen3.5-plus".to_string()),
-            ("http_referer".to_string(), "https://alan.local".to_string()),
-        ]);
-
-        let result =
-            validate_profile_settings(LlmProvider::OpenAiChatCompletionsCompatible, &settings);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("http_referer"));
-    }
-
-    #[test]
-    fn saving_metadata_preserves_open_readers_and_rejects_invalid_replacement() {
-        use std::io::Read;
-
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("connections.toml");
-        let original = ConnectionsFile::default();
-        original.save_to_path(&path).unwrap();
-        let mut existing_reader = std::fs::File::open(&path).unwrap();
-        let updated = ConnectionsFile {
-            default_profile: Some("updated".into()),
-            ..original.clone()
-        };
-        updated.save_to_path(&path).unwrap();
-        let mut previous_bytes = String::new();
-        existing_reader.read_to_string(&mut previous_bytes).unwrap();
-        assert_eq!(
-            toml::from_str::<ConnectionsFile>(&previous_bytes).unwrap(),
-            original
-        );
-        assert_eq!(ConnectionsFile::load_from_path(&path).unwrap().0, updated);
-        let invalid = ConnectionsFile {
-            version: CONNECTIONS_VERSION + 1,
-            ..updated.clone()
-        };
-        assert!(invalid.save_to_path(&path).is_err());
-        assert_eq!(ConnectionsFile::load_from_path(&path).unwrap().0, updated);
-        let names = std::fs::read_dir(directory.path())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(
-            names,
-            ["connections.toml", "connections.toml.lock"]
-                .map(std::ffi::OsString::from)
-                .into()
-        );
-    }
-
-    #[test]
-    fn dev_connection_store_does_not_fall_back_to_stable_store() {
-        let temp = TempDir::new().unwrap();
-        let stable_path = temp.path().join("system-store/stable/connections.toml");
-        let dev_path = temp.path().join("system-store/dev/connections.toml");
-        let stable_connections = ConnectionsFile {
-            default_profile: Some("stable-main".to_string()),
-            profiles: BTreeMap::from([(
-                "stable-main".to_string(),
-                ConnectionProfile {
-                    provider: LlmProvider::OpenAiResponses,
-                    label: Some("Stable".to_string()),
-                    credential_id: Some("stable-main".to_string()),
-                    created_at: default_profile_timestamp(),
-                    updated_at: default_profile_timestamp(),
-                    source: default_profile_source(),
-                    settings: BTreeMap::new(),
-                },
-            )]),
-            ..ConnectionsFile::default()
-        };
-        stable_connections
-            .save_to_path(&stable_path)
-            .expect("save stable connections");
-
-        let (dev_connections, loaded_path) =
-            ConnectionsFile::load_from_path(&dev_path).expect("load dev connections");
-
-        assert_eq!(loaded_path.as_deref(), Some(dev_path.as_path()));
-        assert_eq!(dev_connections.default_profile, None);
-        assert!(dev_connections.profiles.is_empty());
-    }
-
-    #[test]
-    fn resolve_profile_uses_default_profile() {
-        let file = ConnectionsFile {
-            default_profile: Some("chatgpt-main".to_string()),
-            credentials: BTreeMap::from([(
-                "chatgpt".to_string(),
-                ConnectionCredential {
-                    kind: CredentialKind::ManagedOauth,
-                    provider_family: LlmProvider::Chatgpt,
-                    label: "ChatGPT login".to_string(),
-                    backend: CHATGPT_AUTH_BACKEND.to_string(),
-                },
-            )]),
-            profiles: BTreeMap::from([(
-                "chatgpt-main".to_string(),
-                ConnectionProfile {
-                    provider: LlmProvider::Chatgpt,
-                    label: Some("ChatGPT".to_string()),
-                    credential_id: Some("chatgpt".to_string()),
-                    created_at: default_profile_timestamp(),
-                    updated_at: default_profile_timestamp(),
-                    source: default_profile_source(),
-                    settings: BTreeMap::new(),
-                },
-            )]),
-            ..ConnectionsFile::default()
-        };
-
-        let resolved = file.resolve_profile(None).unwrap();
-        assert_eq!(resolved.profile_id, "chatgpt-main");
-        assert_eq!(
-            resolved.settings.get("model").map(String::as_str),
-            Some("gpt-5.3-codex")
-        );
-    }
-
-    #[test]
-    fn service_owned_profile_metadata_does_not_load_secret_material() {
-        let file = ConnectionsFile {
-            credentials: BTreeMap::from([(
-                "openrouter-main".to_string(),
-                ConnectionCredential {
-                    kind: CredentialKind::SecretString,
-                    provider_family: LlmProvider::OpenRouter,
-                    label: "OpenRouter credential".to_string(),
-                    backend: SECRET_STORE_BACKEND.to_string(),
-                },
-            )]),
-            profiles: BTreeMap::from([(
-                "openrouter-main".to_string(),
-                ConnectionProfile {
-                    provider: LlmProvider::OpenRouter,
-                    label: None,
-                    credential_id: Some("openrouter-main".to_string()),
-                    created_at: default_profile_timestamp(),
-                    updated_at: default_profile_timestamp(),
-                    source: default_profile_source(),
-                    settings: BTreeMap::new(),
-                },
-            )]),
-            ..ConnectionsFile::default()
-        };
-        let mut config = Config::default();
-
-        file.apply_profile_metadata_to_config(Some("openrouter-main"), &mut config)
-            .unwrap();
-
-        assert_eq!(config.llm_provider, LlmProvider::OpenRouter);
-        assert_eq!(
-            config.connection_profile.as_deref(),
-            Some("openrouter-main")
-        );
-        assert_eq!(config.openrouter_api_key, None);
-    }
-    #[test]
-    fn metadata_lock_excludes_another_process() {
-        const ENV: &str = "ALAN_TEST_CONNECTION_LOCK_PATH";
-        if let Some(path) = std::env::var_os(ENV) {
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(path)
-                .unwrap();
-            assert!(matches!(
-                file.try_lock(),
-                Err(std::fs::TryLockError::WouldBlock)
-            ));
-            return;
-        }
-        let temp = TempDir::new().unwrap();
-        let path = temp.path().join("connections.toml");
-        let lock = lock_metadata(&path).unwrap();
-        let lock_path = temp.path().join("connections.toml.lock");
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "connection_profile::tests::metadata_lock_excludes_another_process",
-            ])
-            .env(ENV, &lock_path)
-            .stdout(std::process::Stdio::null())
-            .status()
-            .unwrap();
-        assert!(status.success());
-        drop(lock);
-        let released = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(lock_path)
-            .unwrap();
-        released.try_lock().unwrap();
-    }
-}
+#[path = "connection_profile_tests.rs"]
+mod tests;

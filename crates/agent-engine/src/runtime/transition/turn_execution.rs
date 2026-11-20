@@ -1,13 +1,13 @@
 //! Generation and Tool-loop execution owned by the accepted-submission transition.
 
-use alan_agent_protocol::{CompactionOutcome, Event};
+use alan_agent_protocol::Event;
 use anyhow::{Context, Result};
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::llm::build_generation_request;
-use crate::runtime::compaction::{CompactionRequest, maybe_compact_context_with_cancel};
+use crate::runtime::compaction::CompactionRequest;
 use crate::runtime::loop_guard::ToolLoopGuard;
 use crate::runtime::response_guardrails::{
     AssistantDraft, GuardrailDecision, ResponseGuardrailContext, ResponseGuardrails,
@@ -16,8 +16,7 @@ use crate::runtime::tool_batch::{ToolBatchOrchestratorOutcome, ToolOrchestratorI
 use crate::runtime::turn_input::TurnInputBroker;
 use crate::runtime::turn_memory::{FinalizeTurnMemoryRequest, finalize_turn_memory_best_effort};
 use crate::runtime::turn_support::{
-    check_turn_cancelled, emit_streaming_chunks, emit_task_completed_success, emit_thinking_chunks,
-    normalize_tool_calls,
+    check_turn_cancelled, emit_task_completed_success, normalize_tool_calls,
 };
 use crate::runtime::virtual_tools::virtual_tool_definitions;
 
@@ -27,25 +26,23 @@ use super::{
     orchestrate_tool_batch_internal, turn_memory_runtime,
 };
 
+mod accepted_output;
+mod live_stream;
+mod mid_turn_compaction;
 mod namespace_generation;
+mod response_schema;
+mod usage_surface;
 
+#[cfg(test)]
+pub(super) use alan_agent_protocol::CompactionOutcome;
+pub use response_schema::validate_response_schema;
+
+use live_stream::{LiveTurnStream, guardrail_probe};
+use mid_turn_compaction::{
+    COMPACTION_TIMEOUT_SECS, maybe_compact_context_with_turn_timeout,
+    maybe_compact_mid_turn_if_needed, should_skip_auto_compaction_for_responses_continuation,
+};
 use namespace_generation::NamespaceTurnGeneration;
-
-const COMPACTION_TIMEOUT_SECS: u64 = 30;
-
-struct TimedCompactionResult {
-    result: Result<CompactionOutcome>,
-    timed_out: bool,
-}
-
-fn append_system_instruction(request: &mut crate::llm::GenerationRequest, instruction: &str) {
-    if let Some(system_prompt) = &mut request.system_prompt {
-        system_prompt.push_str("\n\n");
-        system_prompt.push_str(instruction);
-    } else {
-        request.system_prompt = Some(instruction.to_string());
-    }
-}
 
 fn process_directory_instruction(execution: &NamespaceToolExecution) -> Option<String> {
     let cwd = execution.default_cwd()?;
@@ -89,6 +86,7 @@ fn estimate_pending_turn_prompt_tokens(
 
 async fn turn_tool_definitions(
     include_runtime_delegated_tool: bool,
+    include_subagent_spawn: bool,
     tool_execution: &NamespaceToolExecution,
 ) -> anyhow::Result<(
     Vec<crate::runtime::ToolPackageManifest>,
@@ -99,7 +97,10 @@ async fn turn_tool_definitions(
         .iter()
         .map(|package| package.model_definition())
         .collect::<Vec<_>>();
-    tools.extend(virtual_tool_definitions(include_runtime_delegated_tool));
+    tools.extend(virtual_tool_definitions(
+        include_runtime_delegated_tool,
+        include_subagent_spawn,
+    ));
     Ok((tool_packages, tools))
 }
 
@@ -116,50 +117,6 @@ fn generation_error_message(error: &anyhow::Error) -> String {
         return format!("Namespace LLM request failed: {cause}");
     }
     format!("Namespace LLM request failed: {error}")
-}
-
-fn should_skip_auto_compaction_for_responses_continuation(_state: &mut RuntimeLoopState) -> bool {
-    false
-}
-
-async fn maybe_compact_context_with_turn_timeout<E, F>(
-    state: &mut RuntimeLoopState,
-    emit: &mut E,
-    request: &CompactionRequest,
-    parent_cancel: &CancellationToken,
-    timeout: std::time::Duration,
-) -> TimedCompactionResult
-where
-    E: FnMut(Event) -> F,
-    F: std::future::Future<Output = ()>,
-{
-    let compaction_cancel = CancellationToken::new();
-    let timeout = tokio::time::sleep(timeout);
-    tokio::pin!(timeout);
-    let runtime = compaction_runtime(state);
-    let compaction = maybe_compact_context_with_cancel(runtime, emit, request, &compaction_cancel);
-    tokio::pin!(compaction);
-
-    tokio::select! {
-        result = &mut compaction => TimedCompactionResult {
-            result,
-            timed_out: false,
-        },
-        _ = parent_cancel.cancelled() => {
-            compaction_cancel.cancel();
-            TimedCompactionResult {
-                result: compaction.await,
-                timed_out: false,
-            }
-        }
-        _ = &mut timeout => {
-            compaction_cancel.cancel();
-            TimedCompactionResult {
-                result: compaction.await,
-                timed_out: true,
-            }
-        }
-    }
 }
 
 fn build_domain_prompt_with_skills(
@@ -220,6 +177,11 @@ where
         crate::runtime::ui_surfaces::turn_started(&state.agent_files())
             .await
             .context("write turn-start UI state")?;
+        usage_surface::begin_turn(
+            &state.agent_files(),
+            u64::from(state.runtime_config.context_window_tokens),
+        )
+        .await;
         emit(Event::TurnStarted {}).await;
     } else {
         crate::runtime::ui_surfaces::resumed(&state.agent_files())
@@ -252,10 +214,17 @@ where
             )
             .await?;
     }
+    let tool_execution = state.tool_execution();
     let turn_recall_bundle = if state.core_config.memory.enabled {
-        crate::runtime::memory_recall::build_turn_recall_bundle(
+        let project_cwd = tool_execution
+            .default_cwd()
+            .map(|p| p.to_string_lossy().into_owned());
+        let memory_bootstrap_section = state.prompt_cache.current_memory_bootstrap_section();
+        crate::runtime::memory_recall::build_turn_recall_bundle_for_turn(
             state.core_config.memory.store_dir.as_deref(),
             user_input_for_skills.as_deref(),
+            project_cwd.as_deref(),
+            memory_bootstrap_section.as_deref(),
         )
     } else {
         None
@@ -265,7 +234,6 @@ where
     let generation = NamespaceTurnGeneration::load(&llm_generation).await;
     generation.ensure_callable()?;
 
-    let tool_execution = state.tool_execution();
     let initial_directory_instruction = process_directory_instruction(&tool_execution);
 
     if !should_skip_auto_compaction_for_responses_continuation(state) {
@@ -275,13 +243,13 @@ where
                 turn_recall_bundle.as_deref(),
                 initial_directory_instruction.as_deref(),
             ));
-        let compaction = maybe_compact_context_with_turn_timeout(
+        let compaction = Box::pin(maybe_compact_context_with_turn_timeout(
             state,
             emit,
             &compaction_request,
             cancel,
             tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
-        )
+        ))
         .await;
         match compaction.result {
             Ok(_) => {}
@@ -346,11 +314,17 @@ where
         .map(|skill| skill.metadata.id.clone())
         .collect::<Vec<_>>();
     let _domain_prompt = prompt_build.domain_prompt;
-    let system_prompt = prompt_build.system_prompt;
+    let base_system_prompt = prompt_build.system_prompt;
 
     let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation();
-    let (tool_packages, tools) =
-        turn_tool_definitions(include_runtime_delegated_tool, &tool_execution).await?;
+    let include_subagent_tool =
+        include_runtime_delegated_tool && state.runtime_config.ad_hoc_subagent_spawn_enabled;
+    let (tool_packages, tools) = turn_tool_definitions(
+        include_runtime_delegated_tool,
+        include_subagent_tool,
+        &tool_execution,
+    )
+    .await?;
     let tool_names = tools
         .iter()
         .map(|tool| tool.name.clone())
@@ -372,10 +346,19 @@ where
             state.machine.active_turn_request_control_intent(),
         )?
     };
+    let effective_provider = captured
+        .as_ref()
+        .map(|(_, callable)| callable.identity.provider.as_str())
+        .unwrap_or_else(|| state.core_config.llm_provider.as_str());
     let model = captured
         .as_ref()
         .map(|(_, callable)| callable.identity.model.clone())
         .unwrap_or_else(|| state.core_config.effective_model().to_string());
+    let system_prompt = crate::prompts::format_system_prompt_for_model(
+        &base_system_prompt,
+        effective_provider,
+        &model,
+    );
     let memory_enabled = state.core_config.memory.enabled;
     let context_items = state.machine.context_items().to_vec();
     let context_delta = state.machine.last_context_delta().clone();
@@ -398,6 +381,9 @@ where
     let mut tool_loop_guard =
         ToolLoopGuard::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
     let mut response_guardrails = ResponseGuardrails::default();
+    // Mirrors the single regeneration `ResponseGuardrails::default()` allows per turn.
+    let mut guardrail_regenerated = false;
+    let mut schema_retried = false;
     let mut pending_guardrail_instruction: Option<String> = None;
     loop {
         if check_turn_cancelled(
@@ -434,7 +420,22 @@ where
                 ));
         let context_revision = prompt_view.reference_context.revision;
         let messages = prompt_view.messages;
-        let llm_messages = crate::llm::project_messages(&messages, true);
+        let mut llm_messages = crate::llm::project_messages(&messages, true);
+        let mut trailing_context_parts = Vec::new();
+        if let Some(instruction) = directory_instruction.as_deref() {
+            trailing_context_parts.push(instruction);
+        }
+        if let Some(recall_bundle) = turn_recall_bundle.as_deref() {
+            trailing_context_parts.push(recall_bundle);
+        }
+        if let Some(instruction) = pending_guardrail_instruction.as_deref() {
+            trailing_context_parts.push(instruction);
+        }
+        if !trailing_context_parts.is_empty() {
+            llm_messages.push(crate::llm::Message::context(
+                trailing_context_parts.join("\n\n"),
+            ));
+        }
         let llm_tools: Vec<crate::llm::ToolDefinition> = tools
             .iter()
             .map(|t| {
@@ -443,6 +444,11 @@ where
             })
             .collect();
 
+        let active_response_schema = state
+            .machine
+            .active_turn_response_schema()
+            .cloned()
+            .or_else(|| state.runtime_config.response_schema.clone());
         let mut request = build_generation_request(
             Some(system_prompt.clone()),
             llm_messages,
@@ -450,17 +456,18 @@ where
             Some(state.runtime_config.temperature),
             Some(state.runtime_config.max_tokens as i32),
         );
-        if let Some(instruction) = directory_instruction.as_deref() {
-            append_system_instruction(&mut request, instruction);
-        }
-        if let Some(recall_bundle) = turn_recall_bundle.as_deref() {
-            append_system_instruction(&mut request, recall_bundle);
-        }
-        if let Some(instruction) = pending_guardrail_instruction.as_deref() {
-            append_system_instruction(&mut request, instruction);
-        }
+        request.response_schema = active_response_schema.clone();
         let request_controls = turn_request_controls.clone();
-        request = request.with_reasoning_controls(request_controls.reasoning);
+        let session_key = state
+            .machine
+            .rollout_path()
+            .and_then(|path| path.file_stem())
+            .and_then(|stem| stem.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| state.process_path());
+        request = request
+            .with_reasoning_controls(request_controls.reasoning)
+            .with_session_key(session_key);
 
         let request_start = Instant::now();
         let reasoning_effort_log = request_controls
@@ -485,12 +492,28 @@ where
             debug!("Streaming mode requested; generation uses request/response file semantics");
         }
         let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
-        let (response, live_text_chunks) = match generation
-            .generate(&llm_generation, request, llm_request_timeout_secs, cancel)
-            .await
+        let guardrail_context = Arc::new(ResponseGuardrailContext::from_machine(
+            &state.machine,
+            &tool_execution,
+            &tool_packages,
+        ));
+        let live = LiveTurnStream::new(
+            agent_files.clone(),
+            guardrail_probe(Arc::clone(&guardrail_context), !guardrail_regenerated),
+        );
+        let response = match Box::pin(generation.generate(
+            &llm_generation,
+            request,
+            llm_request_timeout_secs,
+            cancel,
+            &live,
+            emit,
+        ))
+        .await
         {
             Ok(response) => response,
             Err(error) => {
+                accepted_output::abandon(&live, emit).await;
                 if error.is::<crate::agent_machine::task_budget::Exhausted>()
                     || error.is::<super::NamespaceOperationUncertainty>()
                 {
@@ -518,6 +541,7 @@ where
                 return Err(anyhow::anyhow!(message));
             }
         };
+        live.check()?;
 
         if let Some(usage) = response.usage {
             info!(
@@ -527,6 +551,12 @@ where
                 reasoning_tokens = ?usage.reasoning_tokens,
                 "LLM usage"
             );
+            usage_surface::record(
+                &agent_files,
+                &usage,
+                u64::from(state.runtime_config.context_window_tokens),
+            )
+            .await;
         }
 
         for warning in &response.warnings {
@@ -541,19 +571,32 @@ where
 
         let tool_calls = normalize_tool_calls(response.tool_calls);
 
-        let tool_execution = state.tool_execution();
-        let guardrail_context =
-            ResponseGuardrailContext::from_machine(&state.machine, &tool_execution, &tool_packages);
         let guardrail_draft = AssistantDraft::new(&response.content, !tool_calls.is_empty());
         match response_guardrails.evaluate(&guardrail_context, &guardrail_draft) {
             GuardrailDecision::Accept => {
                 pending_guardrail_instruction = None;
             }
             GuardrailDecision::Recover {
+                rule_id, reason, ..
+            } if live.text_visible() => {
+                // The text already reached `io/output`, which cannot be retracted.
+                guardrail_regenerated = true;
+                pending_guardrail_instruction = None;
+                warn!(rule_id, reason = %reason, "Response guardrail fired after output streamed");
+                let message = format!(
+                    "Guardrail ({rule_id}): {reason}. The reply had already started streaming, so it was not retried."
+                );
+                crate::runtime::ui_surfaces::warning(&state.agent_files(), message.clone())
+                    .await
+                    .context("write guardrail warning UI state")?;
+                emit(Event::Warning { message }).await;
+            }
+            GuardrailDecision::Recover {
                 rule_id,
                 reason,
                 instruction,
             } => {
+                guardrail_regenerated = true;
                 warn!(
                     rule_id,
                     reason = %reason,
@@ -561,12 +604,13 @@ where
                 );
                 let message =
                     format!("Guardrail recovered ({rule_id}): {reason}. Retrying before output.");
+                accepted_output::abandon(&live, emit).await;
                 crate::runtime::ui_surfaces::warning(&state.agent_files(), message.clone())
                     .await
                     .context("write guardrail warning UI state")?;
                 emit(Event::Warning { message }).await;
                 pending_guardrail_instruction = Some(instruction);
-                maybe_compact_mid_turn_if_needed(
+                Box::pin(maybe_compact_mid_turn_if_needed(
                     state,
                     emit,
                     cancel,
@@ -575,7 +619,7 @@ where
                         pending_guardrail_instruction.as_deref(),
                         directory_instruction.as_deref(),
                     ),
-                )
+                ))
                 .await?;
                 if check_turn_cancelled(
                     &mut state.machine,
@@ -592,33 +636,28 @@ where
             }
         }
 
-        if let Some(ref thinking) = response.thinking
-            && !thinking.is_empty()
+        if response_schema::enforce_or_recover(
+            active_response_schema.as_ref(),
+            !tool_calls.is_empty(),
+            &response.content,
+            &live,
+            &mut pending_guardrail_instruction,
+            &mut schema_retried,
+            emit,
+        )
+        .await?
         {
-            crate::runtime::ui_surfaces::thinking(&state.agent_files(), thinking)
-                .await
-                .context("write thinking UI state")?;
-            emit_thinking_chunks(emit, thinking).await;
+            continue;
         }
 
-        if !response.content.is_empty() {
-            if live_text_chunks.is_empty() {
-                emit_streaming_chunks(emit, &response.content).await;
-            } else {
-                for chunk in live_text_chunks {
-                    emit(Event::TextDelta {
-                        chunk,
-                        is_final: false,
-                    })
-                    .await;
-                }
-                emit(Event::TextDelta {
-                    chunk: String::new(),
-                    is_final: true,
-                })
-                .await;
-            }
-        }
+        let streamed_live = accepted_output::publish_accepted(
+            &live,
+            &agent_files,
+            &response.content,
+            response.thinking.as_deref(),
+            emit,
+        )
+        .await?;
 
         let assistant_message_persisted = if !tool_calls.is_empty() {
             let machine_tool_calls: Vec<crate::tape::ToolRequest> = tool_calls
@@ -658,10 +697,12 @@ where
         };
 
         if assistant_message_persisted && !response.content.is_empty() {
-            agent_files
-                .write_assistant_output(&response.content)
-                .await
-                .context("write namespace assistant output")?;
+            if !streamed_live {
+                agent_files
+                    .write_assistant_output(&response.content)
+                    .await
+                    .context("write namespace assistant output")?;
+            }
             writer
                 .append_record(
                     "assistant",
@@ -674,7 +715,7 @@ where
         }
 
         if !tool_calls.is_empty() {
-            match orchestrate_tool_batch(
+            match Box::pin(orchestrate_tool_batch(
                 &mut tool_loop_guard,
                 state,
                 &tool_calls,
@@ -685,11 +726,11 @@ where
                 },
                 writer,
                 emit,
-            )
+            ))
             .await?
             {
                 ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
-                    maybe_compact_mid_turn_if_needed(
+                    Box::pin(maybe_compact_mid_turn_if_needed(
                         state,
                         emit,
                         cancel,
@@ -698,7 +739,7 @@ where
                             pending_guardrail_instruction.as_deref(),
                             process_directory_instruction(&tool_execution).as_deref(),
                         ),
-                    )
+                    ))
                     .await?;
                     if check_turn_cancelled(
                         &mut state.machine,
@@ -822,64 +863,6 @@ where
         emit_task_completed_success(emit, "Task completed").await?;
         return Ok(TurnExecutionOutcome::Finished);
     }
-}
-
-async fn maybe_compact_mid_turn_if_needed<E, F>(
-    state: &mut RuntimeLoopState,
-    emit: &mut E,
-    cancel: &CancellationToken,
-    additional_prompt_tokens: usize,
-) -> Result<()>
-where
-    E: FnMut(Event) -> F,
-    F: std::future::Future<Output = ()>,
-{
-    if should_skip_auto_compaction_for_responses_continuation(state) {
-        return Ok(());
-    }
-
-    let estimated_prompt_tokens = state
-        .machine
-        .estimated_prompt_tokens()
-        .saturating_add(additional_prompt_tokens);
-    let context_window_tokens = state.runtime_config.context_window_tokens as usize;
-    if !state
-        .machine
-        .can_auto_mid_turn_compact(estimated_prompt_tokens, context_window_tokens)
-    {
-        return Ok(());
-    }
-
-    let compaction_request = CompactionRequest::automatic_mid_turn()
-        .with_additional_prompt_tokens(additional_prompt_tokens);
-    let compaction = maybe_compact_context_with_turn_timeout(
-        state,
-        emit,
-        &compaction_request,
-        cancel,
-        tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
-    )
-    .await;
-    match compaction.result {
-        Ok(CompactionOutcome::Applied(outcome)) => {
-            state
-                .machine
-                .record_auto_mid_turn_compaction(outcome.output_prompt_tokens);
-        }
-        Ok(CompactionOutcome::Skipped(_)) => {}
-        Ok(CompactionOutcome::Failed(_)) => {}
-        Err(e) if compaction.timed_out => {
-            debug!(error = %e, "Mid-turn context compaction stopped after timeout cancellation");
-        }
-        Err(e) => {
-            warn!(error = %e, "Mid-turn context compaction failed");
-        }
-    }
-    if compaction.timed_out {
-        warn!("Mid-turn context compaction timeout - continuing without compaction");
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

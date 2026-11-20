@@ -435,7 +435,7 @@ pub(super) fn request_mount_tool_definition() -> ToolDefinition {
             "properties": {
                 "namespace_path": {
                     "type": "string",
-                    "description": "Absolute Alan OS namespace path under /mnt/<name>, without '.', '..', or empty path components."
+                    "description": "Absolute alan9 namespace path under /mnt/<name>, without '.', '..', or empty path components."
                 },
                 "access": {
                     "type": "string",

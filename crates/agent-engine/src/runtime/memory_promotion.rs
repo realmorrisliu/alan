@@ -18,6 +18,7 @@ use crate::prompts::{
     MEMORY_INBOX_DIRNAME, MEMORY_PROMOTION_PROMPT, MEMORY_STORE_FILENAME, MEMORY_TOPICS_DIRNAME,
     MEMORY_USER_FILENAME, ensure_memory_store_layout_at,
 };
+use crate::redact_secret_tokens;
 use crate::tape::Message;
 
 use super::transition::NamespaceGeneration;
@@ -141,9 +142,12 @@ pub(crate) async fn stage_inbox_entry(
             updated_at: now.to_rfc3339(),
             source_processes: dedup_strings(draft.source_processes),
         },
-        observation: normalize_inline_text(&draft.observation),
-        evidence: normalize_items(draft.evidence),
-        promotion_rationale: draft.promotion_rationale.trim().to_string(),
+        observation: redact_secret_tokens(&normalize_inline_text(&draft.observation)),
+        evidence: normalize_items(draft.evidence)
+            .into_iter()
+            .map(|item| redact_secret_tokens(&item))
+            .collect(),
+        promotion_rationale: redact_secret_tokens(draft.promotion_rationale.trim()),
     };
 
     write_text_file(&path, &render_inbox_entry(&document)).await?;
@@ -197,7 +201,7 @@ pub(crate) async fn promote_inbox_entry(
     }
     let promoted_from = format_relative_memory_path(memory_dir, inbox_path);
     let promoted_stamp = now.format("%F").to_string();
-    let promoted_observation = normalize_inline_text(&document.observation);
+    let promoted_observation = redact_secret_tokens(&normalize_inline_text(&document.observation));
     if promoted_observation.is_empty() {
         bail!(
             "inbox entry observation was empty after normalization: {}",
@@ -205,6 +209,12 @@ pub(crate) async fn promote_inbox_entry(
         );
     }
     document.observation = promoted_observation.clone();
+    document.evidence = document
+        .evidence
+        .into_iter()
+        .map(|item| redact_secret_tokens(&item))
+        .collect();
+    document.promotion_rationale = redact_secret_tokens(&document.promotion_rationale);
     let promoted_line = format!(
         "- [{}] {} (promoted from {})",
         promoted_stamp, promoted_observation, promoted_from
@@ -214,11 +224,11 @@ pub(crate) async fn promote_inbox_entry(
         MEMORY_USER_FILENAME | MEMORY_STORE_FILENAME => {
             let existing = read_text_file_or_default(&target_path).await?;
             if !contains_promoted_observation(&existing, &document.observation) {
-                let updated = append_markdown_section_item(
+                let updated = redact_secret_tokens(&append_markdown_section_item(
                     &existing,
                     DEFAULT_PROMOTED_FACTS_HEADER,
                     &promoted_line,
-                );
+                ));
                 write_text_file(&target_path, &updated).await?;
             }
         }
@@ -250,7 +260,8 @@ pub(crate) async fn promote_inbox_entry(
                     &format!("- Source inbox entry: {promoted_from}"),
                 );
             }
-            write_text_file(&target_path, &topic).await?;
+            let scrubbed_topic = redact_secret_tokens(&topic);
+            write_text_file(&target_path, &scrubbed_topic).await?;
 
             let memory_path = memory_dir.join(MEMORY_STORE_FILENAME);
             let memory_content = read_text_file_or_default(&memory_path).await?;
@@ -259,8 +270,11 @@ pub(crate) async fn promote_inbox_entry(
                 topic_slug_from_target(target)?,
                 topic_slug_from_target(target)?
             );
-            let updated_memory =
-                append_markdown_section_item(&memory_content, "## Topic Index", &topic_index_line);
+            let updated_memory = redact_secret_tokens(&append_markdown_section_item(
+                &memory_content,
+                "## Topic Index",
+                &topic_index_line,
+            ));
             write_text_file(&memory_path, &updated_memory).await?;
         }
         other => bail!("unsupported inbox promotion target: {other}"),

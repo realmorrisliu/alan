@@ -18,7 +18,7 @@ durable contract.
 - [alan9 system naming decision](./adr/0057-name-the-agent-operating-system-alan9.md)
 - [Unified command and Agent interaction (accepted direction)](./adr/0058-unify-command-and-agent-interaction.md)
 - [Terminal actions without role labels (implemented)](./adr/0059-present-terminal-actions-without-role-labels.md)
-- [Terminal-host product decision](./adr/0054-retire-desktop-client-prefer-terminal-hosts.md)
+- [Terminal product decision (standard terminals, amended by ADR-0061)](./adr/0054-retire-desktop-client-prefer-terminal-hosts.md)
 - [Mixed Agent Machine direction](./adr/0055-agent-machine-composes-typed-capabilities.md)
 - [Architecture](./architecture.md)
 - [Current Governance Contract](./governance_current_contract.md)
@@ -28,6 +28,7 @@ durable contract.
 ## Accepted Next Delivery
 
 - [Explicit delegation, approval and isolation decision](./adr/0060-explicit-delegation-separates-approval-and-isolation.md)
+- [Terminal-native Alan, OS-boundary security, Quartermaster hub and first-party providers](./adr/0061-terminal-native-os-boundary-quartermaster-and-first-party-providers.md)
 - [Personal daily-use roadmap](../openspec/changes/qualify-personal-daily-development/roadmap.md)
 - [Document ownership and closure map](../openspec/changes/qualify-personal-daily-development/document-map.md)
 
