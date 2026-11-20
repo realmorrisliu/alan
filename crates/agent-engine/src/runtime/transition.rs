@@ -477,7 +477,7 @@ where
         let operation_emit = &mut *emit;
         let result = budget
             .run(inputs.cancel, |stop| async move {
-                orchestrate_tool_call_inner(
+                Box::pin(orchestrate_tool_call_inner(
                     loop_guard,
                     operation_state,
                     tool_call,
@@ -491,7 +491,7 @@ where
                     ),
                     inputs.cancel,
                     operation_emit,
-                )
+                ))
                 .await
             })
             .await;
@@ -514,7 +514,7 @@ where
         }
         result
     } else {
-        orchestrate_tool_call_inner(
+        Box::pin(orchestrate_tool_call_inner(
             loop_guard,
             state,
             tool_call,
@@ -525,7 +525,7 @@ where
             ),
             inputs.cancel,
             emit,
-        )
+        ))
         .await
     }
 }
@@ -570,7 +570,7 @@ where
         return Ok(ToolOrchestratorOutcome::EndTurn);
     }
 
-    match dispatch_virtual_tool_call(
+    match Box::pin(dispatch_virtual_tool_call(
         state,
         tool_call,
         &tool_arguments,
@@ -578,7 +578,7 @@ where
         task_cancel,
         allow_approved_tool_escalation_execution,
         emit,
-    )
+    ))
     .await?
     {
         VirtualToolOutcome::NotVirtual => {}
@@ -614,18 +614,23 @@ where
         allow_approved_tool_escalation_execution,
         cancel: inputs.cancel,
     };
-    let tool_audit =
-        match authorize_tool_call(authorization_runtime, authorization_request, emit).await? {
-            ToolAuthorizationOutcome::Authorized { audit } => Some(audit),
-            ToolAuthorizationOutcome::Completed => {
-                return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-                    refresh_context: false,
-                });
-            }
-            ToolAuthorizationOutcome::PauseTurn => {
-                return Ok(ToolOrchestratorOutcome::PauseTurn);
-            }
-        };
+    let tool_audit = match Box::pin(authorize_tool_call(
+        authorization_runtime,
+        authorization_request,
+        emit,
+    ))
+    .await?
+    {
+        ToolAuthorizationOutcome::Authorized { audit } => Some(audit),
+        ToolAuthorizationOutcome::Completed => {
+            return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+                refresh_context: false,
+            });
+        }
+        ToolAuthorizationOutcome::PauseTurn => {
+            return Ok(ToolOrchestratorOutcome::PauseTurn);
+        }
+    };
 
     let execution_runtime = tool_execution_runtime(state);
     let execution_request = ToolExecutionRequest {
@@ -645,7 +650,13 @@ where
         allow_approved_unknown_effect_execution,
         cancel: inputs.cancel,
     };
-    match execute_allowed_tool_call(execution_runtime, execution_request, emit).await? {
+    match Box::pin(execute_allowed_tool_call(
+        execution_runtime,
+        execution_request,
+        emit,
+    ))
+    .await?
+    {
         ToolExecutionOutcome::Completed => Ok(ToolOrchestratorOutcome::ContinueToolBatch {
             refresh_context: false,
         }),
@@ -673,7 +684,7 @@ where
 
     let mut idx = 0;
     while idx < tool_calls.len() {
-        if let Some(step) = parallel_subagents::try_run_parallel_prefix(
+        if let Some(step) = Box::pin(parallel_subagents::try_run_parallel_prefix(
             loop_guard,
             state,
             tool_calls,
@@ -681,7 +692,7 @@ where
             approved_call_indices,
             inputs,
             emit,
-        )
+        ))
         .await?
         {
             match step {
@@ -721,7 +732,7 @@ where
             approved_unknown_effect_call_index.is_some_and(|approved_index| approved_index == idx);
         let allow_approved_tool_escalation_execution =
             approved_tool_escalation_call_index.is_some_and(|approved_index| approved_index == idx);
-        let result = orchestrate_tool_call(
+        let result = Box::pin(orchestrate_tool_call(
             loop_guard,
             state,
             tool_call,
@@ -729,7 +740,7 @@ where
             allow_approved_unknown_effect_execution,
             allow_approved_tool_escalation_execution,
             emit,
-        )
+        ))
         .await;
         let outcome = match result {
             Err(error) if error.is::<crate::agent_machine::task_budget::InheritedExhaustion>() => {

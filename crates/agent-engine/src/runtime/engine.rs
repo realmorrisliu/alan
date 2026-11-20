@@ -395,7 +395,7 @@ fn spawn_with_prepared_runtime_environment(
             }
         };
         let initial_reasoning_effort = machine_request_controls.reasoning_effort();
-        let startup = match initialize_agent_machine(
+        let startup = match Box::pin(initialize_agent_machine(
             AgentMachineLaunchContext {
                 process_path: &process_path,
                 agent_path: &agent_path,
@@ -406,7 +406,7 @@ fn spawn_with_prepared_runtime_environment(
             runtime_config.durability_required,
             Some(rollout_cwd.as_path()),
             machine_request_controls,
-        )
+        ))
         .await
         {
             Ok(startup) => startup,
@@ -763,7 +763,7 @@ fn spawn_with_prepared_runtime_environment(
                     heartbeat_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
                     let monitor_stop = CancellationToken::new();
-                    let observer = async {
+                    let observer = Box::pin(async {
                         loop {
                             queues.publish_directory_actions(&namespace_control).await;
                             queues.observe_models().await;
@@ -823,7 +823,7 @@ fn spawn_with_prepared_runtime_environment(
                                 }
                             }
                         }
-                    };
+                    });
                     let outcome =
                         monitor::drive_with_monitor(submission_fut, observer, &monitor_stop).await;
                     let terminal_ui_result = match &outcome.result {
@@ -883,11 +883,12 @@ fn spawn_with_prepared_runtime_environment(
                     let mut requeue_if_cancelled = false;
                     let cancel = CancellationToken::new();
                     let namespace_control = state.agent_files();
-                    let action_fut =
-                        run_deferred_runtime_action_with_cancel(&mut state, action, &cancel);
+                    let action_fut = Box::pin(run_deferred_runtime_action_with_cancel(
+                        &mut state, action, &cancel,
+                    ));
 
                     let monitor_stop = CancellationToken::new();
-                    let observer = async {
+                    let observer = Box::pin(async {
                         loop {
                             queues.publish_directory_actions(&namespace_control).await;
                             queues.observe_models().await;
@@ -940,7 +941,7 @@ fn spawn_with_prepared_runtime_environment(
                                 }
                             }
                         }
-                    };
+                    });
                     let exit =
                         monitor::drive_with_monitor(action_fut, observer, &monitor_stop).await;
                     queues.deferred_model = None;

@@ -171,16 +171,19 @@ fn run_logs_scrub_secrets_and_enforce_bounded_retention() {
     );
 
     let raw_file = std::fs::read_to_string(store.run_log_path("scrub-test").unwrap()).unwrap();
-    for secret in [
+    for (idx, fixture) in [
         "sk-proj-supersecret123456",
         "AIzaSyAbCdEfGhIjKlMnOp",
         "secret-bearer-token-999",
         "rawsecret123",
         "ghp_1234567890abcdef1234567890abcdef",
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         assert!(
-            !raw_file.contains(secret),
-            "secret `{secret}` leaked into run log"
+            !raw_file.contains(fixture),
+            "redacted test fixture #{idx} leaked into run log"
         );
     }
     assert!(raw_file.contains("[REDACTED]"));

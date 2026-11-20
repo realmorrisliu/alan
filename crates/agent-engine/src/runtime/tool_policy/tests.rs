@@ -727,7 +727,7 @@ fn trust_posture_bypasses_policy_and_red_lines_with_truthful_audit() {
             other => panic!("ConfinedTrusted should allow policy check `{cmd}`, got {other:?}"),
         }
 
-        let host_account = evaluate_tool_policy_with_posture(
+        let decision = evaluate_tool_policy_with_posture(
             &policy,
             &governance,
             crate::policy::TrustPosture::HostAccountTrusted,
@@ -738,13 +738,13 @@ fn trust_posture_bypasses_policy_and_red_lines_with_truthful_audit() {
             None,
             SandboxConfinement::os_enforced(),
         );
-        match host_account {
+        match decision {
             ToolPolicyDecision::Allow { audit } => {
                 assert_eq!(audit.policy_source, "trust_posture");
                 assert_eq!(audit.sandbox_backend, "unsandboxed-host-account");
                 assert_eq!(audit.path_mode.as_deref(), Some("unsandboxed"));
             }
-            other => panic!("HostAccountTrusted should allow `{cmd}`, got {other:?}"),
+            _ => panic!("HostAccountTrusted should allow `{cmd}`"),
         }
     }
 }

@@ -215,7 +215,7 @@ async fn session_headers_and_cache_key_are_stable_per_client_and_distinct_across
 
     let seen = fixture.seen();
     assert_eq!(seen.len(), 4);
-    let session = first.session_id().to_string();
+    let session = first.prompt_cache_key().to_string();
     for request in &seen[..3] {
         assert_eq!(request.session, session);
         assert_eq!(request.conversation, session);
@@ -224,9 +224,12 @@ async fn session_headers_and_cache_key_are_stable_per_client_and_distinct_across
         assert_eq!(request.cache_key, serde_json::json!(session));
         assert_eq!(request.account, "acct_123");
     }
-    assert_ne!(second.session_id(), session);
-    assert_eq!(seen[3].session, second.session_id());
-    assert_eq!(seen[3].cache_key, serde_json::json!(second.session_id()));
+    assert_ne!(second.prompt_cache_key(), session);
+    assert_eq!(seen[3].session, second.prompt_cache_key());
+    assert_eq!(
+        seen[3].cache_key,
+        serde_json::json!(second.prompt_cache_key())
+    );
     assert_eq!(fixture.refreshes(), 0);
 }
 
@@ -254,7 +257,7 @@ async fn request_session_key_derives_stable_opaque_affinity_across_clients() {
 #[tokio::test]
 async fn pinned_session_id_and_explicit_cache_key_are_respected() {
     let fixture = fixture(Mode::AlwaysOk, token_expiring_in(3600), "acct_123").await;
-    let client = fixture.client().with_session_id("process-42");
+    let client = fixture.client().with_prompt_cache_key("process-42");
     plain_request(&client).await.unwrap();
     let mut request = client
         .build_openai_responses_request(user("explicit"), false)
@@ -377,7 +380,7 @@ async fn concurrent_requests_share_one_refresh() {
         );
         assert!(
             seen.iter()
-                .all(|request| request.session == client.session_id())
+                .all(|request| request.session == client.prompt_cache_key())
         );
     }
 }

@@ -37,7 +37,7 @@ pub struct ChatgptResponsesClient {
     model: String,
     custom_headers: HashMap<String, String>,
     expected_account_id: Option<String>,
-    session_id: String,
+    prompt_cache_key: String,
 }
 
 impl ChatgptResponsesClient {
@@ -62,20 +62,20 @@ impl ChatgptResponsesClient {
             model: model.to_string(),
             custom_headers,
             expected_account_id,
-            session_id: new_chatgpt_session_id(),
+            prompt_cache_key: new_chatgpt_session_id(),
         })
     }
 
-    /// Pin the request-session identity, for a host that keeps one session across
+    /// Pin the request-affinity cache key, for a host that keeps one routing key across
     /// client reconstruction (for example one per Agent Process).
-    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
-        self.session_id = session_id.into();
+    pub fn with_prompt_cache_key(mut self, key: impl Into<String>) -> Self {
+        self.prompt_cache_key = key.into();
         self
     }
 
-    /// The stable request-session identity sent with every request from this client.
-    pub fn session_id(&self) -> &str {
-        &self.session_id
+    /// The stable request-affinity key sent with every request from this client.
+    pub fn prompt_cache_key(&self) -> &str {
+        &self.prompt_cache_key
     }
 
     /// Credentials for one request. `rejected` names the access token a backend `401`
@@ -120,7 +120,7 @@ impl ChatgptResponsesClient {
         &self,
         builder: reqwest::RequestBuilder,
         auth: &alan_auth::ChatgptRequestAuth,
-        session_id: &str,
+        affinity_key: &str,
     ) -> reqwest::RequestBuilder {
         self.apply_custom_headers(builder)
             .header(
@@ -128,8 +128,8 @@ impl ChatgptResponsesClient {
                 format!("Bearer {}", auth.access_token),
             )
             .header(ACCOUNT_ID_HEADER, &auth.account_id)
-            .header(SESSION_ID_HEADER, session_id)
-            .header(CONVERSATION_ID_HEADER, session_id)
+            .header(SESSION_ID_HEADER, affinity_key)
+            .header(CONVERSATION_ID_HEADER, affinity_key)
     }
 
     /// Send a managed request, refreshing credentials before dispatch when they are
@@ -140,19 +140,19 @@ impl ChatgptResponsesClient {
         operation: &'static str,
         build: impl Fn() -> reqwest::RequestBuilder,
     ) -> Result<reqwest::Response> {
-        self.send_with_auth_retry_for_session(operation, &self.session_id, build)
+        self.send_with_auth_retry_for_session(operation, &self.prompt_cache_key, build)
             .await
     }
 
     async fn send_with_auth_retry_for_session(
         &self,
         operation: &'static str,
-        session_id: &str,
+        affinity_key: &str,
         build: impl Fn() -> reqwest::RequestBuilder,
     ) -> Result<reqwest::Response> {
         let auth = self.request_auth(None).await?;
         let response = self
-            .authorize(build(), &auth, session_id)
+            .authorize(build(), &auth, affinity_key)
             .send()
             .await
             .with_context(|| format!("Failed to {operation}"))?;
@@ -166,7 +166,7 @@ impl ChatgptResponsesClient {
         );
         drop(response);
         let auth = self.request_auth(Some(&auth.access_token)).await?;
-        self.authorize(build(), &auth, session_id)
+        self.authorize(build(), &auth, affinity_key)
             .send()
             .await
             .with_context(|| format!("Failed to {operation}"))
@@ -191,8 +191,8 @@ impl ChatgptResponsesClient {
         Ok(request)
     }
 
-    /// Route the request to `session_id`'s prompt cache unless the caller chose a key.
-    fn bind_prompt_cache_key(&self, request: &mut OpenAiResponsesRequest, session_id: &str) {
+    /// Route the request to `affinity_key`'s prompt cache unless the caller chose a key.
+    fn bind_prompt_cache_key(&self, request: &mut OpenAiResponsesRequest, affinity_key: &str) {
         let explicit = request
             .extra_params
             .get(PROMPT_CACHE_KEY)
@@ -201,7 +201,7 @@ impl ChatgptResponsesClient {
         if !explicit {
             request.extra_params.insert(
                 PROMPT_CACHE_KEY.to_string(),
-                serde_json::Value::String(session_id.to_string()),
+                serde_json::Value::String(affinity_key.to_string()),
             );
         }
     }
@@ -291,7 +291,7 @@ impl ChatgptResponsesClient {
         request: OpenAiResponsesRequest,
         stream: bool,
     ) -> Result<reqwest::Response> {
-        self.execute_with_auth_retry_for_session(request, stream, &self.session_id)
+        self.execute_with_auth_retry_for_session(request, stream, &self.prompt_cache_key)
             .await
     }
 
@@ -299,15 +299,15 @@ impl ChatgptResponsesClient {
         &self,
         mut request: OpenAiResponsesRequest,
         stream: bool,
-        session_id: &str,
+        affinity_key: &str,
     ) -> Result<reqwest::Response> {
         self.validate_request(&request)?;
-        self.bind_prompt_cache_key(&mut request, session_id);
+        self.bind_prompt_cache_key(&mut request, affinity_key);
         let url = format!("{}/responses", self.base_url);
         let response = self
             .send_with_auth_retry_for_session(
                 "send request to ChatGPT Responses API",
-                session_id,
+                affinity_key,
                 || {
                     let builder = self.client.post(&url).json(&request);
                     if stream {
@@ -354,14 +354,14 @@ impl ChatgptResponsesClient {
     }
 
     async fn generate_via_stream(&self, request: GenerationRequest) -> Result<GenerationResponse> {
-        let session_id = crate::session_affinity::request_session_id(
+        let affinity_key = crate::session_affinity::request_session_id(
             request.session_key.as_deref(),
-            &self.session_id,
+            &self.prompt_cache_key,
         );
         let response_request = self.build_openai_responses_request(request, true)?;
         let background_requested = response_request.background == Some(true);
         let response = self
-            .execute_with_auth_retry_for_session(response_request, true, &session_id)
+            .execute_with_auth_retry_for_session(response_request, true, &affinity_key)
             .await?;
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let stream_task =
@@ -431,13 +431,13 @@ impl LlmProvider for ChatgptResponsesClient {
         &mut self,
         request: GenerationRequest,
     ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        let session_id = crate::session_affinity::request_session_id(
+        let affinity_key = crate::session_affinity::request_session_id(
             request.session_key.as_deref(),
-            &self.session_id,
+            &self.prompt_cache_key,
         );
         let response_request = self.build_openai_responses_request(request, true)?;
         let response = self
-            .execute_with_auth_retry_for_session(response_request, true, &session_id)
+            .execute_with_auth_retry_for_session(response_request, true, &affinity_key)
             .await?;
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let (status_tx, status_rx) = tokio::sync::oneshot::channel();

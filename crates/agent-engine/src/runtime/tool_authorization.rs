@@ -203,7 +203,7 @@ where
             details = append_skill_permission_hints(details, runtime.machine.active_skills());
 
             if matches!(route, EscalationRoute::Reviewer) {
-                match review_escalation(
+                match Box::pin(review_escalation(
                     &mut runtime,
                     tool_call,
                     tool_arguments,
@@ -212,7 +212,7 @@ where
                     &pre_review_authority,
                     cancel,
                     emit,
-                )
+                ))
                 .await?
                 {
                     EscalationReviewOutcome::Authorized => {
@@ -372,13 +372,13 @@ where
     let outcome = if let Some(profile) = runtime.guardian_profile {
         let dedicated_outcome = match runtime.authority.as_ref() {
             Some(authority) => {
-                match run_captured_guardian_review(
+                match Box::pin(run_captured_guardian_review(
                     authority,
                     profile,
                     request.clone(),
                     deadline,
                     cancel,
-                )
+                ))
                 .await
                 {
                     Ok(outcome) => outcome,
@@ -404,12 +404,12 @@ where
                     );
                     super::ui_surfaces::warning(&runtime.agent_files, message.clone()).await?;
                     emit(Event::Warning { message }).await;
-                    run_generation_review_with_deadline(
+                    Box::pin(run_generation_review_with_deadline(
                         &runtime.generation,
                         request,
                         deadline,
                         cancel,
-                    )
+                    ))
                     .await?
                 } else {
                     let message = format!(
@@ -423,7 +423,13 @@ where
             other => other,
         }
     } else {
-        run_generation_review_with_deadline(&runtime.generation, request, deadline, cancel).await?
+        Box::pin(run_generation_review_with_deadline(
+            &runtime.generation,
+            request,
+            deadline,
+            cancel,
+        ))
+        .await?
     };
 
     if matches!(outcome, ReviewOutcome::Allow) {
@@ -517,7 +523,10 @@ async fn run_captured_guardian_review(
                 });
             }
         };
-    run_generation_review_with_deadline(&captured, request, deadline, cancel).await
+    Box::pin(run_generation_review_with_deadline(
+        &captured, request, deadline, cancel,
+    ))
+    .await
 }
 
 async fn run_generation_review_with_deadline(

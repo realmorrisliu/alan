@@ -478,18 +478,30 @@ fn render_memory_surfaces_scrubs_secrets_before_writing() {
         .with_timezone(&Utc);
     let rendered = render_memory_surfaces(&machine, "/proc/1", machine.memory_record_id(), now);
 
-    for surface in [
+    for (idx, surface) in [
         &rendered.working_memory,
         &rendered.handoff,
         &rendered.episodic_record,
         &rendered.daily_entry,
-    ] {
-        assert!(!surface.contains("sk-ant-secret1234567890"), "{surface}");
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            !surface.contains("sk-ant-secret1234567890"),
+            "anthropic test fixture leaked into memory surface #{idx}"
+        );
         assert!(
             !surface.contains("AIzaSyDummyKeyValue123456789"),
-            "{surface}"
+            "google test fixture leaked into memory surface #{idx}"
         );
-        assert!(!surface.contains("super_secret_bearer_token"), "{surface}");
-        assert!(surface.contains("[REDACTED"), "{surface}");
+        assert!(
+            !surface.contains("super_secret_bearer_token"),
+            "bearer test fixture leaked into memory surface #{idx}"
+        );
+        assert!(
+            surface.contains("[REDACTED"),
+            "expected redaction marker in memory surface #{idx}"
+        );
     }
 }

@@ -243,13 +243,13 @@ where
                 turn_recall_bundle.as_deref(),
                 initial_directory_instruction.as_deref(),
             ));
-        let compaction = maybe_compact_context_with_turn_timeout(
+        let compaction = Box::pin(maybe_compact_context_with_turn_timeout(
             state,
             emit,
             &compaction_request,
             cancel,
             tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
-        )
+        ))
         .await;
         match compaction.result {
             Ok(_) => {}
@@ -501,16 +501,15 @@ where
             agent_files.clone(),
             guardrail_probe(Arc::clone(&guardrail_context), !guardrail_regenerated),
         );
-        let response = match generation
-            .generate(
-                &llm_generation,
-                request,
-                llm_request_timeout_secs,
-                cancel,
-                &live,
-                emit,
-            )
-            .await
+        let response = match Box::pin(generation.generate(
+            &llm_generation,
+            request,
+            llm_request_timeout_secs,
+            cancel,
+            &live,
+            emit,
+        ))
+        .await
         {
             Ok(response) => response,
             Err(error) => {
@@ -611,7 +610,7 @@ where
                     .context("write guardrail warning UI state")?;
                 emit(Event::Warning { message }).await;
                 pending_guardrail_instruction = Some(instruction);
-                maybe_compact_mid_turn_if_needed(
+                Box::pin(maybe_compact_mid_turn_if_needed(
                     state,
                     emit,
                     cancel,
@@ -620,7 +619,7 @@ where
                         pending_guardrail_instruction.as_deref(),
                         directory_instruction.as_deref(),
                     ),
-                )
+                ))
                 .await?;
                 if check_turn_cancelled(
                     &mut state.machine,
@@ -716,7 +715,7 @@ where
         }
 
         if !tool_calls.is_empty() {
-            match orchestrate_tool_batch(
+            match Box::pin(orchestrate_tool_batch(
                 &mut tool_loop_guard,
                 state,
                 &tool_calls,
@@ -727,11 +726,11 @@ where
                 },
                 writer,
                 emit,
-            )
+            ))
             .await?
             {
                 ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
-                    maybe_compact_mid_turn_if_needed(
+                    Box::pin(maybe_compact_mid_turn_if_needed(
                         state,
                         emit,
                         cancel,
@@ -740,7 +739,7 @@ where
                             pending_guardrail_instruction.as_deref(),
                             process_directory_instruction(&tool_execution).as_deref(),
                         ),
-                    )
+                    ))
                     .await?;
                     if check_turn_cancelled(
                         &mut state.machine,

@@ -156,9 +156,15 @@ pub(crate) fn advance_accepted_submission<'a>(
                 Ok(())
             }
         } else if requeue_inband_submissions {
-            drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
+            Box::pin(drive_turn_submission_with_cancel(
+                state, submission, broker, &mut emit, cancel,
+            ))
+            .await
         } else {
-            handle_submission_with_cancel(state, submission, &mut emit, cancel).await
+            Box::pin(handle_submission_with_cancel(
+                state, submission, &mut emit, cancel,
+            ))
+            .await
         };
         // A pre-start cancellation bypasses submission dispatch, so it must
         // also close any budget opened during input preparation here.
@@ -315,13 +321,13 @@ where
         }
         _ => None,
     };
-    handle_submission_with_cancel_and_steering(
+    Box::pin(handle_submission_with_cancel_and_steering(
         state,
         initial_submission,
         emit,
         cancel,
         Some(broker),
-    )
+    ))
     .await?;
     let mut pending_command = command.filter(|_| state.machine.has_pending_interaction());
 
@@ -414,13 +420,13 @@ where
             Op::Resume { .. } => {}
             _ => state.machine.accept_submission(next_submission.id.clone()),
         }
-        handle_submission_with_cancel_and_steering(
+        Box::pin(handle_submission_with_cancel_and_steering(
             state,
             next_submission,
             emit,
             cancel,
             Some(broker),
-        )
+        ))
         .await?;
         if !state.machine.has_pending_interaction() {
             pending_command = None;

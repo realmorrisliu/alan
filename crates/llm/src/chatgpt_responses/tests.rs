@@ -89,7 +89,7 @@ fn test_client(base_url: &str, storage_path: PathBuf) -> ChatgptResponsesClient 
         model: "gpt-5.3-codex".to_string(),
         custom_headers: HashMap::new(),
         expected_account_id: Some("acct_123".to_string()),
-        session_id: alan_auth::new_chatgpt_session_id(),
+        prompt_cache_key: alan_auth::new_chatgpt_session_id(),
     }
 }
 

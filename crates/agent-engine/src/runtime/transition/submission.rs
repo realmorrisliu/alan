@@ -100,7 +100,14 @@ where
     if (computational && !matches!(submission.op, Op::Turn { .. })) || other_resume {
         crate::runtime::task_budget::begin(state).await?;
     }
-    let result = handle_submission_inner(state, submission, emit, cancel, steering_broker).await;
+    let result = Box::pin(handle_submission_inner(
+        state,
+        submission,
+        emit,
+        cancel,
+        steering_broker,
+    ))
+    .await;
     let result =
         if computational || other_resume || budget_resume || inherited_resume || explicit_interrupt
         {
@@ -263,7 +270,7 @@ where
                     .as_ref()
                     .expect("generation owns the Tape lease");
                 state.machine.set_turn_activity(TurnActivityState::Running);
-                let turn_outcome = match run_turn_with_writer(
+                let turn_outcome = match Box::pin(run_turn_with_writer(
                     state,
                     turn_kind,
                     user_input,
@@ -271,7 +278,7 @@ where
                     cancel,
                     steering_broker,
                     writer,
-                )
+                ))
                 .await
                 {
                     Ok(outcome) => outcome,
@@ -363,7 +370,7 @@ where
                 {
                     Ok(outcome) => match outcome {
                         ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
-                            let turn_outcome = match run_turn_with_writer(
+                            let turn_outcome = match Box::pin(run_turn_with_writer(
                                 state,
                                 TurnRunKind::ResumeTurn,
                                 None,
@@ -371,7 +378,7 @@ where
                                 cancel,
                                 steering_broker,
                                 writer,
-                            )
+                            ))
                             .await
                             {
                                 Ok(outcome) => outcome,
