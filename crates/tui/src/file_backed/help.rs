@@ -20,7 +20,10 @@ const COMMAND_ROWS: &[(&str, &str)] = &[
         "cycle trust or mount dir (Tab rw/ro)",
     ),
     ("/tape /man [topic]", "inspect Turing Tape or alan9 manuals"),
-    ("/status /summary", "inspect status or project summary"),
+    (
+        "/status /summary /doctor",
+        "inspect status, summary, or diagnostics",
+    ),
     ("/compact /rollback", "summarize context or undo last turn"),
     ("/continue /discard", "resume or clear a paused queue"),
     ("/clear /help /quit", "clear view, show help, exit alan"),

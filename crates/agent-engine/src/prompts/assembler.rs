@@ -158,4 +158,17 @@ mod tests {
         };
         assert!(!build_agent_system_prompt(&config, "domain").contains("implicit persona"));
     }
+
+    #[test]
+    fn default_prompt_guides_against_leaking_internal_project_request_mount_paths() {
+        let prompt = build_agent_system_prompt(&Config::default(), "");
+        assert!(
+            prompt.contains("/mnt/project-request-1"),
+            "prompt should explicitly name internal mount path pattern to avoid"
+        );
+        assert!(
+            prompt.contains("repo-relative paths"),
+            "prompt should instruct agent to use project name or repo-relative paths"
+        );
+    }
 }

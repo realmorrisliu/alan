@@ -18,6 +18,7 @@ pub(super) fn default_commands() -> Vec<CompletionCandidate> {
         ("tape", "inspect Turing Tape timeline"),
         ("summary", "inspect, edit, or delete project summary"),
         ("status", "inspect project, model and queue"),
+        ("doctor", "inspect local session diagnostics"),
         ("compact", "summarize context"),
         ("rollback", "undo the last turn"),
         ("clear", "clear the transcript"),
