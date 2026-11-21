@@ -6,6 +6,7 @@ including token-aware red lines, reviewer limitations, command-independent
 confinement, and resumable renderer file streams.
 ## Requirements
 ### Requirement: Red-line detection is token-aware, never substring
+These action-review and human-escalation rules SHALL apply only to governed autonomous execution. Fully trusted skips action red lines and reviewer escalation; it does not remove selected confined-backend enforcement.
 
 Deterministic red-line and review gates SHALL classify shell commands by
 whitespace/quote-normalized tokens (and command basenames), not by raw substring
@@ -15,9 +16,10 @@ heads — SHALL be classified identically to their canonical form. Substring
 `match_command` rules in the policy engine MAY remain as a baseline but SHALL NOT
 be the sole guard for any red line.
 
-#### Scenario: Force-push in any token form routes to a human
+#### Scenario: Undelegated force-push in any token form routes to a human
 - **WHEN** a builtin bash command is a `git push` with a force flag in any form (`--force`, `-f`, `--force-with-lease=…`, a leading-`+` refspec, quoted, or with `git -C …`)
-- **THEN** it is routed always-human and the reviewer never decides it
+- **THEN** absent an exact current user-origin force-push delegation, it is routed to a trusted-user decision and the reviewer never grants that authority
+- **AND** ordinary push delegation does not satisfy force-push or remote deletion
 
 #### Scenario: Irreversible git reset in any token form is reviewed
 - **WHEN** a builtin bash command is a `git reset --hard` in any ordering or quoting (`git -C repo reset --hard`, `git reset HEAD --hard`, `git reset '--hard'`)
@@ -50,6 +52,8 @@ be the sole guard for any red line.
 
 ### Requirement: The reviewer is not a security boundary
 
+These reviewer requirements SHALL govern autonomous execution only. Fully trusted execution SHALL bypass review and per-action escalation while retaining its independently selected confinement.
+
 The autonomous reviewer SHALL decide only escalations the active sandbox can
 contain. When the sandbox cannot confine an effect, the operation SHALL be routed
 to a human (or denied) rather than left for the reviewer, and the reviewer SHALL
@@ -65,11 +69,12 @@ NOT be able to convert a sandbox-uncontainable operation into an executed one.
   non-protected Host Mount paths, because the path guard already contains it —
   the human gate applies only to escalated commands
 
-#### Scenario: Reviewer timeout falls back to a human
-- **WHEN** the reviewer provider stalls beyond the configured request timeout
-- **THEN** the outcome is `Unavailable` and the operation falls back to a human, never auto-allowed
+#### Scenario: Reviewer aggregate fallback budget exhausts
+- **WHEN** the reviewer and permitted main-model fallback cannot decide within the aggregate deadline and call budget
+- **THEN** the outcome remains unavailable or uncertain and one correlated human request remains, never auto-allowed
 
 ### Requirement: OS-sandbox confinement is independent of command syntax
+These confinement guarantees SHALL apply to confined execution. Explicit trusted Host-account execution SHALL bypass Alan native sandbox/path-guard restrictions, without claiming protected-path or sensitive-read enforcement. It does not bypass OS permissions or create service mount authority.
 
 The syntactic shape parser SHALL be dropped only for a backend that
 kernel-enforces protected-subpath writes (Seatbelt); such a backend enforces
@@ -125,3 +130,10 @@ A renderer reading an offset-addressable AgentFS stream SHALL retain its last de
 - **WHEN** the requested offset is older than retained stream data
 - **THEN** the renderer reports a recoverable gap instead of pretending the stream is continuous
 - **AND** recovery proceeds through current AgentFS snapshot and file semantics
+
+### Requirement: Host-account trust does not claim same-account tamper resistance
+Host-account mode SHALL disclose that arbitrary programs can affect files and services available to the launching account, potentially including writable control and audit backing. Trusted-user control APIs SHALL reject Agent-origin mode changes, but the product MUST NOT claim those APIs prevent arbitrary same-account code from modifying writable backing.
+
+#### Scenario: User selects unrestricted native execution
+- **WHEN** Host-account mode is activated
+- **THEN** the user sees that no Alan native isolation or same-account tamperproof control guarantee applies

@@ -76,7 +76,7 @@ Actual usage-derived monetary cost is unknown; admission counts are not a price.
 4. Continue the owning delegation/budget controls, continuity and real Node/pnpm
    acceptance. No saved-delegation, qualified reviewer or full-trust capability was
    established by this pilot. The budget qualification gaps remain open in
-   [budget delivery](../delegate-project-autonomy/budget-delivery.md).
+   [budget delivery](../archive/2026-11-21-delegate-project-autonomy/budget-delivery.md).
 
 ## Evidence
 

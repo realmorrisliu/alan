@@ -220,6 +220,9 @@ intent classification. Unprefixed input SHALL remain governed Agent input; autom
 classification is not enabled in this delivery. This contract SHALL apply to terminal
 and redirected input. Explicit routing MUST NOT grant authority. Pending request
 responses SHALL be consumed by their request before ordinary routing.
+Agent-originated effects MUST continue through the existing Agent Runtime, the
+current trusted-user-selected approval posture, and actual execution isolation.
+Namespace file access and service credentials retain their existing authority.
 
 #### Scenario: Explicit command is submitted
 - **WHEN** the user submits `!git status`
@@ -273,7 +276,7 @@ responses SHALL be consumed by their request before ordinary routing.
 - **WHEN** the user submits `!<command>`
 - **THEN** the exact remainder selects governed Host shell execution in the Machine
 - **AND** the existing native Tool execution boundary is reused without a generation step
-- **AND** required permissions and approvals still apply
+- **AND** the trusted-user-selected approval posture and isolation govern execution; confined native execution retains its explicit Host Mount boundaries and Host-account native execution does not fabricate aP access
 
 #### Scenario: A namespace path is used as shell data
 - **WHEN** an aP path occurs in native command text

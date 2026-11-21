@@ -586,3 +586,78 @@ implicitly. Read-only discovery SHALL preserve responsive input and exit.
 - **THEN** the stale result sends no directory control or revocation
 - **AND** a subsequent explicit command must discover authority in its current context
 
+### Requirement: Assistant output and thinking render incrementally
+The terminal UI SHALL render assistant text and thinking as they arrive from the
+Agent Process output files and SHALL show elapsed thinking time while thinking is
+streaming. The final message SHALL reflect the reconciled tape content.
+
+#### Scenario: A long answer streams
+- **WHEN** the model emits text over several seconds
+- **THEN** the visible transcript grows before the response completes
+- **AND** the final transcript matches the reconciled message
+
+### Requirement: Leaving a modal never stops input
+The terminal UI SHALL close only the active modal, chooser, form or project
+selection when it is quit or dismissed with Ctrl+Q or Esc. The terminal input
+reader SHALL keep running until the application itself exits.
+
+#### Scenario: Ctrl+Q inside the model chooser
+- **WHEN** the model chooser is open and the user presses Ctrl+Q
+- **THEN** the chooser closes and the composer accepts the next key
+
+### Requirement: Idle Esc and modified characters are inert
+Esc at an idle prompt SHALL dismiss completion or do nothing and SHALL NOT send an
+interrupt. A character key pressed with Control or Alt that has no binding SHALL
+NOT be inserted into the composer.
+
+#### Scenario: Esc at an idle prompt
+- **WHEN** no turn, request or modal is active and the user presses Esc
+- **THEN** no interrupt is sent
+
+### Requirement: Secret entry does not echo
+Interactive secret entry SHALL disable terminal echo while reading from a terminal
+and SHALL restore it on every exit path, while piped input remains supported.
+
+#### Scenario: Setting a secret in a terminal
+- **WHEN** a user enters a secret at a terminal prompt
+- **THEN** the typed characters are not displayed
+
+### Requirement: Terminal behavior is verified on a real PTY
+Terminal acceptance SHALL drive the built binary through a Unix pseudo-terminal and
+a terminal-state model covering startup frame, resize reflow, wide text, Ctrl+C,
+Esc and modal exit. No terminal-host harness SHALL be required.
+
+#### Scenario: Acceptance runs without a terminal host
+- **WHEN** the PTY acceptance suite runs in CI
+- **THEN** it passes using only the built binary and the terminal-state model
+
+### Requirement: Approval posture and execution isolation are distinguishable
+The terminal SHALL distinguish governed versus fully trusted posture and actual confined versus Host-account execution. Activation SHALL show both choices through a trusted-user control; compact presentation MAY use a short indicator with details in status, but MUST NOT hide a broad Host-account execution state or imply unavailable confinement.
+
+#### Scenario: Narrow trusted terminal
+- **WHEN** the user runs fully trusted Host-account execution in a narrow pane
+- **THEN** a visible indicator and accessible details identify broad native execution without displacing input
+
+#### Scenario: Confinement unavailable
+- **WHEN** the selected backend cannot provide its promised boundary
+- **THEN** the UI reports the limitation rather than displaying an ordinary protected state
+
+### Requirement: Terminal continuity controls preserve explicit user selection
+The terminal SHALL offer authorized history inspection, explicit recovery selection
+and fresh start, plus inspect/correct/delete controls for derived project summaries.
+It SHALL show source provenance and authoritative pending, unavailable and failure
+states. Reading a summary MUST NOT execute work. Deletion controls SHALL distinguish
+derived summary recall from retained execution evidence.
+
+#### Scenario: User chooses fresh start
+- **WHEN** history exists but the user selects fresh work
+- **THEN** no prior pending operation is launched or old authority inferred
+
+#### Scenario: User deletes a summary
+- **WHEN** a user chooses the summary deletion control
+- **THEN** the UI explains which derived context is removed and that source execution evidence is retained separately
+
+#### Scenario: History cannot be read
+- **WHEN** an authorized history reference is unavailable or malformed
+- **THEN** the terminal presents that failure without pretending recovery or execution succeeded
+

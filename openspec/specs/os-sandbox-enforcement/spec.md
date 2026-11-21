@@ -6,6 +6,8 @@ projected confinement inputs, sensitive-read controls, and reified namespace
 behavior independent of command-text heuristics.
 ## Requirements
 ### Requirement: Pluggable OS sandbox backends
+This requirement applies to confined governed execution. Fully trusted with confined selection SHALL retain available enforcement and fail effects that cannot be contained without per-action escalation. Only a separate explicit trusted Host-account selection SHALL disable Alan native sandbox enforcement; missing backend capability alone MUST NOT select that mode.
+
 Tool execution SHALL be constrained by a selectable sandbox backend behind a common abstraction, with macOS and Linux backends and a degraded path-guard fallback.
 
 #### Scenario: macOS selects the Seatbelt backend
@@ -54,6 +56,8 @@ authority.
   sandbox projection
 
 ### Requirement: Safe degradation when no sandbox is available
+This requirement applies to confined governed execution. Fully trusted with confined selection SHALL retain available enforcement and fail effects that cannot be contained without per-action escalation. Only a separate explicit trusted Host-account selection SHALL disable Alan native sandbox enforcement; missing backend capability alone MUST NOT select that mode.
+
 When no enforcing sandbox backend is available, the system SHALL NOT auto-approve bash or network operations and SHALL escalate them instead. Sandbox-unavailable SHALL NOT be treated as sandbox-disabled-and-allow.
 
 #### Scenario: No backend means escalate
@@ -72,6 +76,8 @@ With an OS sandbox backend active, the bash command-string heuristic SHALL NOT b
 - **THEN** confinement correctness does not rely on the bash command-shape parser
 
 ### Requirement: Linux network confinement via seccomp
+This requirement applies to confined governed execution. Fully trusted with confined selection SHALL retain available enforcement and fail effects that cannot be contained without per-action escalation. Only a separate explicit trusted Host-account selection SHALL disable Alan native sandbox enforcement; missing backend capability alone MUST NOT select that mode.
+
 On Linux, the OS sandbox backend SHALL confine network access (in addition to Landlock filesystem confinement) so that filesystem and network are both contained, matching macOS Seatbelt. This removes the platform asymmetry so that network escalations can be reviewer-judged uniformly rather than always requiring a human on Linux.
 
 #### Scenario: Linux confines network alongside the filesystem
@@ -87,6 +93,7 @@ On Linux, the OS sandbox backend SHALL confine network access (in addition to La
 - **THEN** network operations are surfaced to the human rather than reviewer-judged or auto-allowed
 
 ### Requirement: Confinement input is a projected SandboxSpec
+This requirement applies to confined Tool execution. Explicit fully trusted Host-account native execution SHALL use its separately selected account authority without fabricating a projected SandboxSpec or extra service grant. aP handle rights and retained grant provenance remain unchanged.
 The Host adapter SHALL derive each Tool Process `SandboxSpec` from the explicit
 service-owned Host Mount grants delegated to that launch, together with its
 network policy and executable needs. The spec SHALL be attributable to that
@@ -187,6 +194,8 @@ declared mounts.
 - **AND** user home directories and secret stores are not exposed unless explicitly declared
 
 ### Requirement: Linux reification degrades safely
+This requirement applies to confined governed execution. Fully trusted with confined selection SHALL retain available enforcement and fail effects that cannot be contained without per-action escalation. Only a separate explicit trusted Host-account selection SHALL disable Alan native sandbox enforcement; missing backend capability alone MUST NOT select that mode.
+
 The Linux reified namespace backend SHALL be selected only when the host can
 create the required user namespace, mount namespace, bind mounts, read-only
 mounts, and network confinement. If any required capability is unavailable, the
@@ -464,6 +473,7 @@ Scratch SHALL remain owned while descendants use it and be released afterward.
 - **AND** scratch lifetime and cleanup cannot leave a surviving writer or reclaim files still in use
 
 ### Requirement: Development dependencies retain explicit mount authority
+This requirement applies to confined Tool execution. Explicit fully trusted Host-account native execution SHALL use its separately selected account authority without fabricating a projected SandboxSpec or extra service grant. aP handle rights and retained grant provenance remain unchanged.
 Local dependencies outside a delegated project SHALL require their own live
 Host Mount authority. Runtime projection MUST NOT infer that authority from a
 manifest, PATH, prior successful build or cached output. Revoked, missing or
