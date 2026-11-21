@@ -7,6 +7,17 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-21
+
+### Added
+
+- Add streaming download progress bar with stage indicators, terminal-width fitting (`80`-column safe), and segmented connect/idle/total timeouts to `alan update` (#1121).
+- Unify file-native model catalog resolution in `ConnectionService` and `/mnt/llm/connections/<conn>/models`, and add live Vertex AI `v1beta1/publishers/google/models` discovery with family capability inference, Express/error fallback, and custom `gemini-*` model support (#1122).
+
+### Changed
+
+- Polish TUI transcript UX with improved turn spacing and semantic user prompt anchor, unordered and ordered list hanging indents, inline code styling without underline, `<1s` collapsed thinking, and removal of `effort unknown` from the status bar (#1123).
+
 ## [0.1.1] - 2026-11-20
 
 ### Fixed
