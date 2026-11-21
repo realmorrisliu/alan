@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::exploration_gitignore::GitignoreMatcher;
 use alan_agent_engine::tools::alan_ap::{
     ErrorCode, Fid, FileKind, InProcessTransport, OpenMode, Qid, Request, Response, Stat,
 };
@@ -19,6 +20,7 @@ use anyhow::{Context, Result, anyhow, bail};
 static NEXT_TOOL_FID: AtomicU64 = AtomicU64::new(50_000_000);
 
 const IO_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_GITIGNORE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_NAMESPACE_READ_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_NAMESPACE_GREP_FILE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_NAMESPACE_DIR_LISTING_BYTES: usize = 1024 * 1024;
@@ -156,9 +158,23 @@ impl NamespaceFs {
     }
 
     /// List immediate entries of a directory (`FileKind::Dir`) with types and sizes.
-    pub(crate) async fn list_dir_entries(&self, path: &str) -> Result<Vec<NamespaceDirEntry>> {
-        let names = self
-            .read_dir_names_raw(path)
+    /// Returns `(entries, truncated)` where `truncated` is `true` if the directory
+    /// contained more unique entries than `MAX_NAMESPACE_DIR_ENTRIES`.
+    pub(crate) async fn list_dir_entries(
+        &self,
+        path: &str,
+    ) -> Result<(Vec<NamespaceDirEntry>, bool)> {
+        self.list_dir_entries_limited(path, MAX_NAMESPACE_DIR_ENTRIES)
+            .await
+    }
+
+    async fn list_dir_entries_limited(
+        &self,
+        path: &str,
+        max_dir_entries: usize,
+    ) -> Result<(Vec<NamespaceDirEntry>, bool)> {
+        let (names, truncated) = self
+            .read_dir_names_limited(path, max_dir_entries)
             .await
             .map_err(|err| anyhow!("Failed to list directory '{path}': {err}"))?;
         let mut entries = Vec::with_capacity(names.len());
@@ -189,7 +205,7 @@ impl NamespaceFs {
                 _ => a.name.cmp(&b.name),
             }
         });
-        Ok(entries)
+        Ok((entries, truncated))
     }
 
     /// Create or overwrite a regular file over aP, creating missing parent directories.
@@ -263,7 +279,7 @@ impl NamespaceFs {
 
     /// Recursively collect regular files (`FileKind::File`) under directory `root`,
     /// skipping `FileKind::Stream`, `FileKind::Clone`, and any path in `skip_prefixes`
-    /// without opening them.
+    /// without opening them, and applying scoped `.gitignore` rules when requested.
     pub(crate) async fn walk_files(
         &self,
         root: &str,
@@ -273,29 +289,85 @@ impl NamespaceFs {
         max_depth: usize,
         max_entries: usize,
     ) -> Result<(Vec<NamespaceWalkFile>, bool)> {
+        self.walk_files_with_dir_limit(
+            root,
+            include_hidden,
+            respect_gitignore,
+            skip_prefixes,
+            max_depth,
+            max_entries,
+            MAX_NAMESPACE_DIR_ENTRIES,
+        )
+        .await
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Internal walk helper threads explicit traversal caps cleanly for unit tests"
+    )]
+    async fn walk_files_with_dir_limit(
+        &self,
+        root: &str,
+        include_hidden: bool,
+        respect_gitignore: bool,
+        skip_prefixes: &[&str],
+        max_depth: usize,
+        max_entries: usize,
+        max_dir_entries: usize,
+    ) -> Result<(Vec<NamespaceWalkFile>, bool)> {
+        let root_ignore = self.build_gitignore_matcher(root, respect_gitignore).await;
         let mut files = Vec::new();
         let mut truncated = false;
         let mut visited = 0usize;
-        let mut stack = vec![(root.to_string(), 0usize)];
+        let mut stack = vec![(root.to_string(), 0usize, root_ignore)];
 
-        while let Some((dir_path, depth)) = stack.pop() {
-            let names = match self.read_dir_names_raw(&dir_path).await {
-                Ok(names) => names,
-                Err(_) if dir_path != root => continue,
+        while let Some((dir_path, depth, ignore)) = stack.pop() {
+            let (names, dir_truncated) = match self
+                .read_dir_names_limited(&dir_path, max_dir_entries)
+                .await
+            {
+                Ok(res) => res,
+                Err(ErrorCode::NotFound | ErrorCode::NoAccess | ErrorCode::NotDirectory)
+                    if dir_path != root =>
+                {
+                    continue;
+                }
+                Err(_) if dir_path != root => {
+                    truncated = true;
+                    continue;
+                }
                 Err(err) => return Err(anyhow!("Failed to list directory '{dir_path}': {err}")),
             };
+            if dir_truncated {
+                truncated = true;
+            }
+            let dir_ignore = if respect_gitignore
+                && dir_path != root
+                && names.iter().any(|name| name == ".gitignore")
+            {
+                match self
+                    .read_gitignore_text(&join_child(&dir_path, ".gitignore"))
+                    .await
+                {
+                    Some(content) => ignore.with_rules_for_dir(Path::new(&dir_path), &content),
+                    None => ignore,
+                }
+            } else {
+                ignore
+            };
+
             let mut subdirs = Vec::new();
             for name in names {
+                let child_path = join_child(&dir_path, &name);
+                if skip_prefixes.contains(&child_path.as_str()) {
+                    continue;
+                }
                 if visited >= max_entries {
                     truncated = true;
                     break;
                 }
                 visited += 1;
 
-                let child_path = join_child(&dir_path, &name);
-                if skip_prefixes.contains(&child_path.as_str()) {
-                    continue;
-                }
                 let stat = match self.stat_raw(&child_path).await {
                     Ok(stat) => stat,
                     Err(ErrorCode::NotFound | ErrorCode::NoAccess | ErrorCode::Unsupported) => {
@@ -310,9 +382,7 @@ impl NamespaceFs {
                         if !include_hidden && name.starts_with('.') {
                             continue;
                         }
-                        if respect_gitignore
-                            && matches!(name.as_str(), ".git" | "target" | "node_modules")
-                        {
+                        if dir_ignore.is_ignored(Path::new(&child_path), true) {
                             continue;
                         }
                         if depth < max_depth {
@@ -322,6 +392,9 @@ impl NamespaceFs {
                         }
                     }
                     FileKind::File => {
+                        if dir_ignore.is_ignored(Path::new(&child_path), false) {
+                            continue;
+                        }
                         files.push(NamespaceWalkFile {
                             path: child_path,
                             size: stat.length,
@@ -337,11 +410,62 @@ impl NamespaceFs {
                 break;
             }
             for subdir in subdirs.into_iter().rev() {
-                stack.push((subdir, depth + 1));
+                stack.push((subdir, depth + 1, dir_ignore.clone()));
             }
         }
 
         Ok((files, truncated))
+    }
+
+    async fn build_gitignore_matcher(
+        &self,
+        root: &str,
+        respect_gitignore: bool,
+    ) -> GitignoreMatcher {
+        if !respect_gitignore {
+            return GitignoreMatcher::empty(false);
+        }
+
+        let mut ancestors = Vec::new();
+        let mut cursor = root.to_string();
+        loop {
+            let git_path = join_child(&cursor, ".git");
+            let git_stat = self.stat_raw(&git_path).await.ok();
+            let has_git_dir = git_stat
+                .as_ref()
+                .is_some_and(|stat| stat.qid.kind == FileKind::Dir);
+            let stop = git_stat.is_some();
+            ancestors.push((cursor.clone(), has_git_dir));
+            if stop || cursor == "/" {
+                break;
+            }
+            let components = split_path(&cursor);
+            cursor = join_components(&components[..components.len().saturating_sub(1)]);
+        }
+        ancestors.reverse();
+
+        let mut matcher = GitignoreMatcher::empty(true);
+        for (dir, has_git_dir) in ancestors {
+            if has_git_dir
+                && let Some(content) = self
+                    .read_gitignore_text(&join_child(&dir, ".git/info/exclude"))
+                    .await
+            {
+                matcher.push_rules(PathBuf::from(&dir), &content);
+            }
+            if let Some(content) = self
+                .read_gitignore_text(&join_child(&dir, ".gitignore"))
+                .await
+            {
+                matcher.push_rules(PathBuf::from(&dir), &content);
+            }
+        }
+        matcher
+    }
+
+    async fn read_gitignore_text(&self, path: &str) -> Option<String> {
+        let bytes = self.read_file_bytes(path, MAX_GITIGNORE_BYTES).await.ok()?;
+        String::from_utf8(bytes).ok()
     }
 
     async fn ensure_dir_chain(&self, parent_components: &[String]) -> Result<()> {
@@ -481,7 +605,11 @@ impl NamespaceFs {
         Ok(())
     }
 
-    async fn read_dir_names_raw(&self, path: &str) -> std::result::Result<Vec<String>, ErrorCode> {
+    async fn read_dir_names_limited(
+        &self,
+        path: &str,
+        max_entries: usize,
+    ) -> std::result::Result<(Vec<String>, bool), ErrorCode> {
         let (fid, qid) = self.walk_to(path).await?;
         if qid.kind != FileKind::Dir {
             self.clunk_quietly(fid).await;
@@ -512,17 +640,7 @@ impl NamespaceFs {
             Err(ReadBoundedError::TooLarge) => return Err(ErrorCode::Io),
         };
         let text = String::from_utf8(bytes).map_err(|_| ErrorCode::Io)?;
-        let mut unique = BTreeSet::new();
-        for line in text.lines() {
-            if line.is_empty() || line == "." || line == ".." || line.contains('/') {
-                continue;
-            }
-            unique.insert(line.to_string());
-            if unique.len() >= MAX_NAMESPACE_DIR_ENTRIES {
-                break;
-            }
-        }
-        Ok(unique.into_iter().collect())
+        Ok(parse_dir_names(&text, max_entries))
     }
 
     async fn read_bounded_opened(
@@ -656,6 +774,25 @@ fn ensure_regular_file(path: &str, kind: FileKind) -> Result<()> {
     }
 }
 
+fn parse_dir_names(text: &str, max_entries: usize) -> (Vec<String>, bool) {
+    let mut unique = BTreeSet::new();
+    let mut truncated = false;
+    for line in text.lines() {
+        if line.is_empty() || line == "." || line == ".." || line.contains('/') {
+            continue;
+        }
+        if unique.len() >= max_entries {
+            if !unique.contains(line) {
+                truncated = true;
+                break;
+            }
+            continue;
+        }
+        unique.insert(line.to_string());
+    }
+    (unique.into_iter().collect(), truncated)
+}
+
 fn file_kind_label(kind: FileKind) -> &'static str {
     match kind {
         FileKind::Dir => "directory",
@@ -664,3 +801,7 @@ fn file_kind_label(kind: FileKind) -> &'static str {
         FileKind::Clone => "clone",
     }
 }
+
+#[cfg(test)]
+#[path = "namespace_fs_tests.rs"]
+mod tests;

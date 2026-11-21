@@ -743,3 +743,154 @@ async fn live_namespace_view_reflects_dynamic_mount_and_revoke_immediately() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn namespace_grep_and_glob_respect_gitignore_rules() {
+    let app_fs = Arc::new(RefMemFs::writable());
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/mnt/slowpage",
+        InProcessTransport::new(app_fs),
+        Access::ReadWrite,
+    );
+    let view = Arc::new(
+        MountFs::new(ns).with_read_only_prefixes(TOOL_READ_ONLY_SYSTEM_PREFIXES.iter().copied()),
+    );
+    let ctx = tool_ctx_with_view("/mnt/slowpage", view);
+
+    let write = WriteFileTool::new();
+    for (path, content) in [
+        ("/mnt/slowpage/.gitignore", "generated/\n*.log\n"),
+        ("/mnt/slowpage/.git/info/exclude", "excluded.md\n"),
+        ("/mnt/slowpage/pages/home.md", "needle home\n"),
+        ("/mnt/slowpage/generated/out.md", "needle generated\n"),
+        ("/mnt/slowpage/debug.log", "needle root log\n"),
+        ("/mnt/slowpage/excluded.md", "needle git exclude\n"),
+        ("/mnt/slowpage/sub/.gitignore", "local_only.md\n"),
+        ("/mnt/slowpage/sub/local_only.md", "needle sub ignored\n"),
+        ("/mnt/slowpage/sub/trace.log", "needle sub log\n"),
+        ("/mnt/slowpage/sub/keep.md", "needle sub keep\n"),
+        ("/mnt/slowpage/other/local_only.md", "needle other keep\n"),
+    ] {
+        write
+            .execute(json!({"path": path, "content": content}), &ctx)
+            .await
+            .unwrap_or_else(|err| panic!("write_file({path}) failed: {err}"));
+    }
+
+    // Default respect_gitignore=true applies root .gitignore, .git/info/exclude, and nested .gitignore.
+    let grepped = GrepTool::new()
+        .execute(
+            json!({"pattern": "needle", "path": "/mnt/slowpage", "files_only": true}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let mut grep_paths: Vec<String> = grepped["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    grep_paths.sort();
+    assert_eq!(
+        grep_paths,
+        vec![
+            "/mnt/slowpage/other/local_only.md",
+            "/mnt/slowpage/pages/home.md",
+            "/mnt/slowpage/sub/keep.md",
+        ]
+    );
+
+    let globbed = GlobTool::new()
+        .execute(json!({"pattern": "**/*", "path": "/mnt/slowpage"}), &ctx)
+        .await
+        .unwrap();
+    let glob_paths: Vec<&str> = globbed["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(glob_paths.contains(&"/mnt/slowpage/pages/home.md"));
+    assert!(glob_paths.contains(&"/mnt/slowpage/sub/keep.md"));
+    assert!(glob_paths.contains(&"/mnt/slowpage/other/local_only.md"));
+    assert!(!glob_paths.contains(&"/mnt/slowpage/generated/out.md"));
+    assert!(!glob_paths.contains(&"/mnt/slowpage/debug.log"));
+    assert!(!glob_paths.contains(&"/mnt/slowpage/excluded.md"));
+    assert!(!glob_paths.contains(&"/mnt/slowpage/sub/local_only.md"));
+    assert!(!glob_paths.contains(&"/mnt/slowpage/sub/trace.log"));
+
+    // Starting inside a subdirectory still inherits ancestor .gitignore rules.
+    let sub_grepped = GrepTool::new()
+        .execute(
+            json!({"pattern": "needle", "path": "/mnt/slowpage/sub", "files_only": true}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let sub_paths: Vec<&str> = sub_grepped["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(sub_paths, vec!["/mnt/slowpage/sub/keep.md"]);
+
+    // respect_gitignore=false includes ignored directories and files.
+    let unfiltered_grep = GrepTool::new()
+        .execute(
+            json!({
+                "pattern": "needle",
+                "path": "/mnt/slowpage",
+                "files_only": true,
+                "respect_gitignore": false
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let mut unfiltered_paths: Vec<String> = unfiltered_grep["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    unfiltered_paths.sort();
+    assert_eq!(
+        unfiltered_paths,
+        vec![
+            "/mnt/slowpage/debug.log",
+            "/mnt/slowpage/excluded.md",
+            "/mnt/slowpage/generated/out.md",
+            "/mnt/slowpage/other/local_only.md",
+            "/mnt/slowpage/pages/home.md",
+            "/mnt/slowpage/sub/keep.md",
+            "/mnt/slowpage/sub/local_only.md",
+            "/mnt/slowpage/sub/trace.log",
+        ]
+    );
+
+    let unfiltered_glob = GlobTool::new()
+        .execute(
+            json!({
+                "pattern": "**/*",
+                "path": "/mnt/slowpage",
+                "respect_gitignore": false
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let unfiltered_glob_paths: Vec<&str> = unfiltered_glob["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(unfiltered_glob_paths.contains(&"/mnt/slowpage/generated/out.md"));
+    assert!(unfiltered_glob_paths.contains(&"/mnt/slowpage/debug.log"));
+    assert!(unfiltered_glob_paths.contains(&"/mnt/slowpage/excluded.md"));
+    assert!(unfiltered_glob_paths.contains(&"/mnt/slowpage/sub/local_only.md"));
+    assert!(unfiltered_glob_paths.contains(&"/mnt/slowpage/sub/trace.log"));
+}

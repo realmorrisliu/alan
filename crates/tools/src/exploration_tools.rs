@@ -762,7 +762,7 @@ impl Tool for ListDirTool {
             };
             let ns = NamespaceFs::new(transport);
             return Box::pin(async move {
-                let entries = ns.list_dir_entries(&path).await?;
+                let (entries, truncated) = ns.list_dir_entries(&path).await?;
                 let items: Vec<Value> = entries
                     .into_iter()
                     .map(|entry| {
@@ -776,7 +776,8 @@ impl Tool for ListDirTool {
                 Ok(json!({
                     "path": path,
                     "entries": items,
-                    "total": items.len()
+                    "total": items.len(),
+                    "truncated": truncated
                 }))
             });
         }
@@ -827,7 +828,8 @@ impl Tool for ListDirTool {
             Ok(json!({
                 "path": visible_path,
                 "entries": items,
-                "total": items.len()
+                "total": items.len(),
+                "truncated": false
             }))
         })
     }
