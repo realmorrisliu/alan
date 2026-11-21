@@ -262,12 +262,14 @@ impl NamespaceFs {
     }
 
     /// Recursively collect regular files (`FileKind::File`) under directory `root`,
-    /// skipping `FileKind::Stream` and `FileKind::Clone` without opening them.
+    /// skipping `FileKind::Stream`, `FileKind::Clone`, and any path in `skip_prefixes`
+    /// without opening them.
     pub(crate) async fn walk_files(
         &self,
         root: &str,
         include_hidden: bool,
         respect_gitignore: bool,
+        skip_prefixes: &[&str],
         max_depth: usize,
         max_entries: usize,
     ) -> Result<(Vec<NamespaceWalkFile>, bool)> {
@@ -291,6 +293,9 @@ impl NamespaceFs {
                 visited += 1;
 
                 let child_path = join_child(&dir_path, &name);
+                if skip_prefixes.contains(&child_path.as_str()) {
+                    continue;
+                }
                 let stat = match self.stat_raw(&child_path).await {
                     Ok(stat) => stat,
                     Err(ErrorCode::NotFound | ErrorCode::NoAccess | ErrorCode::Unsupported) => {
@@ -453,7 +458,7 @@ impl NamespaceFs {
         let mut offset = 0u64;
         let mut remaining = data;
         while !remaining.is_empty() {
-            let chunk_len = remaining.len().min(IO_CHUNK_BYTES);
+            let chunk_len = remaining.len().min(u32::MAX as usize);
             let accepted = match self
                 .transport
                 .call(Request::Write {

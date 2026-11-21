@@ -222,6 +222,30 @@ async fn read_only_prefixes_clamp_system_mounts_while_tracking_live_data_mounts(
     );
     assert_eq!(view.remove(Fid(10)).await, Err(ErrorCode::NoAccess));
 
+    // Non-canonical Walk segments (leading empty segment or slash-joined segment) must stay clamped.
+    for (fid_num, names) in [
+        (
+            15,
+            vec![
+                "".to_string(),
+                "mnt".into(),
+                "connections".into(),
+                "ctl".into(),
+            ],
+        ),
+        (16, vec!["mnt/connections/ctl".to_string()]),
+    ] {
+        let fid = Fid(fid_num);
+        view.walk(Fid::ROOT, fid, &names).await.unwrap();
+        assert!(!view.stat(fid).await.unwrap().writable, "{names:?}");
+        assert_eq!(
+            view.open(fid, OpenMode::Write).await,
+            Err(ErrorCode::NoAccess),
+            "{names:?}"
+        );
+        view.clunk(fid).await.unwrap();
+    }
+
     view.walk(Fid::ROOT, Fid(11), &["mnt".into(), "connections".into()])
         .await
         .unwrap();

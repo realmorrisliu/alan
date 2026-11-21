@@ -394,6 +394,11 @@ async fn grep_namespace(
     matches: &mut Vec<Value>,
     truncated: &mut bool,
 ) -> Result<()> {
+    if root == "/agent" || root.starts_with("/agent/") {
+        return Err(anyhow!(
+            "Searching under '/agent' is not permitted; read your own retained Action output with read_file"
+        ));
+    }
     let stat = ns.stat(root).await?;
     let root_path = Path::new(root);
     match stat.qid.kind {
@@ -413,6 +418,7 @@ async fn grep_namespace(
                     root,
                     false,
                     opts.respect_gitignore,
+                    &["/agent"],
                     MAX_NAMESPACE_WALK_DEPTH,
                     MAX_NAMESPACE_WALK_ENTRIES,
                 )
@@ -682,6 +688,7 @@ async fn glob_namespace(
                 base_path,
                 include_hidden,
                 respect_gitignore,
+                &[],
                 MAX_NAMESPACE_WALK_DEPTH,
                 MAX_NAMESPACE_WALK_ENTRIES,
             )

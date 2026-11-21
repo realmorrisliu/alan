@@ -670,6 +670,93 @@ async fn writable_memfs_replaces_shorter_write_only_documents_on_clunk() {
         .unwrap();
     assert_eq!(empty_resp, Response::Read { data: Vec::new() });
     t.call(Request::Clunk { fid: Fid(5) }).await.unwrap();
+
+    // Failed write (whether on first or later chunk) must never commit partial or empty data.
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(6),
+        names: vec!["note.txt".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(6),
+        mode: OpenMode::Write,
+    })
+    .await
+    .unwrap();
+    t.call(Request::Write {
+        fid: Fid(6),
+        offset: 0,
+        data: b"original".to_vec(),
+    })
+    .await
+    .unwrap();
+    t.call(Request::Clunk { fid: Fid(6) }).await.unwrap();
+
+    for (base_fid, prefix) in [(7u64, None), (9u64, Some(b"partial".as_slice()))] {
+        let fid = Fid(base_fid);
+        t.call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: fid,
+            names: vec!["note.txt".into()],
+        })
+        .await
+        .unwrap();
+        t.call(Request::Open {
+            fid,
+            mode: OpenMode::Write,
+        })
+        .await
+        .unwrap();
+        if let Some(bytes) = prefix {
+            t.call(Request::Write {
+                fid,
+                offset: 0,
+                data: bytes.to_vec(),
+            })
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            t.call(Request::Write {
+                fid,
+                offset: 1 << 20,
+                data: b"overflow".to_vec(),
+            })
+            .await,
+            Err(ErrorCode::BadRequest)
+        );
+        t.call(Request::Clunk { fid }).await.unwrap();
+
+        let read_fid = Fid(base_fid + 1);
+        t.call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: read_fid,
+            names: vec!["note.txt".into()],
+        })
+        .await
+        .unwrap();
+        t.call(Request::Open {
+            fid: read_fid,
+            mode: OpenMode::Read,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            t.call(Request::Read {
+                fid: read_fid,
+                offset: 0,
+                count: 64,
+            })
+            .await
+            .unwrap(),
+            Response::Read {
+                data: b"original".to_vec()
+            }
+        );
+        t.call(Request::Clunk { fid: read_fid }).await.unwrap();
+    }
 }
 
 #[tokio::test]

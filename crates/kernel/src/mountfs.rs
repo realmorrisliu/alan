@@ -240,15 +240,18 @@ impl MountFs {
         self
     }
 
-    fn is_clamped_read_only(&self, path: &[String]) -> bool {
+    fn is_clamped_read_only(&self, normalized_path: &[String]) -> bool {
         self.read_only_prefixes.iter().any(|prefix| {
-            path.len() >= prefix.len() && prefix.iter().zip(path).all(|(a, b)| a == b)
+            normalized_path.len() >= prefix.len()
+                && prefix.iter().zip(normalized_path).all(|(a, b)| a == b)
         })
     }
 
     fn resolve_candidates(&self, path: &[String]) -> Vec<Resolved> {
-        let mut candidates = self.ns.resolve_candidates(&join_path(path));
-        if self.is_clamped_read_only(path) {
+        let joined = join_path(path);
+        let normalized = split_path(&joined);
+        let mut candidates = self.ns.resolve_candidates(&joined);
+        if self.is_clamped_read_only(&normalized) {
             for candidate in &mut candidates {
                 candidate.access = crate::Access::ReadOnly;
             }
@@ -715,7 +718,7 @@ impl FileServer for MountFs {
             let backing_fid = backing.backing_fid;
             let mut path = entry.path.clone();
             path.push(name.to_string());
-            if self.is_clamped_read_only(&path) {
+            if self.is_clamped_read_only(&split_path(&join_path(&path))) {
                 return Err(ErrorCode::NoAccess);
             }
             state.fids.insert(

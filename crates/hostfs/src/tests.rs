@@ -525,3 +525,25 @@ async fn rejects_parent_traversal_components() {
         ErrorCode::BadRequest
     );
 }
+
+#[tokio::test]
+async fn failed_multi_chunk_write_never_commits_partial_bytes_on_clunk() {
+    let temp = tempfile::tempdir().unwrap();
+    let target = temp.path().join("notes.txt");
+    std::fs::write(&target, "original").unwrap();
+    let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+    fs.walk(Fid::ROOT, Fid(1), &["notes.txt".to_string()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::Write).await.unwrap();
+    fs.write(Fid(1), 0, b"partial").await.unwrap();
+    assert_eq!(
+        fs.write(Fid(1), MAX_BUFFERED_FILE_BYTES as u64, b"overflow")
+            .await,
+        Err(ErrorCode::BadRequest)
+    );
+    fs.clunk(Fid(1)).await.unwrap();
+
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original");
+}

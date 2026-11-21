@@ -57,6 +57,7 @@ struct MemFid {
     mode: Option<OpenMode>,
     write_buf: Vec<u8>,
     wrote: bool,
+    write_failed: bool,
     file_generation: Option<u64>,
 }
 
@@ -378,6 +379,7 @@ impl FileServer for MemFs {
                 mode: None,
                 write_buf: Vec::new(),
                 wrote: false,
+                write_failed: false,
                 file_generation,
             },
         );
@@ -448,9 +450,16 @@ impl FileServer for MemFs {
         if !matches!(f.node, Node::File(_)) {
             return Err(ErrorCode::Unsupported);
         }
-        let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-        let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
+        let Some(start) = usize::try_from(offset).ok() else {
+            f.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        };
+        let Some(end) = start.checked_add(data.len()) else {
+            f.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        };
         if end > MAX_DOC_BYTES {
+            f.write_failed = true;
             return Err(ErrorCode::BadRequest);
         }
         if f.write_buf.len() < end {
@@ -515,6 +524,7 @@ impl FileServer for MemFs {
                 mode: None,
                 write_buf: Vec::new(),
                 wrote: false,
+                write_failed: false,
                 file_generation: Some(file_generation),
             },
         );
@@ -551,6 +561,7 @@ impl FileServer for MemFs {
         let f = state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
         if let Node::File(name) = f.node
             && f.wrote
+            && !f.write_failed
         {
             let generation = f.file_generation.ok_or(ErrorCode::NotFound)?;
             state.put_existing_file(name, generation, &f.write_buf)?;

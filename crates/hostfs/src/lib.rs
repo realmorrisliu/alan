@@ -56,6 +56,7 @@ struct HostFid {
     write_identity: Option<HostFileIdentity>,
     write_buf: Vec<u8>,
     wrote: bool,
+    write_failed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -241,6 +242,7 @@ impl FileServer for HostDirFs {
                 write_identity: None,
                 write_buf: Vec::new(),
                 wrote: false,
+                write_failed: false,
             },
         );
         Ok(qid)
@@ -332,14 +334,31 @@ impl FileServer for HostDirFs {
         if !matches!(fid_state.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
             return Err(ErrorCode::NoAccess);
         }
-        match self.entry_kind_for_rel(&fid_state.rel)? {
-            HostEntryKind::File => {}
-            HostEntryKind::Dir => return Err(ErrorCode::IsDirectory),
-            HostEntryKind::Symlink => return Err(ErrorCode::NoAccess),
+        match self.entry_kind_for_rel(&fid_state.rel) {
+            Ok(HostEntryKind::File) => {}
+            Ok(HostEntryKind::Dir) => {
+                fid_state.write_failed = true;
+                return Err(ErrorCode::IsDirectory);
+            }
+            Ok(HostEntryKind::Symlink) => {
+                fid_state.write_failed = true;
+                return Err(ErrorCode::NoAccess);
+            }
+            Err(err) => {
+                fid_state.write_failed = true;
+                return Err(err);
+            }
         }
-        let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-        let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
+        let Some(start) = usize::try_from(offset).ok() else {
+            fid_state.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        };
+        let Some(end) = start.checked_add(data.len()) else {
+            fid_state.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        };
         if end > MAX_BUFFERED_FILE_BYTES {
+            fid_state.write_failed = true;
             return Err(ErrorCode::BadRequest);
         }
         if fid_state.write_buf.len() < end {
@@ -423,6 +442,7 @@ impl FileServer for HostDirFs {
                 write_identity: None,
                 write_buf: Vec::new(),
                 wrote: false,
+                write_failed: false,
             },
         );
         Ok(qid)
@@ -450,7 +470,7 @@ impl FileServer for HostDirFs {
         }
         let fids = &mut state.fids;
         let fid_state = fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
-        if fid_state.wrote {
+        if fid_state.wrote && !fid_state.write_failed {
             let identity = fid_state.write_identity.ok_or(ErrorCode::BadRequest)?;
             atomic_replace_file(
                 &self.root_dir,
