@@ -15,6 +15,7 @@ use anyhow::{Context, Result, bail};
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 mod action_detail_io;
 mod app;
+mod doctor;
 mod file_surface;
 mod fork_picker;
 mod history_merge;

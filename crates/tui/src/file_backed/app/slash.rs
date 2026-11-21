@@ -11,6 +11,7 @@ impl FileBackedApp {
             "login" => self.login_command(command.strip_prefix("login").unwrap_or("")),
             "settings" => self.settings_command(command.strip_prefix("settings").unwrap_or("")),
             "status" => self.model_status_command(),
+            "doctor" => self.doctor_command(),
             "model" => self.model_command(command.strip_prefix("model").unwrap_or("").trim()),
             "resume" => self.resume_command(command.strip_prefix("resume").unwrap_or("")),
             "fork" => self.fork_command(command.strip_prefix("fork").unwrap_or("")),

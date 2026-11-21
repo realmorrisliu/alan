@@ -6,8 +6,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use super::{
-    about, connection, host, login, man, memory, q, reset, skill_authoring, skills, skills_list,
-    trust, update, workflow,
+    about, connection, doctor, host, login, man, memory, q, reset, skill_authoring, skills,
+    skills_list, trust, update, workflow,
 };
 
 /// Top-level `alan` command-line interface.
@@ -87,6 +87,8 @@ pub enum Commands {
     },
     /// Display the Alan card and Standard Namespace overview
     About,
+    /// Run fast, read-only local diagnostics for stores, sandbox, and connections
+    Doctor(doctor::DoctorArgs),
     /// Read alan9 UNIX manual pages (/man)
     Man {
         /// Optional manual topic or section/name (e.g. `alan9`, `1/q`)
@@ -567,6 +569,7 @@ pub async fn dispatch_subcommand(command: Commands) -> Result<Option<LegacyState
         } => login::run_login(provider, no_browser, device, profile).await?,
         Commands::Skills { action } => dispatch_skills(action)?,
         Commands::About => about::run()?,
+        Commands::Doctor(args) => doctor::run(args)?,
         Commands::Man { topic } => man::run(topic.as_deref())?,
         Commands::Q(args) => q::run(args).await?,
         Commands::Memory(args) => memory::run(args).await?,
