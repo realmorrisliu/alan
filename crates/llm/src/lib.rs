@@ -50,6 +50,7 @@ pub mod anthropic_messages;
 pub mod chatgpt_responses;
 pub mod factory;
 mod failure;
+pub mod gemini_catalog;
 #[cfg(feature = "provider-vertex")]
 pub mod google_gemini_generate_content;
 #[cfg(feature = "provider-magpie")]

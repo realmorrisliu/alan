@@ -76,10 +76,9 @@ impl TurnSignatures {
     }
 }
 
-/// Whether the model validates function-call signatures (Gemini 3 and later).
+/// Whether the model validates function-call signatures (Gemini 3.x / 4.x+).
 pub(super) fn model_requires_call_signatures(model: &str) -> bool {
-    let model = model.to_ascii_lowercase();
-    !(model.contains("gemini-1") || model.contains("gemini-2"))
+    crate::gemini_catalog::model_requires_call_signatures(model)
 }
 
 #[cfg(test)]
@@ -113,6 +112,9 @@ mod tests {
         assert!(model_requires_call_signatures(
             "gemini-3.1-flash-lite-preview"
         ));
+        assert!(model_requires_call_signatures("gemini-4.0-pro-preview"));
+        assert!(model_requires_call_signatures("gemini-10-pro"));
         assert!(!model_requires_call_signatures("gemini-2.5-pro"));
+        assert!(!model_requires_call_signatures("gemini-1.5-pro"));
     }
 }

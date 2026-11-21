@@ -4,7 +4,9 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use alan_ap::{ErrorCode, Stream};
-use alan_llm::{LlmProvider, ProviderCapabilities, StreamChunk, TokenUsage, ToolCallDelta};
+use alan_llm::{
+    LlmProvider, ProviderCapabilities, ProviderModel, StreamChunk, TokenUsage, ToolCallDelta,
+};
 use serde::Serialize;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
@@ -186,6 +188,8 @@ pub(super) struct Connection {
     pub(super) choice_evaluation: bool,
     pub(super) generation_supported: bool,
     limits: ConnectionLimits,
+    live_models: StdMutex<Option<Vec<ProviderModel>>>,
+    models_version: AtomicU32,
     evaluation_starts: AtomicU64,
     generation_starts: AtomicU64,
     total_tokens: AtomicU64,
@@ -210,11 +214,26 @@ impl Connection {
             credential_ref,
             capabilities,
             limits,
+            live_models: StdMutex::new(None),
+            models_version: AtomicU32::new(0),
             evaluation_starts: AtomicU64::new(0),
             generation_starts: AtomicU64::new(0),
             total_tokens: AtomicU64::new(0),
             meter_version: AtomicU32::new(0),
         }
+    }
+
+    pub(super) fn set_live_models(&self, models: Option<Vec<ProviderModel>>) {
+        *self.live_models.lock().unwrap() = models;
+        self.models_version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(super) fn live_models(&self) -> Option<Vec<ProviderModel>> {
+        self.live_models.lock().unwrap().clone()
+    }
+
+    pub(super) fn models_version(&self) -> u32 {
+        self.models_version.load(Ordering::Relaxed)
     }
 
     pub(super) fn try_reserve(&self, evaluation: bool) -> Result<(), ErrorCode> {

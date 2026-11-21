@@ -469,6 +469,17 @@ impl ConnectionService {
                 "model is unavailable in Connection catalog"
             );
         }
+        if config.llm_provider == alan_agent_engine::LlmProvider::GoogleGeminiGenerateContent
+            && config.effective_model_info().is_none()
+            && alan_llm::gemini_catalog::is_valid_gemini_publisher_slug(config.effective_model())
+        {
+            let inferred =
+                alan_llm::gemini_catalog::infer_gemini_provider_model(config.effective_model());
+            let updated_catalog = config
+                .resolved_model_catalog()
+                .with_google_gemini_model(inferred)?;
+            config.set_model_catalog(Arc::new(updated_catalog));
+        }
         if config.context_window_tokens.is_none()
             && config.effective_model_info().is_none()
             && let Some(published) = published_catalog
@@ -499,7 +510,24 @@ impl ConnectionService {
                 "provider account changed since callable publication"
             );
             let llmfs = alan_llmfs::LlmFs::new();
-            llmfs.register_connection(profile_id, Box::new(ConnectionLlmProvider { client }));
+            let settings = crate::connection_profile::normalize_profile_settings(
+                original.provider,
+                &connections.profiles[profile_id].settings,
+            );
+            llmfs.register_connection_profile(
+                profile_id,
+                alan_llmfs::ConnectionProfile::new(
+                    original.provider.as_str(),
+                    settings.get("model").cloned().unwrap_or_default(),
+                    original.credential_id.clone().unwrap_or_default(),
+                ),
+                Box::new(ConnectionLlmProvider { client }),
+            );
+            if let Some(published) = published_catalog {
+                llmfs.set_connection_models(profile_id, published.models.clone());
+            } else if let Some(live) = registry.llmfs.connection_models(profile_id) {
+                llmfs.set_connection_models(profile_id, live);
+            }
             llmfs.connection_snapshot(profile_id)
         };
         // Only non-secret metadata names the exact restore revision.

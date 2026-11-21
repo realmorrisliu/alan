@@ -51,7 +51,6 @@ struct ModelCatalogToml {
     openai_responses: ProviderCatalogToml,
     openai_chat_completions: ProviderCatalogToml,
     openai_chat_completions_compatible: ProviderCatalogToml,
-    google_gemini_generate_content: ProviderCatalogToml,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,10 +104,10 @@ static BASE_MODEL_CATALOG: LazyLock<ModelCatalog> = LazyLock::new(|| {
             ModelCatalogProvider::OpenAiChatCompletionsCompatible,
             catalog.openai_chat_completions_compatible,
         ),
-        google_gemini_generate_content: ProviderCatalog::from_toml(
-            ModelCatalogProvider::GoogleGeminiGenerateContent,
-            catalog.google_gemini_generate_content,
-        ),
+        google_gemini_generate_content: ProviderCatalog::from_google_gemini_models(
+            alan_llm::gemini_catalog::vertex_baseline_catalog(),
+        )
+        .expect("baseline Gemini model catalog is valid"),
     }
 });
 
@@ -149,6 +148,38 @@ impl ModelCatalog {
                 .collect(),
         };
         catalog.chatgpt.validate()?;
+        Ok(catalog)
+    }
+
+    /// Replace Vertex AI Gemini entries with a live-discovered (or merged) model list.
+    pub fn with_google_gemini_models(
+        &self,
+        models: Vec<alan_llm::ProviderModel>,
+    ) -> anyhow::Result<Self> {
+        let mut catalog = self.clone();
+        catalog.google_gemini_generate_content =
+            ProviderCatalog::from_google_gemini_models(models)?;
+        Ok(catalog)
+    }
+
+    /// Overlay one explicit official `gemini-*` model entry onto the Vertex AI catalog
+    /// when not already present, preserving all existing models.
+    pub fn with_google_gemini_model(&self, model: alan_llm::ProviderModel) -> anyhow::Result<Self> {
+        let mut catalog = self.clone();
+        let normalized = normalize_model_id(&model.slug);
+        if catalog
+            .google_gemini_generate_content
+            .entries
+            .iter()
+            .any(|entry| entry.matches(&normalized))
+        {
+            return Ok(catalog);
+        }
+        catalog
+            .google_gemini_generate_content
+            .entries
+            .push(google_gemini_entry(model, Vec::new()));
+        catalog.google_gemini_generate_content.validate()?;
         Ok(catalog)
     }
 
@@ -193,6 +224,42 @@ impl ModelCatalog {
 }
 
 impl ProviderCatalog {
+    fn from_google_gemini_models(models: Vec<alan_llm::ProviderModel>) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            !models.is_empty(),
+            "Vertex AI Gemini model catalog is empty"
+        );
+        let slug_set: HashSet<String> = models
+            .iter()
+            .map(|model| normalize_model_id(&model.slug))
+            .collect();
+        let default_model = if slug_set.contains(alan_llm::gemini_catalog::GEMINI_DEFAULT_MODEL) {
+            alan_llm::gemini_catalog::GEMINI_DEFAULT_MODEL.to_string()
+        } else {
+            models[0].slug.clone()
+        };
+        let entries = models
+            .into_iter()
+            .map(|model| {
+                let mut aliases = Vec::new();
+                if model.slug == "gemini-3-pro-preview" && !slug_set.contains("gemini-3.0-pro") {
+                    aliases.push("gemini-3.0-pro".to_string());
+                } else if model.slug == "gemini-3-flash-preview"
+                    && !slug_set.contains("gemini-3.0-flash")
+                {
+                    aliases.push("gemini-3.0-flash".to_string());
+                }
+                google_gemini_entry(model, aliases)
+            })
+            .collect();
+        let catalog = Self {
+            default_model,
+            entries,
+        };
+        catalog.validate()?;
+        Ok(catalog)
+    }
+
     fn from_toml(provider: ModelCatalogProvider, raw: ProviderCatalogToml) -> Self {
         let entries = raw
             .models
@@ -367,6 +434,24 @@ fn derived_default_reasoning_effort(
     }
 }
 
+fn google_gemini_entry(model: alan_llm::ProviderModel, aliases: Vec<String>) -> CatalogEntry {
+    let family = alan_llm::gemini_catalog::gemini_model_family(&model.slug);
+    CatalogEntry {
+        accepts_date_suffixes: false,
+        info: ModelInfo {
+            slug: model.slug,
+            aliases,
+            provider: ModelCatalogProvider::GoogleGeminiGenerateContent,
+            family,
+            context_window_tokens: model.context_window_tokens,
+            supports_reasoning: !model.supported_reasoning_efforts.is_empty(),
+            supported_reasoning_efforts: model.supported_reasoning_efforts,
+            default_reasoning_effort: model.default_reasoning_effort,
+            effort_budget_tokens: BTreeMap::new(),
+        },
+    }
+}
+
 fn normalize_model_id(model: &str) -> String {
     model.trim().to_ascii_lowercase()
 }
@@ -475,5 +560,52 @@ mod tests {
             ]
         );
         assert_eq!(gpt.default_reasoning_effort, Some(ReasoningEffort::Medium));
+    }
+
+    #[test]
+    fn gemini_baseline_matches_alan_llm_and_supports_live_and_custom_overlays() {
+        assert_eq!(
+            default_model_slug(ModelCatalogProvider::GoogleGeminiGenerateContent),
+            alan_llm::gemini_catalog::GEMINI_DEFAULT_MODEL
+        );
+        let expected: Vec<String> = alan_llm::gemini_catalog::vertex_baseline_catalog()
+            .into_iter()
+            .map(|m| m.slug)
+            .collect();
+        let actual: Vec<String> = base_catalog()
+            .supported_model_slugs(ModelCatalogProvider::GoogleGeminiGenerateContent)
+            .into_iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(actual, expected);
+
+        let alias_hit = base_catalog()
+            .find_model_info(
+                ModelCatalogProvider::GoogleGeminiGenerateContent,
+                "gemini-3.0-pro",
+            )
+            .expect("legacy alias should resolve");
+        assert_eq!(alias_hit.slug, "gemini-3-pro-preview");
+
+        let custom =
+            alan_llm::gemini_catalog::infer_gemini_provider_model("gemini-4.5-pro-preview");
+        let overlaid = base_catalog().with_google_gemini_model(custom).unwrap();
+        let found = overlaid
+            .find_model_info(
+                ModelCatalogProvider::GoogleGeminiGenerateContent,
+                "gemini-4.5-pro-preview",
+            )
+            .expect("custom overlay model should resolve");
+        assert_eq!(found.family, "gemini-4.5");
+        assert_eq!(found.default_reasoning_effort, Some(ReasoningEffort::High));
+        assert!(
+            overlaid
+                .find_model_info(
+                    ModelCatalogProvider::GoogleGeminiGenerateContent,
+                    "gemini-2.5-flash"
+                )
+                .is_some(),
+            "overlay must retain existing baseline models"
+        );
     }
 }

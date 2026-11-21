@@ -349,8 +349,14 @@ fn rejects_unqualified_extended_reasoning_efforts() {
 
 #[tokio::test]
 async fn model_catalog_exposes_gemini_25_and_3_models() {
-    let client =
-        GoogleGeminiGenerateContentClient::with_params("test-project", "global", "gemini-2.5-pro");
+    let client = GoogleGeminiGenerateContentClient::from_vertex_config(VertexClientConfig {
+        project_id: None,
+        location: "global".to_string(),
+        model: "gemini-2.5-pro".to_string(),
+        auth: VertexAuth::ApiKey("test-express-key".to_string()),
+        base_url: None,
+    })
+    .unwrap();
     let catalog = client.model_catalog().await.unwrap().expect("catalog");
     let slugs: Vec<&str> = catalog.iter().map(|m| m.slug.as_str()).collect();
     assert!(slugs.contains(&"gemini-2.5-pro"));
@@ -358,4 +364,6 @@ async fn model_catalog_exposes_gemini_25_and_3_models() {
     assert!(slugs.contains(&"gemini-2.5-flash-lite"));
     assert!(slugs.contains(&"gemini-3-pro-preview"));
     assert!(slugs.contains(&"gemini-3-flash-preview"));
+    assert!(slugs.contains(&"gemini-3.1-pro-preview"));
+    assert!(slugs.contains(&"gemini-3.1-flash-lite-preview"));
 }

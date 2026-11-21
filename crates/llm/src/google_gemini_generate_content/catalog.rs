@@ -1,110 +1,219 @@
-//! Vertex AI Gemini model catalog and per-model thinking / tool-streaming capabilities.
+//! Vertex AI Gemini live model discovery, curated fallback, and per-model thinking config.
 
-use anyhow::Result;
+use std::collections::HashSet;
+use std::time::Duration;
 
+use anyhow::{Context, Result, ensure};
+use serde::Deserialize;
+use serde_json::Value;
+use tracing::warn;
+
+use crate::gemini_catalog::{
+    GeminiVersion, is_gemini_flash, is_gemini_flash_lite, is_gemini_pro,
+    is_selectable_gemini_generate_content_slug, merge_and_sort_vertex_catalog,
+    normalize_gemini_slug, parse_gemini_version, vertex_baseline_catalog,
+};
 use crate::{ProviderModel, ReasoningEffort};
 
+use super::endpoint::Transport;
 use super::wire::ThinkingConfig;
 
-const ONE_MILLION_CONTEXT: u32 = 1_048_576;
+pub(super) use crate::gemini_catalog::supports_stream_function_call_arguments;
 
-/// Known Vertex AI Gemini models, context windows, and reasoning effort controls.
-pub(super) fn vertex_model_catalog() -> Vec<ProviderModel> {
-    vec![
-        ProviderModel {
-            slug: "gemini-2.5-pro".to_string(),
-            context_window_tokens: ONE_MILLION_CONTEXT,
-            supported_reasoning_efforts: vec![
-                ReasoningEffort::Minimal,
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-                ReasoningEffort::XHigh,
-            ],
-            default_reasoning_effort: Some(ReasoningEffort::High),
-        },
-        ProviderModel {
-            slug: "gemini-2.5-flash".to_string(),
-            context_window_tokens: ONE_MILLION_CONTEXT,
-            supported_reasoning_efforts: vec![
-                ReasoningEffort::None,
-                ReasoningEffort::Minimal,
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-                ReasoningEffort::XHigh,
-            ],
-            default_reasoning_effort: Some(ReasoningEffort::Medium),
-        },
-        ProviderModel {
-            slug: "gemini-2.5-flash-lite".to_string(),
-            context_window_tokens: ONE_MILLION_CONTEXT,
-            supported_reasoning_efforts: vec![
-                ReasoningEffort::None,
-                ReasoningEffort::Minimal,
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-                ReasoningEffort::XHigh,
-            ],
-            default_reasoning_effort: Some(ReasoningEffort::None),
-        },
-        ProviderModel {
-            slug: "gemini-3-pro-preview".to_string(),
-            context_window_tokens: ONE_MILLION_CONTEXT,
-            supported_reasoning_efforts: vec![ReasoningEffort::Low, ReasoningEffort::High],
-            default_reasoning_effort: Some(ReasoningEffort::High),
-        },
-        ProviderModel {
-            slug: "gemini-3-flash-preview".to_string(),
-            context_window_tokens: ONE_MILLION_CONTEXT,
-            supported_reasoning_efforts: vec![
-                ReasoningEffort::Minimal,
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-            ],
-            default_reasoning_effort: Some(ReasoningEffort::Medium),
-        },
-        ProviderModel {
-            slug: "gemini-3.1-pro-preview".to_string(),
-            context_window_tokens: ONE_MILLION_CONTEXT,
-            supported_reasoning_efforts: vec![
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-            ],
-            default_reasoning_effort: Some(ReasoningEffort::High),
-        },
-        ProviderModel {
-            slug: "gemini-3.1-flash-lite-preview".to_string(),
-            context_window_tokens: ONE_MILLION_CONTEXT,
-            supported_reasoning_efforts: vec![
-                ReasoningEffort::Minimal,
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-            ],
-            default_reasoning_effort: Some(ReasoningEffort::Low),
-        },
-    ]
+const CATALOG_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_CATALOG_PAGE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_CATALOG_TOTAL_BYTES: usize = 16 * 1024 * 1024;
+const MAX_CATALOG_PAGES: usize = 10;
+const DEFAULT_CATALOG_PAGE_SIZE: &str = "100";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublisherModelsPage {
+    #[serde(default)]
+    publisher_models: Vec<Value>,
+    #[serde(default)]
+    next_page_token: Option<String>,
 }
 
-/// Whether Vertex AI supports `streamFunctionCallArguments` for `model`.
-pub(super) fn supports_stream_function_call_arguments(model: &str) -> bool {
-    model.to_ascii_lowercase().contains("gemini-3")
+/// Discover live Vertex AI Gemini models in OAuth/ADC mode, falling back cleanly
+/// to the curated baseline catalog in Express Mode or when live discovery fails.
+pub(super) async fn discover_vertex_model_catalog(transport: &Transport) -> Vec<ProviderModel> {
+    if transport.is_express_mode() {
+        return vertex_baseline_catalog();
+    }
+    match fetch_live_vertex_model_catalog(transport).await {
+        Ok(models) => models,
+        Err(err) => {
+            warn!(
+                reason = %err,
+                "Vertex AI live model catalog unavailable; falling back to curated Gemini baseline"
+            );
+            vertex_baseline_catalog()
+        }
+    }
+}
+
+/// Strictly fetch and parse `GET {catalog_host}/v1beta1/publishers/google/models`.
+///
+/// Enforces total timeout, per-page and total byte caps, and pagination page cap.
+/// Never leaks auth material or raw provider response bodies in error diagnostics.
+pub(super) async fn fetch_live_vertex_model_catalog(
+    transport: &Transport,
+) -> Result<Vec<ProviderModel>> {
+    fetch_live_vertex_model_catalog_with_limits(
+        transport,
+        CATALOG_TIMEOUT,
+        MAX_CATALOG_PAGE_BYTES,
+        MAX_CATALOG_TOTAL_BYTES,
+        MAX_CATALOG_PAGES,
+    )
+    .await
+}
+
+pub(super) async fn fetch_live_vertex_model_catalog_with_limits(
+    transport: &Transport,
+    timeout: Duration,
+    max_page_bytes: usize,
+    max_total_bytes: usize,
+    max_pages: usize,
+) -> Result<Vec<ProviderModel>> {
+    tokio::time::timeout(timeout, async {
+        let mut discovered_slugs = Vec::new();
+        let mut seen_tokens = HashSet::new();
+        let mut next_page_token: Option<String> = None;
+        let mut total_bytes: usize = 0;
+
+        for _ in 0..max_pages.max(1) {
+            let mut url = reqwest::Url::parse(transport.endpoint.catalog_url())
+                .map_err(|_| anyhow::anyhow!("Invalid Vertex AI model catalog URL"))?;
+            {
+                let mut pairs = url.query_pairs_mut();
+                pairs.append_pair("pageSize", DEFAULT_CATALOG_PAGE_SIZE);
+                if let Some(token) = next_page_token.as_deref() {
+                    pairs.append_pair("pageToken", token);
+                }
+            }
+
+            let mut response = transport.get_catalog_page(&url).await?;
+            let remaining_total = max_total_bytes.saturating_sub(total_bytes);
+            let page_cap = max_page_bytes.min(remaining_total);
+            ensure!(
+                response
+                    .content_length()
+                    .is_none_or(|size| size <= page_cap as u64),
+                "Vertex AI model catalog exceeds size limit"
+            );
+
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|_| anyhow::anyhow!("Cannot read Vertex AI model catalog"))?
+            {
+                ensure!(
+                    chunk.len() <= page_cap.saturating_sub(bytes.len()),
+                    "Vertex AI model catalog exceeds size limit"
+                );
+                bytes.extend_from_slice(&chunk);
+            }
+            total_bytes = total_bytes.saturating_add(bytes.len());
+
+            let (page_slugs, next_token) = decode_publisher_models_page(&bytes)?;
+            discovered_slugs.extend(page_slugs);
+
+            match next_token.filter(|token| !token.trim().is_empty()) {
+                Some(token) if seen_tokens.insert(token.clone()) => {
+                    next_page_token = Some(token);
+                }
+                _ => break,
+            }
+        }
+
+        ensure!(
+            !discovered_slugs.is_empty(),
+            "Vertex AI model catalog has no selectable Gemini models"
+        );
+        Ok(merge_and_sort_vertex_catalog(discovered_slugs))
+    })
+    .await
+    .context("Vertex AI model catalog timed out")?
+}
+
+/// Leniently parse one `v1beta1/publishers/google/models` response page.
+pub(super) fn decode_publisher_models_page(bytes: &[u8]) -> Result<(Vec<String>, Option<String>)> {
+    let page: PublisherModelsPage = serde_json::from_slice(bytes)
+        .map_err(|_| anyhow::anyhow!("Invalid Vertex AI model catalog metadata"))?;
+    let mut slugs = Vec::new();
+    for entry in page.publisher_models {
+        if let Some(slug) = extract_selectable_publisher_slug(&entry) {
+            slugs.push(slug);
+        }
+    }
+    Ok((slugs, page.next_page_token))
+}
+
+fn extract_selectable_publisher_slug(entry: &Value) -> Option<String> {
+    let object = entry.as_object()?;
+    let raw_name = object.get("name")?.as_str()?;
+    let _version_id = object.get("versionId").and_then(Value::as_str);
+
+    if let Some(stage) = object.get("launchStage").and_then(Value::as_str) {
+        let normalized_stage = stage.trim().to_ascii_uppercase();
+        if matches!(
+            normalized_stage.as_str(),
+            "DEPRECATED" | "SUNSET" | "RETIRED"
+        ) {
+            return None;
+        }
+    }
+
+    if let Some(actions) = object.get("supportedActions")
+        && !supported_actions_allow_generate_content(actions)
+    {
+        return None;
+    }
+
+    let slug = normalize_gemini_slug(raw_name).to_ascii_lowercase();
+    is_selectable_gemini_generate_content_slug(&slug).then_some(slug)
+}
+
+fn supported_actions_allow_generate_content(actions: &Value) -> bool {
+    match actions {
+        Value::Array(items) => {
+            let names: Vec<&str> = items.iter().filter_map(Value::as_str).collect();
+            if names.is_empty() {
+                return true;
+            }
+            names.iter().any(|action| {
+                action.eq_ignore_ascii_case("generateContent")
+                    || action.eq_ignore_ascii_case("streamGenerateContent")
+            })
+        }
+        Value::Object(map) => {
+            let explicit_generate = map.get("generateContent").and_then(Value::as_bool);
+            let explicit_stream = map.get("streamGenerateContent").and_then(Value::as_bool);
+            if explicit_generate == Some(false) && explicit_stream != Some(true) {
+                return false;
+            }
+            true
+        }
+        _ => true,
+    }
 }
 
 /// Map canonical [`ReasoningEffort`] to Vertex AI `thinkingConfig`.
 ///
 /// Sets `includeThoughts: true` whenever thinking is active so thought parts
-/// stream back as `thought: true` summaries.
+/// stream back as `thought: true` summaries. Supports Gemini 2.5 budget-based
+/// thinking and Gemini 3.x / 4.x+ level-based thinking cleanly.
 pub(super) fn build_gemini_thinking_config(
     model: &str,
     reasoning_effort: Option<ReasoningEffort>,
 ) -> Result<Option<ThinkingConfig>> {
-    let model = model.to_ascii_lowercase();
-    if model.contains("gemini-3") {
+    let version = parse_gemini_version(model);
+    if let Some(version) = version
+        && version.major >= 3
+    {
         let Some(effort) = reasoning_effort else {
             return Ok(Some(ThinkingConfig {
                 include_thoughts: Some(true),
@@ -112,24 +221,33 @@ pub(super) fn build_gemini_thinking_config(
                 thinking_budget: None,
             }));
         };
-        let is_flash = model.contains("flash");
-        let is_3_1 = model.contains("gemini-3.1");
+        let is_flash = is_gemini_flash(model);
+        let is_3_0_pro = version.major == 3 && version.minor == 0 && !is_flash;
         let thinking_level = match effort {
             ReasoningEffort::None => {
-                anyhow::bail!("Gemini 3 does not support disabling thinking with effort `none`")
+                anyhow::bail!(
+                    "Gemini {} does not support disabling thinking with effort `none`",
+                    version.major
+                )
             }
             ReasoningEffort::Minimal if is_flash => "minimal",
             ReasoningEffort::Minimal => {
-                anyhow::bail!("Gemini 3 Pro does not support reasoning effort `minimal`")
+                anyhow::bail!(
+                    "Gemini {} Pro does not support reasoning effort `minimal`",
+                    version.major
+                )
             }
             ReasoningEffort::Low => "low",
-            ReasoningEffort::Medium if is_flash || is_3_1 => "medium",
+            ReasoningEffort::Medium if !is_3_0_pro => "medium",
             ReasoningEffort::Medium => {
                 anyhow::bail!("Gemini 3 Pro supports reasoning efforts `low` and `high`")
             }
             ReasoningEffort::High => "high",
             ReasoningEffort::XHigh | ReasoningEffort::Max | ReasoningEffort::Ultra => {
-                anyhow::bail!("Gemini 3 does not support reasoning effort `{effort}`")
+                anyhow::bail!(
+                    "Gemini {} does not support reasoning effort `{effort}`",
+                    version.major
+                )
             }
         };
         return Ok(Some(ThinkingConfig {
@@ -139,9 +257,9 @@ pub(super) fn build_gemini_thinking_config(
         }));
     }
 
-    if model.contains("gemini-2.5") {
+    if version == Some(GeminiVersion { major: 2, minor: 5 }) {
         return match reasoning_effort {
-            Some(ReasoningEffort::None) if model.contains("pro") => {
+            Some(ReasoningEffort::None) if is_gemini_pro(model) => {
                 anyhow::bail!("Gemini 2.5 Pro does not support disabling thinking")
             }
             Some(ReasoningEffort::None) => Ok(Some(ThinkingConfig {
@@ -154,7 +272,7 @@ pub(super) fn build_gemini_thinking_config(
                 thinking_level: None,
                 thinking_budget: Some(gemini_budget_for_effort(effort)?),
             })),
-            None if model.contains("flash-lite") => Ok(None),
+            None if is_gemini_flash_lite(model) => Ok(None),
             None => Ok(Some(ThinkingConfig {
                 include_thoughts: Some(true),
                 thinking_level: None,
@@ -166,7 +284,7 @@ pub(super) fn build_gemini_thinking_config(
     if reasoning_effort.is_some() {
         anyhow::bail!(
             "Gemini model `{}` does not declare reasoning effort support",
-            model
+            model.to_ascii_lowercase()
         );
     }
 
@@ -190,10 +308,11 @@ fn gemini_budget_for_effort(effort: ReasoningEffort) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gemini_catalog::{GEMINI_DEFAULT_CONTEXT_WINDOW, infer_gemini_provider_model};
 
     #[test]
     fn catalog_includes_gemini_25_and_gemini_3_models_with_valid_efforts() {
-        let catalog = vertex_model_catalog();
+        let catalog = vertex_baseline_catalog();
         for required in [
             "gemini-2.5-pro",
             "gemini-2.5-flash",
@@ -207,7 +326,7 @@ mod tests {
                 .iter()
                 .find(|entry| entry.slug == required)
                 .unwrap_or_else(|| panic!("missing catalog model {required}"));
-            assert!(model.context_window_tokens >= ONE_MILLION_CONTEXT);
+            assert!(model.context_window_tokens >= GEMINI_DEFAULT_CONTEXT_WINDOW);
             for effort in &model.supported_reasoning_efforts {
                 build_gemini_thinking_config(&model.slug, Some(*effort))
                     .unwrap_or_else(|err| panic!("{} failed effort {effort}: {err}", model.slug));
@@ -215,6 +334,36 @@ mod tests {
             if let Some(default) = model.default_reasoning_effort {
                 assert!(model.supported_reasoning_efforts.contains(&default));
             }
+        }
+    }
+
+    #[test]
+    fn future_generation_thinking_config_matches_inferred_efforts() {
+        for slug in [
+            "gemini-3.5-pro-preview",
+            "gemini-3.5-flash",
+            "gemini-4-pro",
+            "gemini-4.0-flash-lite",
+            "gemini-4.2-pro-preview",
+        ] {
+            let inferred = infer_gemini_provider_model(slug);
+            assert!(!inferred.supported_reasoning_efforts.is_empty(), "{slug}");
+            for effort in &inferred.supported_reasoning_efforts {
+                let config = build_gemini_thinking_config(slug, Some(*effort))
+                    .unwrap_or_else(|err| panic!("{slug} failed effort {effort}: {err}"))
+                    .expect("thinking config");
+                assert_eq!(config.include_thoughts, Some(true));
+                assert!(config.thinking_level.is_some());
+                assert_eq!(config.thinking_budget, None);
+            }
+            assert!(
+                build_gemini_thinking_config(slug, Some(ReasoningEffort::None)).is_err(),
+                "{slug} should reject effort `none`"
+            );
+            assert!(
+                build_gemini_thinking_config(slug, Some(ReasoningEffort::XHigh)).is_err(),
+                "{slug} should reject effort `xhigh`"
+            );
         }
     }
 
@@ -250,5 +399,13 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn decoder_sanitizes_malformed_json_errors() {
+        let err = decode_publisher_models_page(b"secret-token-raw-body").unwrap_err();
+        let message = err.to_string();
+        assert!(!message.contains("secret-token"));
+        assert!(!message.contains("raw-body"));
     }
 }

@@ -414,7 +414,9 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
     }
 
     async fn model_catalog(&self) -> Result<Option<Vec<ProviderModel>>> {
-        Ok(Some(catalog::vertex_model_catalog()))
+        Ok(Some(
+            catalog::discover_vertex_model_catalog(&self.transport).await,
+        ))
     }
 
     fn provider_name(&self) -> &'static str {
@@ -427,3 +429,6 @@ mod tests;
 
 #[cfg(test)]
 mod http_tests;
+
+#[cfg(test)]
+mod catalog_http_tests;
