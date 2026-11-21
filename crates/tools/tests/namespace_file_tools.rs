@@ -802,8 +802,23 @@ async fn namespace_grep_and_glob_respect_gitignore_rules() {
         ]
     );
 
+    // Bump Qid.version on sub/keep.md via edits so its version is strictly higher than
+    // earlier paths, confirming namespace glob sorts deterministically by path rather than Qid.version.
+    for revision in 1..=3 {
+        write
+            .execute(
+                json!({
+                    "path": "/mnt/slowpage/sub/keep.md",
+                    "content": format!("needle sub keep rev {revision}\n")
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+    }
+
     let globbed = GlobTool::new()
-        .execute(json!({"pattern": "**/*", "path": "/mnt/slowpage"}), &ctx)
+        .execute(json!({"pattern": "**/*.md", "path": "/mnt/slowpage"}), &ctx)
         .await
         .unwrap();
     let glob_paths: Vec<&str> = globbed["matches"]
@@ -812,14 +827,30 @@ async fn namespace_grep_and_glob_respect_gitignore_rules() {
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
-    assert!(glob_paths.contains(&"/mnt/slowpage/pages/home.md"));
-    assert!(glob_paths.contains(&"/mnt/slowpage/sub/keep.md"));
-    assert!(glob_paths.contains(&"/mnt/slowpage/other/local_only.md"));
-    assert!(!glob_paths.contains(&"/mnt/slowpage/generated/out.md"));
-    assert!(!glob_paths.contains(&"/mnt/slowpage/debug.log"));
-    assert!(!glob_paths.contains(&"/mnt/slowpage/excluded.md"));
-    assert!(!glob_paths.contains(&"/mnt/slowpage/sub/local_only.md"));
-    assert!(!glob_paths.contains(&"/mnt/slowpage/sub/trace.log"));
+    assert_eq!(
+        glob_paths,
+        vec![
+            "/mnt/slowpage/other/local_only.md",
+            "/mnt/slowpage/pages/home.md",
+            "/mnt/slowpage/sub/keep.md",
+        ]
+    );
+
+    let all_globbed = GlobTool::new()
+        .execute(json!({"pattern": "**/*", "path": "/mnt/slowpage"}), &ctx)
+        .await
+        .unwrap();
+    let all_glob_paths: Vec<&str> = all_globbed["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(!all_glob_paths.contains(&"/mnt/slowpage/generated/out.md"));
+    assert!(!all_glob_paths.contains(&"/mnt/slowpage/debug.log"));
+    assert!(!all_glob_paths.contains(&"/mnt/slowpage/excluded.md"));
+    assert!(!all_glob_paths.contains(&"/mnt/slowpage/sub/local_only.md"));
+    assert!(!all_glob_paths.contains(&"/mnt/slowpage/sub/trace.log"));
 
     // Starting inside a subdirectory still inherits ancestor .gitignore rules.
     let sub_grepped = GrepTool::new()

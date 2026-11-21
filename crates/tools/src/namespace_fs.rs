@@ -39,7 +39,6 @@ pub(crate) struct NamespaceDirEntry {
 pub(crate) struct NamespaceWalkFile {
     pub path: String,
     pub size: u64,
-    pub version: u32,
 }
 
 enum ReadBoundedError {
@@ -398,7 +397,6 @@ impl NamespaceFs {
                         files.push(NamespaceWalkFile {
                             path: child_path,
                             size: stat.length,
-                            version: stat.qid.version,
                         });
                     }
                     FileKind::Stream | FileKind::Clone => {

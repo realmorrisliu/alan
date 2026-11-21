@@ -475,7 +475,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "Find files matching a relative glob pattern under a base directory, skipping hidden entries, respecting .gitignore by default, and sorted by modification time (newest first)."
+        "Find files matching a relative glob pattern under a base directory, skipping hidden entries and respecting .gitignore by default. Host Mount matches are sorted by modification time (newest first); namespace-only mounts without host mtime metadata are sorted lexicographically by path."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -701,19 +701,20 @@ async fn glob_namespace(
                 .unwrap_or(Path::new(&file.path));
             let rel_slash = normalize_slashes(rel);
             if glob_re.is_match(&rel_slash) {
-                found.push((file.version, file.path));
+                found.push(file.path);
             }
         }
     }
 
-    found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    // aP Stat carries no modification timestamp (Qid.version is an opaque change token),
+    // so namespace-only glob matches are ordered deterministically by path.
+    found.sort();
     let truncated = walk_truncated || found.len() > limit;
     found.truncate(limit);
-    let matches: Vec<String> = found.into_iter().map(|(_, path)| path).collect();
 
     Ok(json!({
-        "matches": matches,
-        "total": matches.len(),
+        "matches": found,
+        "total": found.len(),
         "truncated": truncated
     }))
 }
