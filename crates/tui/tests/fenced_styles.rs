@@ -19,16 +19,22 @@ fn fenced_styles_keep_literal_body_inline_distinction_and_secondary_boundaries()
                 );
                 let cell = HistoryCell::Assistant(source.clone());
                 let rows = cell.render_styled_lines(RenderOpts::new(width, false));
-                assert_eq!(rows[0].to_string(), "", "answer leading space");
+                assert_eq!(rows[0].to_string(), "prose inline");
                 assert!(
-                    rows[1]
+                    rows[0]
                         .spans
                         .iter()
-                        .any(|s| s.style.add_modifier.contains(Modifier::UNDERLINED))
+                        .any(|s| s.style.fg == Some(theme.syntax_type))
                 );
-                assert_eq!(rows[2].to_string(), format!("▎ {language}"));
+                assert!(
+                    rows[0]
+                        .spans
+                        .iter()
+                        .all(|s| !s.style.add_modifier.contains(Modifier::UNDERLINED))
+                );
+                assert_eq!(rows[1].to_string(), format!("▎ {language}"));
                 assert_eq!(
-                    rows[2]
+                    rows[1]
                         .spans
                         .iter()
                         .filter(|s| s.style.fg == Some(theme.accent))
@@ -36,11 +42,11 @@ fn fenced_styles_keep_literal_body_inline_distinction_and_secondary_boundaries()
                         .collect::<String>(),
                     language
                 );
-                assert!(rows[2].spans.iter().any(|s| {
+                assert!(rows[1].spans.iter().any(|s| {
                     s.content.contains('▎') && s.style.add_modifier == Modifier::DIM
                 }));
                 let end = rows.len() - usize::from(!closing.is_empty());
-                let body = &rows[3..end];
+                let body = &rows[2..end];
                 assert_eq!(
                     body.iter()
                         .map(|r| {
@@ -78,22 +84,22 @@ fn fenced_styles_keep_literal_body_inline_distinction_and_secondary_boundaries()
         }
         let rows = HistoryCell::Assistant("```diff\n+\t**new**\n-\t`old`\n context\n```".into())
             .render_styled_lines(RenderOpts::new(width, false));
-        assert_eq!(rows[2].to_string(), "▎ +    **new**");
-        assert_eq!(rows[3].to_string(), "▎ -    `old`");
+        assert_eq!(rows[1].to_string(), "▎ +    **new**");
+        assert_eq!(rows[2].to_string(), "▎ -    `old`");
         assert!(
-            rows[2]
+            rows[1]
                 .spans
                 .iter()
                 .all(|s| s.style.fg == Some(theme.status_run) && s.style.add_modifier.is_empty())
         );
         assert!(
-            rows[3]
+            rows[2]
                 .spans
                 .iter()
                 .all(|s| s.style.fg == Some(theme.status_block) && s.style.add_modifier.is_empty())
         );
         assert!(
-            rows[4]
+            rows[3]
                 .spans
                 .iter()
                 .skip(1)
@@ -109,10 +115,10 @@ fn fenced_default_body_and_dim_boundaries_reach_native_ansi_at_73_by_22() {
         .render_styled_lines(RenderOpts::new(73, false));
     let mut buffer = Buffer::empty(Rect::new(0, 0, 73, 22));
     Paragraph::new(rows).render(buffer.area, &mut buffer);
-    assert_eq!(buffer.cell((0, 1)).unwrap().modifier, Modifier::DIM);
-    assert_eq!(buffer.cell((6, 2)).unwrap().fg, theme.syntax_keyword);
-    assert!(buffer.cell((6, 2)).unwrap().modifier.is_empty());
-    assert_eq!(buffer.cell((0, 3)).unwrap().modifier, Modifier::DIM);
+    assert_eq!(buffer.cell((0, 0)).unwrap().modifier, Modifier::DIM);
+    assert_eq!(buffer.cell((6, 1)).unwrap().fg, theme.syntax_keyword);
+    assert!(buffer.cell((6, 1)).unwrap().modifier.is_empty());
+    assert_eq!(buffer.cell((0, 2)).unwrap().modifier, Modifier::DIM);
     let mut ansi = Vec::new();
     CrosstermBackend::new(&mut ansi)
         .draw(Buffer::empty(buffer.area).diff(&buffer).into_iter())

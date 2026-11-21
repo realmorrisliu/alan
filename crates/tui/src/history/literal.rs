@@ -5,6 +5,9 @@ use ratatui::{
 };
 use std::borrow::Cow;
 
+/// Stable cut key for the leading turn-separator blank row before byte 0.
+const LEADING_SEPARATOR_CUT: (usize, usize) = (0, 1);
+
 /// Literal prompt projection. Each expanded character maps to its original
 /// UTF-8 byte end and tab slot. Wrapping borrows slices of this exact buffer;
 /// repeated text never participates in locating source positions.
@@ -13,11 +16,19 @@ pub(super) fn project(
     width: usize,
     prefix: &str,
     cut: (usize, usize),
+    prefix_style: Style,
+    body_style: Style,
 ) -> Vec<(Line<'static>, (usize, usize))> {
     let body_width = width
         .saturating_sub(unicode_width::UnicodeWidthStr::width(prefix))
         .max(8);
     let mut rows = Vec::new();
+    // Source-independent leading blank row separates each new user/command turn
+    // from Welcome or prior turns while keeping source cuts strictly monotonic.
+    if cut < LEADING_SEPARATOR_CUT {
+        rows.push((Line::default(), LEADING_SEPARATOR_CUT));
+    }
+    let mut emitted_content = cut > LEADING_SEPARATOR_CUT;
     let mut offset = 0;
     for segment in text.split('\n') {
         let mut keys = Vec::new();
@@ -87,25 +98,37 @@ pub(super) fn project(
             let key = key_index.checked_sub(1).map_or(cut, |i| keys[i].1);
             let row = &expanded[start..end];
             cursor = end;
-            let label = if rows.is_empty() && projected.is_empty() && cut == (0, 0) {
-                prefix
+            let (label, label_style) = if !emitted_content && projected.is_empty() {
+                (prefix, prefix_style)
             } else {
-                INLINE_PROMPT_CONTINUATION
+                (INLINE_PROMPT_CONTINUATION, Style::default())
             };
-            projected.push((Line::from(format!("{label}{row}")), key));
+            let line = if row.is_empty() {
+                Line::from(vec![Span::styled(label.to_owned(), label_style)])
+            } else {
+                Line::from(vec![
+                    Span::styled(label.to_owned(), label_style),
+                    Span::styled(row.to_owned(), body_style),
+                ])
+            };
+            projected.push((line, key));
         }
         if let Some(last) = projected.last_mut() {
             last.1 = row_end;
         }
         if row_end > cut && (first.is_some() || keys.is_empty()) {
             if projected.is_empty() {
-                let label = if rows.is_empty() && cut == (0, 0) {
-                    prefix
+                let (label, label_style) = if !emitted_content {
+                    (prefix, prefix_style)
                 } else {
-                    INLINE_PROMPT_CONTINUATION
+                    (INLINE_PROMPT_CONTINUATION, Style::default())
                 };
-                projected.push((Line::from(label.to_owned()), row_end));
+                projected.push((
+                    Line::from(vec![Span::styled(label.to_owned(), label_style)]),
+                    row_end,
+                ));
             }
+            emitted_content = true;
             rows.extend(projected);
         }
         offset += segment.len() + 1;

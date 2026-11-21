@@ -271,7 +271,7 @@ fn rendered_history_suffix_matches(replacement: &HistoryCell, retained: &History
 
 fn rendered_history_tokens(cell: &HistoryCell) -> Vec<String> {
     let mut lines = cell.render_lines(RenderOpts::new(16_384, false));
-    if let Some(first) = lines.first_mut() {
+    if let Some(first) = lines.iter_mut().find(|line| !line.is_empty()) {
         for prefix in [
             ": ",
             "! ",

@@ -28,10 +28,6 @@ pub(super) fn project(
     theme: Theme,
 ) -> Vec<(Line<'static>, Key)> {
     let mut rows = Vec::new();
-    // This source-independent row has its own stable cut before the first byte.
-    if !text.is_empty() && cut < (0, 1) {
-        rows.push((Line::default(), (0, 1)));
-    }
     let raw_lines: Vec<&str> = text.split('\n').collect();
     let mut offsets = Vec::with_capacity(raw_lines.len());
     let mut cursor = 0usize;
@@ -84,7 +80,17 @@ pub(super) fn project(
                     false,
                     theme,
                 );
-                append_rows(&mut rows, atoms, width, cut, row_end, false, None, None);
+                append_rows(
+                    &mut rows,
+                    Vec::new(),
+                    atoms,
+                    width,
+                    cut,
+                    row_end,
+                    false,
+                    None,
+                    None,
+                );
                 index += 1;
                 continue;
             }
@@ -95,6 +101,7 @@ pub(super) fn project(
             let gutter_style = fence_body_gutter_style(lang, &source, theme);
             append_rows(
                 &mut rows,
+                Vec::new(),
                 atoms,
                 width,
                 cut,
@@ -116,7 +123,17 @@ pub(super) fn project(
                 true,
                 theme,
             );
-            append_rows(&mut rows, atoms, width, cut, row_end, false, None, None);
+            append_rows(
+                &mut rows,
+                Vec::new(),
+                atoms,
+                width,
+                cut,
+                row_end,
+                false,
+                None,
+                None,
+            );
             index += 1;
             continue;
         }
@@ -154,7 +171,8 @@ pub(super) fn project(
                         quote_key_idx += 1;
                     }
                 }
-                wrap_prefix = Some((quote_bar, bar_style));
+                let leading_spaces = " ".repeat(source[..leading].width());
+                wrap_prefix = Some((format!("{leading_spaces}{quote_bar}"), bar_style));
                 (leading + consumed_trimmed, Style::default())
             } else if trimmed.starts_with("- ")
                 || trimmed.starts_with("* ")
@@ -168,17 +186,28 @@ pub(super) fn project(
                     ..marker_atom
                 });
                 prefix.push(atoms[lead_chars + 1].clone());
+                let indent_width = source[..leading].width() + 2;
+                wrap_prefix = Some((" ".repeat(indent_width), Style::default()));
                 (leading + 2, Style::default())
+            } else if let Some(marker_len) = parse_ordered_list(trimmed) {
+                let lead_chars = source[..leading].chars().count();
+                let marker_chars = trimmed[..marker_len].chars().count();
+                prefix.extend(atoms[..lead_chars + marker_chars].iter().cloned());
+                let indent_width = source[..leading].width() + trimmed[..marker_len].width();
+                wrap_prefix = Some((" ".repeat(indent_width), Style::default()));
+                (leading + marker_len, Style::default())
             } else {
                 (0, Style::default())
             };
 
         let start = source[..body_start].chars().count();
         let body = &source[body_start..];
-        inline(body, &atoms[start..], style, theme, &mut prefix);
+        let mut body_atoms = Vec::new();
+        inline(body, &atoms[start..], style, theme, &mut body_atoms);
         append_rows(
             &mut rows,
             prefix,
+            body_atoms,
             width,
             cut,
             row_end,
@@ -226,6 +255,18 @@ fn parse_blockquote(trimmed: &str) -> Option<(usize, usize)> {
         }
     }
     (depth > 0).then_some((depth, byte))
+}
+
+fn parse_ordered_list(trimmed: &str) -> Option<usize> {
+    let digits = trimmed.bytes().take_while(u8::is_ascii_digit).count();
+    if (1..=9).contains(&digits)
+        && matches!(trimmed.as_bytes().get(digits), Some(b'.' | b')'))
+        && trimmed.as_bytes().get(digits + 1) == Some(&b' ')
+    {
+        Some(digits + 2)
+    } else {
+        None
+    }
 }
 
 pub(super) fn strip_inline_markers(text: &str) -> String {
@@ -408,14 +449,19 @@ fn inline(text: &str, atoms: &[Atom], style: Style, theme: Theme, output: &mut V
                     Modifier::empty()
                 } else {
                     match delimiter {
-                        "`" => Modifier::UNDERLINED,
+                        "`" => Modifier::empty(),
                         "**" | "__" => Modifier::BOLD,
                         _ => Modifier::ITALIC,
                     }
                 };
                 if delimiter == "`" {
+                    let code_style = if theme.is_dumb {
+                        style
+                    } else {
+                        style.patch(theme.inline_code_style())
+                    };
                     output.extend(atoms[first..last].iter().map(|atom| Atom {
-                        style: style.add_modifier(modifier),
+                        style: code_style,
                         ..*atom
                     }));
                 } else {
@@ -476,11 +522,12 @@ fn scan_bare_url_len(rest: &str) -> usize {
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "internal row emitter tracks cut keys alongside optional blockquote and code gutter prefixes"
+    reason = "internal row emitter tracks cut keys alongside optional list/blockquote hanging indent and code gutter prefixes"
 )]
 fn append_rows(
     rows: &mut Vec<(Line<'static>, Key)>,
-    atoms: Vec<Atom>,
+    prefix_atoms: Vec<Atom>,
+    body_atoms: Vec<Atom>,
     width: usize,
     cut: Key,
     row_end: Key,
@@ -488,25 +535,49 @@ fn append_rows(
     wrap_prefix: Option<&(String, Style)>,
     line_gutter: Option<(&str, Style)>,
 ) {
-    let empty = atoms.is_empty();
-    let atoms: Vec<_> = atoms.into_iter().filter(|atom| atom.key > cut).collect();
-    if atoms.is_empty() {
-        if empty && row_end > cut {
-            if let Some((gutter, gstyle)) = line_gutter {
-                rows.push((Line::styled(gutter.trim_end().to_string(), gstyle), row_end));
-            } else {
-                rows.push((Line::default(), row_end));
+    let cont_prefix = wrap_prefix.filter(|(prefix, _)| width > prefix.width() + 4);
+    let (first_prefix, atoms, active_cont_prefix) =
+        if let Some((cont_str, cont_style)) = cont_prefix {
+            let prefix_rem: Vec<_> = prefix_atoms
+                .into_iter()
+                .filter(|atom| atom.key > cut)
+                .collect();
+            let body_rem: Vec<_> = body_atoms
+                .into_iter()
+                .filter(|atom| atom.key > cut)
+                .collect();
+            if body_rem.is_empty() {
+                if !prefix_rem.is_empty() {
+                    let spans = prefix_rem
+                        .into_iter()
+                        .map(|atom| Span::styled(atom.ch.to_string(), atom.style))
+                        .collect::<Vec<_>>();
+                    rows.push((Line::from(spans), row_end));
+                }
+                return;
             }
-        }
-        return;
-    }
+            (prefix_rem, body_rem, Some((cont_str, *cont_style)))
+        } else {
+            let empty = prefix_atoms.is_empty() && body_atoms.is_empty();
+            let mut combined = prefix_atoms;
+            combined.extend(body_atoms);
+            let rem: Vec<_> = combined.into_iter().filter(|atom| atom.key > cut).collect();
+            if rem.is_empty() {
+                if empty && row_end > cut {
+                    if let Some((gutter, gstyle)) = line_gutter {
+                        rows.push((Line::styled(gutter.trim_end().to_string(), gstyle), row_end));
+                    } else {
+                        rows.push((Line::default(), row_end));
+                    }
+                }
+                return;
+            }
+            (Vec::new(), rem, None)
+        };
     let active_gutter = line_gutter.filter(|(gutter, _)| width > gutter.width() + 2);
-    let cont_prefix = wrap_prefix
-        .filter(|(prefix, _)| width > prefix.width() + 4)
-        .filter(|(prefix, _)| atoms.len() > prefix.chars().count());
     let wrap_width = if word_wrap {
-        if let Some((prefix, _)) = cont_prefix {
-            width.saturating_sub(prefix.width()).max(8)
+        if let Some((prefix, _)) = active_cont_prefix {
+            width.saturating_sub(prefix.width()).max(1)
         } else {
             width
         }
@@ -566,12 +637,21 @@ fn append_rows(
             cells += gw;
             prefix_cells += gw;
         }
-        let active_prefix = pushed_for_line.then_some(cont_prefix).flatten();
-        if let Some((prefix, pstyle)) = active_prefix {
-            spans.push(Span::styled(prefix.clone(), *pstyle));
-            let pw = prefix.width();
-            cells += pw;
-            prefix_cells += pw;
+        if let Some((prefix, pstyle)) = active_cont_prefix {
+            if !pushed_for_line && !first_prefix.is_empty() {
+                for atom in &first_prefix {
+                    let s = atom.ch.to_string();
+                    let w = s.width();
+                    spans.push(Span::styled(s, atom.style));
+                    cells += w;
+                    prefix_cells += w;
+                }
+            } else {
+                spans.push(Span::styled(prefix.clone(), pstyle));
+                let pw = prefix.width();
+                cells += pw;
+                prefix_cells += pw;
+            }
         }
         let mut key = cut;
         // Ratatui supplies grapheme segmentation; preserve combining/ZWJ clusters.
@@ -587,8 +667,8 @@ fn append_rows(
                     cells += gw;
                     prefix_cells += gw;
                 }
-                if let Some((prefix, pstyle)) = cont_prefix {
-                    spans.push(Span::styled(prefix.clone(), *pstyle));
+                if let Some((prefix, pstyle)) = active_cont_prefix {
+                    spans.push(Span::styled(prefix.clone(), pstyle));
                     let pw = prefix.width();
                     cells += pw;
                     prefix_cells += pw;

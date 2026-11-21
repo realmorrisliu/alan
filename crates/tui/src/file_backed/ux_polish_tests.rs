@@ -388,3 +388,98 @@ async fn empty_hydrated_agent_preserves_welcome_header_on_first_frame() {
     assert!(rendered.contains("ALAN(1) · alan9"), "{rendered}");
     tails.close().await;
 }
+
+#[test]
+fn transcript_turn_rhythm_anchors_prompts_calms_thinking_and_prunes_cleanly() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.effective_model = Some("auto/deepseek-v4.1-flash".into());
+    app.sandbox_backend = Some("seatbelt".into());
+    app.maybe_insert_welcome_header();
+    app.transcript.push(HistoryCell::User("hello".into()));
+    app.transcript.push(HistoryCell::Thinking {
+        text: "quick thought".into(),
+        duration_secs: 0,
+    });
+    app.transcript.push(HistoryCell::Thinking {
+        text: "   ".into(),
+        duration_secs: 0,
+    });
+    app.transcript
+        .push(HistoryCell::Assistant("Hi there!".into()));
+    app.transcript.push(HistoryCell::User("who are you".into()));
+    app.transcript.push(HistoryCell::Thinking {
+        text: "longer thought".into(),
+        duration_secs: 3,
+    });
+    app.transcript
+        .push(HistoryCell::Assistant("I am Alan.".into()));
+    app.transcript
+        .push(HistoryCell::Command("git status".into()));
+    app.transcript.push(HistoryCell::Assistant("clean".into()));
+
+    let lines = app.styled_history_lines(80);
+    let strings: Vec<String> = lines.iter().map(ToString::to_string).collect();
+    assert_eq!(strings[4], "", "blank row between Welcome and first turn");
+    assert_eq!(strings[5], ": hello");
+    assert_eq!(strings[6], "· thought · <1s");
+    assert_eq!(strings[7], "Hi there!");
+    assert_eq!(strings[8], "", "blank row between turn 1 and turn 2");
+    assert_eq!(strings[9], ": who are you");
+    assert_eq!(strings[10], "· thought · 3s");
+    assert_eq!(strings[11], "I am Alan.");
+    assert_eq!(strings[12], "", "blank row before command turn");
+    assert_eq!(strings[13], "! git status");
+    assert_eq!(strings[14], "clean");
+    assert_eq!(
+        strings.len(),
+        15,
+        "empty thinking block must be suppressed: {strings:?}"
+    );
+
+    // Semantic prompt anchor: accented bold prefix + bold default-fg body.
+    assert_eq!(
+        lines[5].spans[0].style,
+        app.theme.user_prompt_prefix_style(false)
+    );
+    assert_eq!(lines[5].spans[1].style, app.theme.user_prompt_body_style());
+    assert_eq!(
+        lines[13].spans[0].style,
+        app.theme.user_prompt_prefix_style(true)
+    );
+    assert_eq!(lines[13].spans[1].style, app.theme.user_prompt_body_style());
+
+    // Partial drain through Welcome + turn-1 leading separator preserves `: hello` intact.
+    let opts = app.render_opts(80);
+    assert_eq!(app.prune_rendered_prefix(opts, 5), 5);
+    let after_prune = app.styled_history_lines(80);
+    assert_eq!(after_prune, lines[5..]);
+    assert_eq!(after_prune[0].to_string(), ": hello");
+
+    // TERM=dumb / NO_COLOR degrades cleanly with identical structural rhythm.
+    let mut dumb_app = FileBackedApp::new("/agent/1".into());
+    dumb_app.theme = crate::theme::Theme::dumb();
+    dumb_app.transcript = vec![
+        HistoryCell::User("hello".into()),
+        HistoryCell::Thinking {
+            text: "reason".into(),
+            duration_secs: 0,
+        },
+        HistoryCell::Assistant("Hi".into()),
+    ];
+    let dumb_lines = dumb_app.styled_history_lines(80);
+    assert_eq!(
+        dumb_lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        vec!["", ": hello", "· thought · <1s", "Hi"]
+    );
+    assert!(
+        dumb_lines
+            .iter()
+            .flat_map(|row| &row.spans)
+            .all(|s| s.style.fg.is_none()
+                && s.style.bg.is_none()
+                && s.style.add_modifier.is_empty())
+    );
+}

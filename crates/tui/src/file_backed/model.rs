@@ -50,10 +50,10 @@ impl ModelProjection {
             return "model unknown".into();
         };
         let model = safe(&binding.model);
-        binding.reasoning.effort.map_or_else(
-            || format!("{model} / effort unknown"),
-            |effort| format!("{model} / {effort}"),
-        )
+        match binding.reasoning.effort {
+            Some(effort) => format!("{model} / {effort}"),
+            None => model,
+        }
     }
     pub fn status(&self) -> String {
         let Some(s) = self.known() else {

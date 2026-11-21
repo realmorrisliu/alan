@@ -223,7 +223,14 @@ impl HistoryCell {
     pub fn render_lines(&self, opts: RenderOpts) -> Vec<String> {
         if matches!(
             self,
-            Self::Assistant(_) | Self::Styled(_) | Self::AssistantTail { .. } | Self::Welcome(_)
+            Self::Assistant(_)
+                | Self::Styled(_)
+                | Self::AssistantTail { .. }
+                | Self::User(_)
+                | Self::Command(_)
+                | Self::InputTail { .. }
+                | Self::Thinking { .. }
+                | Self::Welcome(_)
         ) {
             return self
                 .render_styled_lines(opts)
@@ -232,21 +239,6 @@ impl HistoryCell {
                 .collect();
         }
         let width = opts.width.max(16);
-        if let Some((text, command, committed)) = self.input_source() {
-            return literal::project(
-                text,
-                width,
-                if command {
-                    INLINE_COMMAND_PROMPT_PREFIX
-                } else {
-                    INLINE_PROMPT_PREFIX
-                },
-                committed,
-            )
-            .into_iter()
-            .map(|(line, _)| line.to_string())
-            .collect();
-        }
         if let Self::Rendered(lines) = self {
             return lines
                 .iter()
@@ -285,29 +277,6 @@ impl HistoryCell {
             ];
         }
 
-        if let Self::Thinking {
-            text,
-            duration_secs,
-        } = self
-        {
-            if !opts.expand_thinking {
-                let summary = format!("· thinking · {duration_secs}s (ctrl+r to expand)");
-                return textwrap::wrap(&summary, width)
-                    .into_iter()
-                    .map(Into::into)
-                    .collect();
-            }
-            let gutter = opts.theme.gutter();
-            let mut rows = vec![format!("{gutter}thinking · {duration_secs}s")];
-            let body_width = width.saturating_sub(gutter.len()).max(8);
-            rows.extend(
-                wrap_plain_text(text, body_width)
-                    .into_iter()
-                    .map(|line| format!("{gutter}{line}")),
-            );
-            return rows;
-        }
-
         let body = match self {
             Self::Rendered(_)
             | Self::Styled(_)
@@ -315,11 +284,12 @@ impl HistoryCell {
             | Self::InputTail { .. }
             | Self::Plan { .. }
             | Self::Thinking { .. }
-            | Self::Welcome(_) => {
+            | Self::Welcome(_)
+            | Self::User(_)
+            | Self::Command(_)
+            | Self::Assistant(_) => {
                 unreachable!("handled above")
             }
-            Self::User(_) | Self::Command(_) => unreachable!("literal inputs handled above"),
-            Self::Assistant(text) => return wrap_plain_text(text, width),
             Self::Tool {
                 title,
                 status,
@@ -425,23 +395,46 @@ impl HistoryCell {
                     width,
                 )
             }
+            Self::User(_) | Self::Command(_) | Self::InputTail { .. } => {
+                let (text, command, committed) = self.input_source().expect("input cell");
+                literal::project(
+                    text,
+                    width,
+                    if command {
+                        INLINE_COMMAND_PROMPT_PREFIX
+                    } else {
+                        INLINE_PROMPT_PREFIX
+                    },
+                    committed,
+                    theme.user_prompt_prefix_style(command),
+                    theme.user_prompt_body_style(),
+                )
+                .into_iter()
+                .map(|(line, _)| line)
+                .collect()
+            }
             Self::Thinking {
                 text,
                 duration_secs,
             } => {
+                if text.trim().is_empty() {
+                    return Vec::new();
+                }
+                let duration = format_thinking_duration(*duration_secs);
                 let body_style = theme.italic_if_capable(metadata_style(theme));
                 if !opts.expand_thinking {
-                    let summary = format!("· thinking · {duration_secs}s (ctrl+r to expand)");
+                    let summary = format!("· thought · {duration}");
                     return wrap_plain_text(&summary, width)
                         .into_iter()
                         .map(|row| Line::styled(clean_text(&row), body_style))
                         .collect();
                 }
                 let gutter = theme.gutter();
-                let body_width = width.saturating_sub(gutter.len()).max(8);
+                let gutter_width = unicode_width::UnicodeWidthStr::width(gutter);
+                let body_width = width.saturating_sub(gutter_width).max(8);
                 let mut rows = vec![Line::from(vec![
                     Span::styled(gutter, theme.muted_style()),
-                    Span::styled(format!("thinking · {duration_secs}s"), body_style),
+                    Span::styled(format!("thought · {duration}"), body_style),
                 ])];
                 for part in wrap_plain_text(&clean_text(text), body_width) {
                     rows.push(Line::from(vec![
@@ -454,9 +447,6 @@ impl HistoryCell {
             Self::PendingYield(pending) => render_pending_yield_styled_lines(pending, width, theme),
             _ => {
                 let style = match self {
-                    Self::User(_) | Self::Command(_) | Self::InputTail { .. } => {
-                        theme.accent_bold()
-                    }
                     Self::Tool { status, .. } => status.style(theme),
                     Self::Error(_) => theme.bold_if_capable(theme.block_style()),
                     _ => Style::default(),
@@ -480,7 +470,14 @@ impl HistoryCell {
             } else {
                 INLINE_PROMPT_PREFIX
             };
-            let rows = literal::project(text, opts.width.max(16), prefix, cut);
+            let rows = literal::project(
+                text,
+                opts.width.max(16),
+                prefix,
+                cut,
+                Style::default(),
+                Style::default(),
+            );
             let committed = rows
                 .iter()
                 .take(lines_to_trim)
@@ -517,6 +514,14 @@ impl HistoryCell {
             .collect();
         *self = Self::Styled(remaining);
         true
+    }
+}
+
+fn format_thinking_duration(duration_secs: u64) -> String {
+    if duration_secs == 0 {
+        "<1s".to_string()
+    } else {
+        format!("{duration_secs}s")
     }
 }
 

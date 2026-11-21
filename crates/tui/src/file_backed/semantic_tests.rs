@@ -20,7 +20,7 @@ fn semantic_empty_tail_does_not_block_completed_action_drain() {
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>(),
-            [": task", "", "▎ diff", "▎ +committed"]
+            ["", ": task", "▎ diff", "▎ +committed"]
         );
         assert!(app.styled_history_lines(width).is_empty());
         for id in ["first", "second"] {
@@ -90,14 +90,14 @@ fn semantic_empty_tail_does_not_block_completed_action_drain() {
         ));
         assert_eq!(app.transcript.len(), 2);
         assert_eq!(app.transcript[1].assistant_source(), Some(full.as_str()));
-        assert_eq!(app.styled_history_lines(width)[1..], expected);
+        assert_eq!(app.styled_history_lines(width)[2..], expected);
         let mut terminal = Terminal::new(TestBackend::new(width as u16, 12)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer.cell((2, 1)).unwrap().symbol(), "-");
-        assert_eq!(buffer.cell((2, 1)).unwrap().fg, theme.status_block);
-        assert_eq!(buffer.cell((2, 2)).unwrap().symbol(), "+");
-        assert_eq!(buffer.cell((2, 2)).unwrap().fg, theme.status_run);
+        assert_eq!(buffer.cell((2, 2)).unwrap().symbol(), "-");
+        assert_eq!(buffer.cell((2, 2)).unwrap().fg, theme.status_block);
+        assert_eq!(buffer.cell((2, 3)).unwrap().symbol(), "+");
+        assert_eq!(buffer.cell((2, 3)).unwrap().fg, theme.status_run);
         assert!(app.action_cells.is_empty());
 
         // A bounded prefix drain shifts a still-retained action past the tail.
@@ -145,7 +145,7 @@ fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
         let drained = app.drain_committed_scrollback(width, 1);
         assert_eq!(
             drained.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            [": task", "", "▎ diff", "▎ +committed"]
+            ["", ": task", "▎ diff", "▎ +committed"]
         );
         assert!(app.styled_history_lines(width).is_empty());
         assert!(app.drain_committed_scrollback(width, 1).is_empty());
@@ -192,13 +192,13 @@ fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
         let mut terminal = Terminal::new(TestBackend::new(width as u16, 12)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer.cell((2, 1)).unwrap().symbol(), "-");
-        assert_eq!(buffer.cell((2, 1)).unwrap().fg, theme.status_block);
-        assert_eq!(buffer.cell((7, 1)).unwrap().symbol(), "*");
-        assert_eq!(buffer.cell((2, 2)).unwrap().fg, theme.status_run);
+        assert_eq!(buffer.cell((2, 2)).unwrap().symbol(), "-");
+        assert_eq!(buffer.cell((2, 2)).unwrap().fg, theme.status_block);
+        assert_eq!(buffer.cell((7, 2)).unwrap().symbol(), "*");
+        assert_eq!(buffer.cell((2, 3)).unwrap().fg, theme.status_run);
         assert!(
             buffer
-                .cell((0, 4))
+                .cell((0, 5))
                 .unwrap()
                 .modifier
                 .contains(Modifier::BOLD)
@@ -223,9 +223,12 @@ fn semantic_late_closures_repeated_drain_and_hydration_own_content() {
             app.transcript.push(HistoryCell::User("task".into()));
             app.push_output(source);
             let index = app.current_assistant_cell().unwrap();
-            app.transcript[index].trim_rendered_prefix(RenderOpts::new(width, false), 1);
-            let mut committed =
-                app.transcript[index].render_lines(RenderOpts::new(width, false))[0].clone();
+            let mut committed = String::new();
+            if fenced {
+                app.transcript[index].trim_rendered_prefix(RenderOpts::new(width, false), 1);
+            }
+            committed
+                .push_str(&app.transcript[index].render_lines(RenderOpts::new(width, false))[0]);
             app.transcript[index].trim_rendered_prefix(RenderOpts::new(width, false), 1);
             let resized = if width == 40 { 60 } else { 40 };
             committed
@@ -283,10 +286,10 @@ fn semantic_late_closures_repeated_drain_and_hydration_own_content() {
             terminal.draw(|frame| draw(frame, &app)).unwrap();
             let buffer = terminal.backend().buffer();
             let col = if fenced { 2 } else { 0 };
-            assert_eq!(buffer.cell((col, 1)).unwrap().symbol(), "a");
+            assert_eq!(buffer.cell((col, 2)).unwrap().symbol(), "a");
             assert_eq!(
                 buffer
-                    .cell((col, 1))
+                    .cell((col, 2))
                     .unwrap()
                     .modifier
                     .contains(Modifier::BOLD),
@@ -305,7 +308,7 @@ fn semantic_idle_hydration_does_not_replay_drained_heading() {
         let drained = app.drain_committed_scrollback(width, 7);
         assert_eq!(
             drained.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            ["", "head"]
+            ["head"]
         );
         let before = app.styled_history_lines(width);
         app.merge_reconnected_idle_history(vec![HistoryCell::Assistant(source.into())]);
@@ -363,15 +366,15 @@ fn semantic_tabs_survive_production_code_and_typed_diff_projection() {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
         assert_eq!(
-            buffer.cell((6, 2)).unwrap().symbol(),
+            buffer.cell((6, 1)).unwrap().symbol(),
             "l",
             "code tab indentation at {width}"
         );
-        assert_eq!(buffer.cell((9, 9)).unwrap().symbol(), "n");
-        assert_eq!(buffer.cell((9, 9)).unwrap().fg, theme.status_run);
-        assert_eq!(buffer.cell((9, 10)).unwrap().symbol(), "o");
-        assert_eq!(buffer.cell((9, 10)).unwrap().fg, theme.status_block);
-        for row in 4..=6 {
+        assert_eq!(buffer.cell((9, 8)).unwrap().symbol(), "n");
+        assert_eq!(buffer.cell((9, 8)).unwrap().fg, theme.status_run);
+        assert_eq!(buffer.cell((9, 9)).unwrap().symbol(), "o");
+        assert_eq!(buffer.cell((9, 9)).unwrap().fg, theme.status_block);
+        for row in 3..=5 {
             assert_eq!(buffer.cell((0, row)).unwrap().fg, Color::Reset);
         }
         assert!(

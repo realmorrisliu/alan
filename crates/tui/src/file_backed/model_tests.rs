@@ -615,3 +615,27 @@ fn cross_profile_model_picker_filters_by_profile_and_emits_profile_qualified_sel
     };
     assert_eq!(model, "magpie-main::auto/deepseek-v4.1-flash");
 }
+
+#[test]
+fn unknown_effort_omits_effort_unknown_from_prompt_status_bar_while_preserving_status_detail() {
+    let mut app = ready();
+    let mut no_effort = binding("auto/deepseek-v4.1-flash");
+    no_effort.reasoning.effort = None;
+    let mut next_snapshot = app.model.snapshot.clone().unwrap();
+    next_snapshot.publication_version += 1;
+    next_snapshot.selected_next = Some(no_effort.clone());
+    next_snapshot.active = Some(no_effort);
+    app.model.apply("/agent/1", Some(next_snapshot));
+
+    assert_eq!(app.model.prompt_label(false), "auto/deepseek-v4.1-flash");
+    assert_eq!(app.model.prompt_label(true), "auto/deepseek-v4.1-flash");
+
+    for width in [40, 80, 120] {
+        let context = app.context_line(width).to_string();
+        assert!(context.contains("auto/deepseek-v4.1-flash"), "{context}");
+        assert!(!context.contains("effort unknown"), "{context}");
+    }
+
+    let status = app.model.status();
+    assert!(status.contains("reasoning unknown"), "{status}");
+}
