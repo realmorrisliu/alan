@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const CATALOG_CACHE_VERSION: u32 = 1;
 const CATALOG_CACHE_FILENAME: &str = "catalog-cache.json";
@@ -137,15 +138,19 @@ impl CatalogCacheFile {
 pub(crate) fn save_cached_models(
     metadata_path: &Path,
     io_lock: &Mutex<()>,
+    closed: &AtomicBool,
     profile_id: &str,
     profile: &ConnectionProfile,
     account_identity: Option<&str>,
     models: &[ProviderModel],
 ) {
-    if models.is_empty() {
+    if models.is_empty() || closed.load(Ordering::SeqCst) {
         return;
     }
     let _guard = io_lock.lock().unwrap_or_else(|e| e.into_inner());
+    if closed.load(Ordering::SeqCst) {
+        return;
+    }
     let path = cache_path_for_metadata(metadata_path);
     let Some(parent) = path.parent() else {
         return;

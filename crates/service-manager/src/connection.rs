@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::connection_profile::{
@@ -179,7 +180,14 @@ pub struct ConnectionService {
     callables: Arc<tokio::sync::Mutex<Option<CallableRegistry>>>,
     package_service: Arc<Mutex<Option<Arc<crate::PackageService>>>>,
     catalog_cache_lock: Arc<Mutex<()>>,
+    closed: Arc<AtomicBool>,
     temporary_store: Option<crate::temporary_store::TemporaryStore>,
+}
+
+impl Drop for ConnectionService {
+    fn drop(&mut self) {
+        self.mark_closed();
+    }
 }
 
 struct ConnectionLlmProvider {
@@ -247,6 +255,7 @@ impl ConnectionService {
             callables: Arc::new(tokio::sync::Mutex::new(None)),
             package_service: Arc::new(Mutex::new(None)),
             catalog_cache_lock: Arc::new(Mutex::new(())),
+            closed: Arc::new(AtomicBool::new(false)),
             temporary_store: None,
         }))
     }
@@ -267,6 +276,7 @@ impl ConnectionService {
             callables: Arc::new(tokio::sync::Mutex::new(None)),
             package_service: Arc::new(Mutex::new(None)),
             catalog_cache_lock: Arc::new(Mutex::new(())),
+            closed: Arc::new(AtomicBool::new(false)),
             temporary_store: None,
         })
     }
@@ -288,14 +298,24 @@ impl ConnectionService {
             callables: Arc::new(tokio::sync::Mutex::new(None)),
             package_service: Arc::new(Mutex::new(None)),
             catalog_cache_lock: Arc::new(Mutex::new(())),
+            closed: Arc::new(AtomicBool::new(false)),
             temporary_store: Some(temporary),
         }))
+    }
+
+    fn mark_closed(&self) {
+        let _guard = self
+            .catalog_cache_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        self.closed.store(true, Ordering::SeqCst);
     }
 
     /// Close a temporary store after all consumers stop, reporting cleanup errors.
     pub fn close_ephemeral(self: Arc<Self>) -> Result<()> {
         let mut service = Arc::try_unwrap(self)
             .map_err(|_| anyhow::anyhow!("Connection Service still has active consumers"))?;
+        service.mark_closed();
         let temporary = service
             .temporary_store
             .take()

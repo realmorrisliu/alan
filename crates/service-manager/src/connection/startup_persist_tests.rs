@@ -636,3 +636,79 @@ async fn cold_boot_initial_callable_reconciles_live_catalog_metadata_after_backg
         "reconciled callable must reject efforts unsupported by the live catalog"
     );
 }
+
+#[tokio::test]
+async fn close_ephemeral_during_inflight_discovery_does_not_recreate_temporary_store() {
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let factory = Arc::new(ControlledCatalogFactory::default());
+    *factory.gate.lock().unwrap() = Some(gate.clone());
+    factory
+        .account_by_profile
+        .lock()
+        .unwrap()
+        .insert("chatgpt-main".into(), Some("acct-ephemeral".into()));
+    factory.models_by_profile.lock().unwrap().insert(
+        "chatgpt-main".into(),
+        Some(vec![sample_model("gpt-5.3-codex"), sample_model("gpt-5.4")]),
+    );
+
+    let service = ConnectionService::ephemeral().unwrap();
+    let temp_dir = service
+        .metadata_path
+        .as_ref()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    service
+        .attach_callable_registry(
+            Arc::new(alan_llmfs::LlmFs::new()),
+            factory.clone(),
+            Config::default(),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let mut connections = service.metadata();
+    let kind = ConnectionsFile::profile_descriptor(ProviderId::Chatgpt).credential_kind;
+    connections.credentials.insert(
+        "chatgpt-cred".into(),
+        crate::connection_profile::ConnectionCredential {
+            kind,
+            provider_family: ProviderId::Chatgpt,
+            label: "ChatGPT".into(),
+            backend: crate::connection_profile::default_credential_backend(kind).into(),
+        },
+    );
+    let mut chatgpt = profile();
+    chatgpt.provider = ProviderId::Chatgpt;
+    chatgpt.credential_id = Some("chatgpt-cred".into());
+    chatgpt.settings = crate::connection_profile::normalize_profile_settings(
+        ProviderId::Chatgpt,
+        &BTreeMap::from([("model".into(), "gpt-5.3-codex".into())]),
+    );
+    connections.profiles.insert("chatgpt-main".into(), chatgpt);
+    service
+        .apply(ConnectionCommand::ReplaceMetadata {
+            expected: service.metadata().fingerprint().unwrap(),
+            connections,
+        })
+        .await
+        .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(2), factory.started.notified())
+        .await
+        .unwrap();
+
+    service.close_ephemeral().unwrap();
+    assert!(!temp_dir.exists(), "temporary store should be removed");
+
+    // Release the detached background discovery and confirm it never recreates temp_dir.
+    gate.add_permits(1);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !temp_dir.exists(),
+        "detached background discovery must not recreate closed temporary store"
+    );
+}

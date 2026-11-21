@@ -5,6 +5,7 @@ use alan_agent_engine::{Config, LlmProvider, ModelCatalog, ModelCatalogProvider}
 use alan_llm::{ProviderModel, ReasoningEffort};
 use anyhow::{Context, Result, ensure};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Published catalog payload cached per Connection profile revision.
@@ -105,6 +106,7 @@ pub(super) struct CatalogDiscoveryContext {
     pub callables: Arc<tokio::sync::Mutex<Option<CallableRegistry>>>,
     pub package_service: Arc<Mutex<Option<Arc<crate::PackageService>>>>,
     pub catalog_cache_lock: Arc<Mutex<()>>,
+    pub closed: Arc<AtomicBool>,
 }
 
 /// Providers that publish live `/models` catalogs from an active client connection.
@@ -159,6 +161,7 @@ impl ConnectionService {
             callables: self.callables.clone(),
             package_service: self.package_service.clone(),
             catalog_cache_lock: self.catalog_cache_lock.clone(),
+            closed: self.closed.clone(),
         }
     }
 
@@ -293,10 +296,14 @@ pub(super) async fn discover_catalog_with_context(
                 }
                 still_current
             };
-            if still_current && let Some(metadata_path) = &ctx.metadata_path {
+            if still_current
+                && !ctx.closed.load(Ordering::SeqCst)
+                && let Some(metadata_path) = &ctx.metadata_path
+            {
                 catalog_cache::save_cached_models(
                     metadata_path,
                     &ctx.catalog_cache_lock,
+                    &ctx.closed,
                     profile_id,
                     &profile_snapshot,
                     account_identity.as_deref(),
