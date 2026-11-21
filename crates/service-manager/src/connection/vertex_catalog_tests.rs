@@ -306,6 +306,7 @@ async fn superseded_vertex_discovery_does_not_overwrite_replacement_llmfs_models
         })
         .await
         .unwrap();
+    service.wait_for_catalog_discovery().await;
 
     // Release the old in-flight discovery and ensure it cannot pollute llmfs or catalog.
     blocked.add_permits(1);
@@ -503,6 +504,7 @@ async fn real_vertex_client_express_and_failed_adc_stay_bundled_until_explicit_r
         })
         .await
         .unwrap();
+    adc_service.wait_for_catalog_discovery().await;
     let adc_authority = ProcessConnection {
         service: adc_service.clone(),
         profile: "vertex-adc".into(),

@@ -94,7 +94,12 @@ impl RuntimeSubmissionQueues {
             return Ok(());
         };
         let mut last = self.model_status.lock().await;
-        let bindings = environment.model_bindings.lock().await;
+        let mut bindings = environment.model_bindings.lock().await;
+        if let Some(authority) = bindings.authority.clone()
+            && let Some(confirmed) = bindings.confirmed.as_mut()
+        {
+            authority.refresh_callable_catalog(confirmed).await;
+        }
         let catalog: Option<UiModelCatalog> = match &bindings.authority {
             Some(authority) => authority
                 .catalog()

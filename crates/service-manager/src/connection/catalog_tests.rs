@@ -151,6 +151,7 @@ async fn chatgpt_catalog_publication_preserves_captured_bindings_and_retries_una
 {
     let factory = Arc::new(CatalogFactory::default());
     let (service, authority) = managed_connection(factory.clone()).await;
+    service.wait_for_catalog_discovery().await;
     let original = authority.capture_initial().await.unwrap().unwrap();
     assert_eq!(
         factory.reads.load(Ordering::SeqCst),
@@ -296,6 +297,7 @@ async fn slow_discovery_does_not_block_published_observation_or_publish_into_rep
     let factory = Arc::new(CatalogFactory::default());
     *factory.models.lock().unwrap() = Some(vec![model("model-a")]);
     let (service, authority) = managed_connection(factory.clone()).await;
+    service.wait_for_catalog_discovery().await;
     let original = authority.catalog().await.unwrap();
     let blocked = Arc::new(tokio::sync::Semaphore::new(0));
     *factory.blocked.lock().unwrap() = Some(blocked.clone());
@@ -348,6 +350,7 @@ async fn slow_discovery_does_not_block_published_observation_or_publish_into_rep
         })
         .await
         .unwrap();
+    service.wait_for_catalog_discovery().await;
     blocked.add_permits(1);
     tokio::time::timeout(std::time::Duration::from_secs(2), update)
         .await
@@ -414,6 +417,7 @@ async fn magpie_and_openrouter_live_catalogs_and_static_provider_catalogs_publis
             })
             .await
             .unwrap();
+        service.wait_for_catalog_discovery().await;
         let authority = ProcessConnection {
             service: service.clone(),
             profile: "p".into(),
@@ -488,6 +492,7 @@ async fn magpie_and_openrouter_live_catalogs_and_static_provider_catalogs_publis
             })
             .await
             .unwrap();
+        service.wait_for_catalog_discovery().await;
         let authority = ProcessConnection {
             service,
             profile: "p".into(),
@@ -727,6 +732,7 @@ async fn root_profile_switch_redirects_after_live_login_publishes_all_profiles_a
     initial.default_profile = Some("magpie-main".into());
     initial.save_to_path(&conn_path).unwrap();
     service.reload_connections().await.unwrap();
+    service.wait_for_catalog_discovery().await;
 
     assert!(
         child

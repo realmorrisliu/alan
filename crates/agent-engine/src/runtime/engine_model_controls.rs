@@ -89,6 +89,11 @@ impl RuntimeSubmissionQueues {
             return Ok(());
         };
         let mut bindings = environment.model_bindings.lock().await;
+        if let Some(authority) = bindings.authority.clone()
+            && let Some(confirmed) = bindings.confirmed.as_mut()
+        {
+            authority.refresh_callable_catalog(confirmed).await;
+        }
         let callable = bindings.confirmed.clone().ok_or(NoConfirmedCallable)?;
         let binding = bindings.resolve(&callable, input)?;
         bindings.captured.insert(input.id.clone(), callable);
@@ -168,8 +173,9 @@ impl RuntimeSubmissionQueues {
         let authority = bindings
             .authority
             .as_ref()
-            .context("Connection catalog unavailable")?;
-        let callable = authority.capture(Some(model)).await?;
+            .context("Connection catalog unavailable")?
+            .clone();
+        let mut callable = authority.capture(Some(model)).await?;
         let controls = crate::resolve_runtime_request_controls(
             &callable.config,
             crate::provider_capabilities_for_config(&callable.config),
@@ -183,6 +189,7 @@ impl RuntimeSubmissionQueues {
                 "callable_binding": callable.identity, "request_controls": controls}),
         )
         .await?;
+        authority.persist_selection(&mut callable).await;
         self.outer_queue
             .lock()
             .expect("input queue")

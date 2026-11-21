@@ -1,10 +1,12 @@
 //! Connection-owned model catalog discovery, static provider catalogs, and model authorization.
 
-use super::{ConnectionService, provider_packages};
+use super::{CallableRegistry, ConnectionService, State, catalog_cache, provider_packages};
 use alan_agent_engine::{Config, LlmProvider, ModelCatalog, ModelCatalogProvider};
 use alan_llm::{ProviderModel, ReasoningEffort};
 use anyhow::{Context, Result, ensure};
-use std::sync::{Arc, OnceLock};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// Published catalog payload cached per Connection profile revision.
 #[derive(Clone)]
@@ -13,7 +15,99 @@ pub(crate) struct PublishedCatalog {
     pub engine_catalog: Option<Arc<ModelCatalog>>,
 }
 
-pub(crate) type ModelCatalogPublication = Arc<OnceLock<Option<PublishedCatalog>>>;
+#[derive(Clone, Default)]
+struct CatalogSlotState {
+    published: Option<PublishedCatalog>,
+    live_settled: bool,
+    live_succeeded: bool,
+}
+
+/// Per-profile catalog publication slot supporting warm disk-cache hydration
+/// followed by non-blocking background live discovery and pointer-checked replacement.
+pub(crate) struct CatalogSlot {
+    state: Mutex<CatalogSlotState>,
+    settled: tokio::sync::Notify,
+}
+
+impl CatalogSlot {
+    pub(crate) fn new(initial: Option<PublishedCatalog>) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(CatalogSlotState {
+                published: initial,
+                live_settled: false,
+                live_succeeded: false,
+            }),
+            settled: tokio::sync::Notify::new(),
+        })
+    }
+
+    pub(crate) fn published(&self) -> Option<PublishedCatalog> {
+        self.state.lock().unwrap().published.clone()
+    }
+
+    pub(crate) fn is_live_settled(&self) -> bool {
+        self.state.lock().unwrap().live_settled
+    }
+
+    pub(crate) fn is_live_failed(&self) -> bool {
+        let state = self.state.lock().unwrap();
+        state.live_settled && !state.live_succeeded
+    }
+
+    pub(crate) fn settle_live_ok(&self, catalog: PublishedCatalog) {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.published = Some(catalog);
+            state.live_settled = true;
+            state.live_succeeded = true;
+        }
+        self.settled.notify_waiters();
+    }
+
+    pub(crate) fn settle_live_failed(&self) {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.live_settled = true;
+            state.live_succeeded = false;
+        }
+        self.settled.notify_waiters();
+    }
+
+    pub(crate) fn settle_superseded(&self) {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.live_settled = true;
+            state.live_succeeded = false;
+        }
+        self.settled.notify_waiters();
+    }
+
+    pub(crate) async fn wait_settled(&self) {
+        loop {
+            let notified = self.settled.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.state.lock().unwrap().live_settled {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+pub(crate) type ModelCatalogPublication = Arc<CatalogSlot>;
+
+/// Detached handle passed to background catalog discovery tasks so they never
+/// retain a strong reference to `ConnectionService` (preserving `close_ephemeral`).
+#[derive(Clone)]
+pub(super) struct CatalogDiscoveryContext {
+    pub metadata_path: Option<PathBuf>,
+    pub state: Arc<Mutex<State>>,
+    pub callables: Arc<tokio::sync::Mutex<Option<CallableRegistry>>>,
+    pub package_service: Arc<Mutex<Option<Arc<crate::PackageService>>>>,
+    pub catalog_cache_lock: Arc<Mutex<()>>,
+    pub closed: Arc<AtomicBool>,
+}
 
 /// Providers that publish live `/models` catalogs from an active client connection.
 pub(crate) fn needs_live_catalog_discovery(provider: LlmProvider) -> bool {
@@ -60,78 +154,130 @@ pub(crate) fn build_published_catalog(
 }
 
 impl ConnectionService {
-    /// Discover a live provider model catalog off-lock and publish it atomically to
-    /// both `published_catalogs` and `llmfs` (`/mnt/llm/connections/<profile>/models`).
-    pub(super) async fn discover_catalog(
-        &self,
-        profile_id: &str,
-        provider_kind: LlmProvider,
-        publication: &ModelCatalogPublication,
-    ) {
-        let discovery = async {
-            let (client, base_catalog) = {
-                let callables = self.callables.lock().await;
-                let registry = callables
-                    .as_ref()
-                    .context("callable registry unavailable")?;
-                let connections = self.metadata();
-                ensure!(
-                    registry
-                        .published_catalogs
-                        .get(profile_id)
-                        .is_some_and(|current| Arc::ptr_eq(current, publication)),
-                    "catalog publication replaced"
-                );
-                ensure!(
-                    registry.published_profiles.get(profile_id)
-                        == connections.profiles.get(profile_id)
-                        && registry.published_profiles.contains_key(profile_id),
-                    "profile publication changed"
-                );
-                let packages = self.package_service();
-                let hydrated = provider_packages::hydrate_connections_with_package_defaults(
-                    packages.as_deref(),
-                    &connections,
-                    profile_id,
-                );
-                let client =
-                    registry
-                        .factory
-                        .create(&registry.base_config, Some(profile_id), &hydrated)?;
-                if provider_kind == LlmProvider::Chatgpt {
-                    let account = registry
-                        .published_accounts
-                        .get(profile_id)
-                        .context("managed catalog account unavailable")?;
-                    ensure!(
-                        client.account_identity() == Some(account.as_str()),
-                        "provider account changed since callable publication"
-                    );
-                } else if let Some(account) = registry.published_accounts.get(profile_id) {
-                    ensure!(
-                        client.account_identity() == Some(account.as_str()),
-                        "provider account changed since callable publication"
-                    );
-                }
-                (
-                    client,
-                    registry.base_config.resolved_model_catalog().clone(),
-                )
-            };
-            // Never hold the global callable lock across provider IO. The publication
-            // slot is detached on replacement, so late results cannot authorize it.
-            let models = client
-                .model_catalog()
-                .await?
-                .context("model catalog unavailable")?;
-            build_published_catalog(provider_kind, &base_catalog, models)
-                .context("model catalog unavailable")
+    pub(super) fn discovery_context(&self) -> CatalogDiscoveryContext {
+        CatalogDiscoveryContext {
+            metadata_path: self.metadata_path.clone(),
+            state: self.state.clone(),
+            callables: self.callables.clone(),
+            package_service: self.package_service.clone(),
+            catalog_cache_lock: self.catalog_cache_lock.clone(),
+            closed: self.closed.clone(),
         }
-        .await;
+    }
 
-        match discovery {
-            Ok(published) => {
-                let callables = self.callables.lock().await;
+    /// Spawn background live catalog discovery for one profile publication slot.
+    pub(super) fn spawn_catalog_discovery(
+        &self,
+        profile_id: String,
+        provider_kind: LlmProvider,
+        publication: ModelCatalogPublication,
+    ) {
+        let ctx = self.discovery_context();
+        tokio::spawn(async move {
+            discover_catalog_with_context(ctx, &profile_id, provider_kind, &publication).await;
+        });
+    }
+
+    /// Await settlement of all currently published background catalog discoveries.
+    #[cfg(test)]
+    pub(crate) async fn wait_for_catalog_discovery(&self) {
+        let slots: Vec<ModelCatalogPublication> = {
+            let callables = self.callables.lock().await;
+            callables
+                .as_ref()
+                .map(|registry| registry.published_catalogs.values().cloned().collect())
+                .unwrap_or_default()
+        };
+        for slot in slots {
+            slot.wait_settled().await;
+        }
+    }
+}
+
+/// Discover a live provider model catalog off-lock and publish it atomically to
+/// `published_catalogs`, `llmfs` (`/mnt/llm/connections/<profile>/models`), and disk cache.
+pub(super) async fn discover_catalog_with_context(
+    ctx: CatalogDiscoveryContext,
+    profile_id: &str,
+    provider_kind: LlmProvider,
+    publication: &ModelCatalogPublication,
+) {
+    let discovery = async {
+        let (client, base_catalog, profile_snapshot, account_identity) = {
+            let callables = ctx.callables.lock().await;
+            let registry = callables
+                .as_ref()
+                .context("callable registry unavailable")?;
+            let connections = ctx.state.lock().unwrap().connections.clone();
+            ensure!(
+                registry
+                    .published_catalogs
+                    .get(profile_id)
+                    .is_some_and(|current| Arc::ptr_eq(current, publication)),
+                "catalog publication replaced"
+            );
+            ensure!(
+                registry.published_profiles.get(profile_id) == connections.profiles.get(profile_id)
+                    && registry.published_profiles.contains_key(profile_id),
+                "profile publication changed"
+            );
+            let profile_snapshot = connections
+                .profiles
+                .get(profile_id)
+                .context("profile unavailable")?
+                .clone();
+            let packages = ctx
+                .package_service
+                .lock()
+                .expect("package service mutex poisoned")
+                .clone();
+            let hydrated = provider_packages::hydrate_connections_with_package_defaults(
+                packages.as_deref(),
+                &connections,
+                profile_id,
+            );
+            let client =
+                registry
+                    .factory
+                    .create(&registry.base_config, Some(profile_id), &hydrated)?;
+            let account_identity = registry.published_accounts.get(profile_id).cloned();
+            if provider_kind == LlmProvider::Chatgpt {
+                let account = account_identity
+                    .as_deref()
+                    .context("managed catalog account unavailable")?;
+                ensure!(
+                    client.account_identity() == Some(account),
+                    "provider account changed since callable publication"
+                );
+            } else if let Some(account) = account_identity.as_deref() {
+                ensure!(
+                    client.account_identity() == Some(account),
+                    "provider account changed since callable publication"
+                );
+            }
+            (
+                client,
+                registry.base_config.resolved_model_catalog().clone(),
+                profile_snapshot,
+                account_identity,
+            )
+        };
+        // Never hold the global callable lock across provider IO. The publication
+        // slot is detached on replacement, so late results cannot authorize it.
+        let models = client
+            .model_catalog()
+            .await?
+            .context("model catalog unavailable")?;
+        let published = build_published_catalog(provider_kind, &base_catalog, models)
+            .context("model catalog unavailable")?;
+        Ok::<_, anyhow::Error>((published, profile_snapshot, account_identity))
+    }
+    .await;
+
+    match discovery {
+        Ok((published, profile_snapshot, account_identity)) => {
+            let still_current = {
+                let callables = ctx.callables.lock().await;
                 let still_current = callables.as_ref().is_some_and(|registry| {
                     registry
                         .published_catalogs
@@ -144,15 +290,30 @@ impl ConnectionService {
                             .llmfs
                             .set_connection_models(profile_id, published.models.clone());
                     }
-                    let _ = publication.set(Some(published));
+                    publication.settle_live_ok(published.clone());
                 } else {
-                    let _ = publication.set(None);
+                    publication.settle_superseded();
                 }
+                still_current
+            };
+            if still_current
+                && !ctx.closed.load(Ordering::SeqCst)
+                && let Some(metadata_path) = &ctx.metadata_path
+            {
+                catalog_cache::save_cached_models(
+                    metadata_path,
+                    &ctx.catalog_cache_lock,
+                    &ctx.closed,
+                    profile_id,
+                    &profile_snapshot,
+                    account_identity.as_deref(),
+                    &published.models,
+                );
             }
-            Err(_) => {
-                // A settled failure is cached too. Only explicit selection retries it.
-                let _ = publication.set(None);
-            }
+        }
+        Err(_) => {
+            // A settled failure is cached too. Only explicit selection retries it.
+            publication.settle_live_failed();
         }
     }
 }

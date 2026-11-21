@@ -3,6 +3,8 @@ use super::*;
 mod catalog_tests;
 #[path = "process_binding_tests.rs"]
 mod process_binding_tests;
+#[path = "startup_persist_tests.rs"]
+mod startup_persist_tests;
 #[path = "vertex_catalog_tests.rs"]
 mod vertex_catalog_tests;
 use alan_agent_engine::LlmProvider as ProviderId;

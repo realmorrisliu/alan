@@ -48,6 +48,12 @@ pub trait ConnectionAuthority: Send + Sync {
     async fn capture(&self, model: Option<&str>) -> Result<CapturedCallable>;
     async fn restore(&self, identity: &CallableIdentity) -> Result<CapturedCallable>;
     async fn catalog(&self) -> Result<serde_json::Value>;
+    /// Persist a validated interactive selection as the Root default, if authorized.
+    /// Called only after request-control validation and durable installation succeed.
+    async fn persist_selection(&self, _captured: &mut CapturedCallable) {}
+    /// Reconcile a confirmed next-input callable's `Config` with newly published
+    /// Connection catalog metadata without network IO, disk reads, or callable rebuild.
+    async fn refresh_callable_catalog(&self, _callable: &mut CapturedCallable) {}
     /// Capture an independently reachable evaluator; never mutate generation binding.
     async fn capture_evaluation(&self, _profile: &str) -> Result<CapturedCallable> {
         anyhow::bail!("evaluation authority unavailable")
