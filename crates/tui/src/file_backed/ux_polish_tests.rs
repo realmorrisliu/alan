@@ -616,6 +616,107 @@ fn late_complete_thinking_inserts_above_open_assistant_and_preserves_indices() {
     assert!(matches!(queued.transcript[1], HistoryCell::Thinking { .. }));
     assert!(matches!(queued.transcript[2], HistoryCell::Assistant(_)));
     assert_eq!(queued.local_inputs["sub-2"].cell, Some(3));
+
+    // Case 6: Turn 1 completes WITHOUT thinking (tape before ui/events, then Idle/InputCompleted),
+    // and Turn 2's Thinking::Complete arrives BEFORE Turn 2's remote user tape record.
+    // Turn 2's thinking must NOT jump above Turn 1's Assistant and must preserve
+    // `pending_remote_turn_start` so User2 lands BEFORE Thinking2.
+    let mut remote_next = FileBackedApp::new("/agent/1".into());
+    remote_next.apply_tape_record(super::tests::tape_message("user", "turn 1"));
+    remote_next.apply_ui_event(UiEvent::Activity {
+        snapshot: UiActivitySnapshot::running(1),
+    });
+    remote_next.apply_tape_record(super::tests::tape_message("assistant", "answer 1"));
+    remote_next.apply_ui_event(UiEvent::Activity {
+        snapshot: UiActivitySnapshot::idle(),
+    });
+    remote_next.apply_ui_event(UiEvent::InputCompleted {
+        submission_ids: vec!["s1".into()],
+        status: alan_agent_protocol::UiInputStatus::Completed,
+        error: None,
+    });
+    remote_next.apply_ui_event(UiEvent::Thinking {
+        snapshot: UiThinkingSnapshot::complete("turn 2 thought".into(), 2),
+    });
+    assert_eq!(remote_next.pending_remote_turn_start, Some(2));
+    remote_next.apply_tape_record(super::tests::tape_message("user", "turn 2"));
+    remote_next.apply_tape_record(super::tests::tape_message("assistant", "answer 2"));
+    assert_eq!(
+        remote_next.rendered_history_lines(80),
+        vec![
+            "",
+            ": turn 1",
+            "answer 1",
+            "",
+            ": turn 2",
+            "· thought · 2s",
+            "answer 2",
+        ]
+    );
+
+    // Case 6b: Same scenario when Turn 1's InputCompleted arrived BEFORE Turn 1's assistant tape record.
+    let mut ui_first = FileBackedApp::new("/agent/1".into());
+    ui_first.apply_tape_record(super::tests::tape_message("user", "turn 1"));
+    ui_first.apply_ui_event(UiEvent::Activity {
+        snapshot: UiActivitySnapshot::running(1),
+    });
+    ui_first.apply_ui_event(UiEvent::Activity {
+        snapshot: UiActivitySnapshot::idle(),
+    });
+    ui_first.apply_ui_event(UiEvent::InputCompleted {
+        submission_ids: vec!["s1".into()],
+        status: alan_agent_protocol::UiInputStatus::Completed,
+        error: None,
+    });
+    ui_first.apply_tape_record(super::tests::tape_message("assistant", "answer 1"));
+    ui_first.apply_ui_event(UiEvent::Thinking {
+        snapshot: UiThinkingSnapshot::complete("turn 2 thought".into(), 3),
+    });
+    assert_eq!(ui_first.pending_remote_turn_start, Some(2));
+    ui_first.apply_tape_record(super::tests::tape_message("user", "turn 2"));
+    ui_first.apply_tape_record(super::tests::tape_message("assistant", "answer 2"));
+    assert_eq!(
+        ui_first.rendered_history_lines(80),
+        vec![
+            "",
+            ": turn 1",
+            "answer 1",
+            "",
+            ": turn 2",
+            "· thought · 3s",
+            "answer 2",
+        ]
+    );
+
+    // Case 7: Hydrated completed `[User1, Assistant1]` session receiving a remote next-turn
+    // `Thinking::Complete` before `user2` tape record must not attach to hydrated Assistant1.
+    let mut hydrated = FileBackedApp::new("/agent/1".into());
+    let tape = concat!(
+        r#"{"version":1,"kind":"message","role":"user","content":"old q"}"#,
+        "\n",
+        r#"{"version":1,"kind":"message","role":"assistant","content":"old a"}"#,
+        "\n",
+    );
+    hydrated.transcript = super::file_surface::parse_tape_history(tape);
+    hydrated.seed_reconciler_from_tape_history(tape);
+    hydrated.apply_ui_event(UiEvent::Thinking {
+        snapshot: UiThinkingSnapshot::complete("new remote thought".into(), 4),
+    });
+    assert_eq!(hydrated.pending_remote_turn_start, Some(2));
+    hydrated.apply_tape_record(super::tests::tape_message("user", "new q"));
+    hydrated.apply_tape_record(super::tests::tape_message("assistant", "new a"));
+    assert_eq!(
+        hydrated.rendered_history_lines(80),
+        vec![
+            "",
+            ": old q",
+            "old a",
+            "",
+            ": new q",
+            "· thought · 4s",
+            "new a",
+        ]
+    );
 }
 
 #[test]

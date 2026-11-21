@@ -121,6 +121,7 @@ impl FileBackedApp {
                 self.turn_prompts.clear();
                 self.action_cells.clear();
                 self.pending_remote_turn_start = None;
+                self.clear_late_thinking_latch();
                 self.scrollback_front_is_partial = false;
                 None
             }
@@ -222,6 +223,7 @@ impl FileBackedApp {
         self.usage = super::super::usage::UsageProjection::default();
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
+        self.clear_late_thinking_latch();
         self.scrollback_front_is_partial = false;
         self.last_input_failed = false;
         self.auto_continue_on_empty_cancel = false;

@@ -4,6 +4,7 @@ impl FileBackedApp {
     pub(in crate::file_backed) fn seed_reconciler_from_tape_history(&mut self, raw: &str) {
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
+        self.clear_late_thinking_latch();
         self.turn_prompts.clear();
         for line in raw.lines() {
             let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
@@ -71,5 +72,6 @@ impl FileBackedApp {
         };
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
+        self.clear_late_thinking_latch();
     }
 }

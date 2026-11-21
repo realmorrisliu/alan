@@ -112,6 +112,15 @@ pub(super) struct FileBackedApp {
     /// arrives, insert the user cell before the whole block and shift side
     /// indexes such as `action_cells`.
     pub(super) pending_remote_turn_start: Option<usize>,
+    /// Single-turn latch allowing a late `UiThinkingState::Complete` from the
+    /// just-closed live turn to insert before its `Assistant` cell when
+    /// `machine/tape` beat `machine/ui/events`, without ever claiming a
+    /// subsequent turn's thinking or a hydrated session's assistant cell.
+    pub(super) closed_assistant_accepts_late_thinking: bool,
+    /// Set once `machine/ui/events` closes the current turn (`InputCompleted`
+    /// or `Running -> Idle`), cleared on the next `user` tape boundary so a
+    /// late `assistant` tape record cannot arm the latch for a future turn.
+    pub(super) ui_turn_closed: bool,
     pub(super) scrollback_front_is_partial: bool,
 }
 
@@ -185,6 +194,8 @@ impl FileBackedApp {
             should_quit: false,
             reconciler: StreamReconciler::new(),
             pending_remote_turn_start: None,
+            closed_assistant_accepts_late_thinking: false,
+            ui_turn_closed: false,
             scrollback_front_is_partial: false,
         }
     }

@@ -322,6 +322,7 @@ impl FileBackedApp {
                     }
                 }
                 self.reconciler.on_user_record();
+                self.clear_late_thinking_latch();
                 if !local || !duplicate {
                     let index = self
                         .pending_remote_turn_start
@@ -359,6 +360,11 @@ impl FileBackedApp {
                         self.transcript.push(HistoryCell::Assistant(content))
                     }
                 }
+                let already_has_thinking = self.current_assistant_cell().is_some_and(|i| {
+                    i > 0 && matches!(self.transcript[i - 1], HistoryCell::Thinking { .. })
+                });
+                self.closed_assistant_accepts_late_thinking =
+                    !self.ui_turn_closed && !already_has_thinking;
             }
             _ => {}
         }
@@ -382,6 +388,8 @@ impl FileBackedApp {
         match event {
             UiEvent::InputCompleted { status, .. } => {
                 self.last_input_failed = status == UiInputStatus::Failed;
+                self.closed_assistant_accepts_late_thinking = false;
+                self.ui_turn_closed = true;
             }
             UiEvent::Activity { snapshot } => self.apply_ui_activity_snapshot(snapshot),
             UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
@@ -403,14 +411,23 @@ impl FileBackedApp {
         }
     }
 
+    pub(in crate::file_backed) fn clear_late_thinking_latch(&mut self) {
+        self.closed_assistant_accepts_late_thinking = false;
+        self.ui_turn_closed = false;
+    }
+
     pub(in crate::file_backed) fn apply_ui_activity_snapshot(
         &mut self,
         snapshot: UiActivitySnapshot,
     ) {
-        if snapshot.state == UiActivityState::Idle
-            && matches!(self.thinking.state, UiThinkingState::Streaming)
-        {
-            self.thinking = UiThinkingSnapshot::idle();
+        if snapshot.state == UiActivityState::Idle {
+            self.closed_assistant_accepts_late_thinking = false;
+            if self.activity.state != UiActivityState::Idle {
+                self.ui_turn_closed = true;
+            }
+            if matches!(self.thinking.state, UiThinkingState::Streaming) {
+                self.thinking = UiThinkingSnapshot::idle();
+            }
         }
         self.activity = snapshot;
     }
@@ -442,6 +459,9 @@ impl FileBackedApp {
     /// index of that unpruned assistant cell so completed thinking inserts above it.
     fn thinking_insert_index(&self) -> Option<usize> {
         let awaiting_boundary = self.reconciler.awaiting_boundary();
+        if awaiting_boundary && !self.closed_assistant_accepts_late_thinking {
+            return None;
+        }
         for (idx, cell) in self.transcript.iter().enumerate().rev() {
             if !awaiting_boundary && self.queued_receipt_at(idx) {
                 continue;
@@ -450,16 +470,7 @@ impl FileBackedApp {
                 HistoryCell::Assistant(_)
                 | HistoryCell::AssistantTail {
                     committed: (0, 0), ..
-                } => {
-                    if awaiting_boundary
-                        && idx > 0
-                        && matches!(self.transcript[idx - 1], HistoryCell::Thinking { .. })
-                    {
-                        None
-                    } else {
-                        Some(idx)
-                    }
-                }
+                } => Some(idx),
                 _ => None,
             };
         }
@@ -480,7 +491,9 @@ impl FileBackedApp {
                 text: snapshot.text,
                 duration_secs: snapshot.duration_secs.unwrap_or(0),
             };
-            if let Some(index) = self.thinking_insert_index() {
+            let insert_at = self.thinking_insert_index();
+            self.closed_assistant_accepts_late_thinking = false;
+            if let Some(index) = insert_at {
                 self.transcript.insert(index, cell);
                 self.shift_action_cells_for_insert(index);
             } else {
