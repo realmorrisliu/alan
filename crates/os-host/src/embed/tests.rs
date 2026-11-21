@@ -513,3 +513,139 @@ async fn isolated_resume_root_restores_prior_turn() {
     );
     app.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn embedded_builtin_file_tools_work_on_app_mount_and_memory_and_block_system_writes() {
+    use alan_agent_engine::ToolCall;
+    use serde_json::json;
+
+    let tool_turn = |calls: Vec<(&str, &str, serde_json::Value)>| {
+        let mut resp = mock_response("");
+        resp.finish_reason = Some("tool_calls".to_string());
+        for (id, name, arguments) in calls {
+            resp.tool_calls.push(ToolCall {
+                id: Some(id.to_string()),
+                name: name.to_string(),
+                arguments,
+            });
+        }
+        resp
+    };
+
+    let provider = MockLlmProvider::new().with_responses(vec![
+        tool_turn(vec![
+            (
+                "w-app",
+                "write_file",
+                json!({"path": "/mnt/slowpage/pages/home.md", "content": "# Slowpage\nv1\n"}),
+            ),
+            (
+                "w-mem",
+                "write_file",
+                json!({"path": "/memory/USER.md", "content": "theme=dark\n"}),
+            ),
+            (
+                "w-sys",
+                "write_file",
+                json!({"path": "/proc/self/ctl", "content": "cancel"}),
+            ),
+        ]),
+        tool_turn(vec![
+            (
+                "e-app",
+                "edit_file",
+                json!({
+                    "path": "/mnt/slowpage/pages/home.md",
+                    "old_string": "v1",
+                    "new_string": "v2"
+                }),
+            ),
+            (
+                "r-app",
+                "read_file",
+                json!({"path": "/mnt/slowpage/pages/home.md"}),
+            ),
+            ("r-mem", "read_file", json!({"path": "/memory/USER.md"})),
+            (
+                "g-mem",
+                "grep",
+                json!({"pattern": "theme=dark", "path": "/memory"}),
+            ),
+            ("l-mnt", "list_dir", json!({"path": "/mnt"})),
+        ]),
+        mock_response("done"),
+    ]);
+
+    let mut tools = alan_agent_engine::ToolRegistry::new();
+    for tool in alan_tools::create_all_tools() {
+        tools.register_boxed(tool);
+    }
+
+    let slowpage = Arc::new(alan_ap::reference::MemFs::writable());
+    let app = EmbeddedAlan::boot(
+        EmbeddedConfig::ephemeral(LlmSource::Client(LlmClient::new(provider.clone())))
+            .with_tools(tools)
+            .with_mount("/mnt/slowpage", slowpage, Access::ReadWrite),
+    )
+    .await
+    .unwrap();
+
+    let client = app.root_agent();
+    let mut stream = client.event_stream().await.unwrap();
+    let submission_id = client
+        .submit_text("update slowpage and memory")
+        .await
+        .unwrap();
+    let events = read_until_submission(&mut stream, &submission_id).await;
+    assert_eq!(collect_text(&events), "done");
+
+    let second_req = &provider.recorded_requests()[1];
+    for id in ["w-app", "w-mem", "w-sys"] {
+        let msg = second_req
+            .messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some(id))
+            .unwrap_or_else(|| panic!("missing tool result for {id}: {:?}", second_req.messages));
+        if id == "w-sys" {
+            assert!(
+                msg.content.contains("\"success\":false")
+                    || msg.content.contains("no access")
+                    || msg.content.contains("error"),
+                "expected /proc/self/ctl write failure, got: {}",
+                msg.content
+            );
+        } else {
+            assert!(
+                msg.content.contains("\"success\":true"),
+                "expected {id} to succeed, got: {}",
+                msg.content
+            );
+        }
+    }
+
+    let third_req = &provider.recorded_requests()[2];
+    let find_tool = |id: &str| {
+        third_req
+            .messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some(id))
+            .unwrap_or_else(|| panic!("missing tool result for {id}"))
+            .content
+            .as_str()
+    };
+    assert!(find_tool("e-app").contains("\"success\":true"));
+    assert!(find_tool("r-app").contains("2| v2"));
+    assert!(find_tool("r-mem").contains("1| theme=dark"));
+    assert!(find_tool("g-mem").contains("/memory/USER.md"));
+    assert!(find_tool("l-mnt").contains("slowpage"));
+
+    assert_eq!(
+        app.shell()
+            .cat("/mnt/slowpage/pages/home.md")
+            .await
+            .unwrap(),
+        b"# Slowpage\nv2\n"
+    );
+
+    app.shutdown().await.unwrap();
+}

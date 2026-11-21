@@ -1,6 +1,11 @@
 use super::exploration_gitignore::{
     GitignoreMatcher, compile_glob_regex, file_type_matches, normalize_slashes,
 };
+use crate::namespace_fs::{
+    MAX_NAMESPACE_GREP_FILE_BYTES, MAX_NAMESPACE_WALK_DEPTH, MAX_NAMESPACE_WALK_ENTRIES,
+    NamespaceFs, resolve_namespace_path,
+};
+use alan_agent_engine::tools::alan_ap::FileKind;
 use alan_agent_engine::tools::{Sandbox, Tool, ToolContext, ToolExecutionAdapter, ToolResult};
 use anyhow::{Result, anyhow};
 use regex::{Regex, RegexBuilder};
@@ -114,18 +119,21 @@ impl Tool for GrepTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = match ctx.sandbox() {
-            Ok(sandbox) => sandbox,
-            Err(err) => return Box::pin(async move { Err(err) }),
-        };
         let path_arg = args["path"].as_str().unwrap_or(".");
-        let path = match ctx.resolve_path(path_arg) {
-            Ok(path) => path,
-            Err(err) => return Box::pin(async move { Err(err) }),
+        let host_target = match (
+            ctx.sandbox(),
+            ctx.execution_adapter(),
+            ctx.resolve_path(path_arg),
+        ) {
+            (Ok(sandbox), Ok(adapter), Ok(path)) => Ok((sandbox, adapter, path)),
+            (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => Err(err),
         };
-        let adapter = match ctx.execution_adapter() {
-            Ok(adapter) => adapter,
-            Err(err) => return Box::pin(async move { Err(err) }),
+        let ns_target = match &host_target {
+            Ok(_) => None,
+            Err(_) => ctx.namespace().cloned().map(|transport| {
+                resolve_namespace_path(&ctx.namespace_cwd, Some(path_arg))
+                    .map(|path| (transport, path))
+            }),
         };
         let pattern = args["pattern"].as_str().unwrap_or("").to_string();
         let glob_raw = args["glob"]
@@ -194,33 +202,45 @@ impl Tool for GrepTool {
             let mut matches = Vec::new();
             let mut truncated = false;
 
-            if path.is_file() {
-                if grep_filters_match(&path, &path, &opts) {
-                    let content = sandbox.read_string(&path).await?;
-                    let visible = adapter.visible_path(&path);
-                    search_file_content(
-                        &content,
-                        &visible.to_string_lossy(),
-                        &regex,
-                        &opts,
-                        &mut matches,
-                        &mut truncated,
-                    );
+            match host_target {
+                Ok((sandbox, adapter, path)) => {
+                    if path.is_file() {
+                        if grep_filters_match(&path, &path, &opts) {
+                            let content = sandbox.read_string(&path).await?;
+                            let visible = adapter.visible_path(&path);
+                            search_file_content(
+                                &content,
+                                &visible.to_string_lossy(),
+                                &regex,
+                                &opts,
+                                &mut matches,
+                                &mut truncated,
+                            );
+                        }
+                    } else if path.is_dir() {
+                        let ignore = GitignoreMatcher::new(&path, &sandbox, opts.respect_gitignore);
+                        search_directory(
+                            &sandbox,
+                            &path,
+                            &path,
+                            &regex,
+                            &adapter,
+                            &opts,
+                            &ignore,
+                            &mut matches,
+                            &mut truncated,
+                        )
+                        .await?;
+                    }
                 }
-            } else if path.is_dir() {
-                let ignore = GitignoreMatcher::new(&path, &sandbox, opts.respect_gitignore);
-                search_directory(
-                    &sandbox,
-                    &path,
-                    &path,
-                    &regex,
-                    &adapter,
-                    &opts,
-                    &ignore,
-                    &mut matches,
-                    &mut truncated,
-                )
-                .await?;
+                Err(host_err) => {
+                    let Some(ns_resolved) = ns_target else {
+                        return Err(host_err);
+                    };
+                    let (transport, path) = ns_resolved?;
+                    let ns = NamespaceFs::new(transport);
+                    grep_namespace(&ns, &path, &regex, &opts, &mut matches, &mut truncated).await?;
+                }
             }
 
             Ok(json!({
@@ -366,6 +386,69 @@ async fn search_directory(
     Ok(())
 }
 
+async fn grep_namespace(
+    ns: &NamespaceFs,
+    root: &str,
+    regex: &Regex,
+    opts: &GrepOptions,
+    matches: &mut Vec<Value>,
+    truncated: &mut bool,
+) -> Result<()> {
+    let stat = ns.stat(root).await?;
+    let root_path = Path::new(root);
+    match stat.qid.kind {
+        FileKind::File => {
+            if grep_filters_match(root_path, root_path, opts) {
+                let bytes = ns
+                    .read_file_bytes(root, MAX_NAMESPACE_GREP_FILE_BYTES)
+                    .await?;
+                let content = String::from_utf8(bytes)
+                    .map_err(|_| anyhow!("File '{root}' is not valid UTF-8"))?;
+                search_file_content(&content, root, regex, opts, matches, truncated);
+            }
+        }
+        FileKind::Dir => {
+            let (files, walk_truncated) = ns
+                .walk_files(
+                    root,
+                    false,
+                    opts.respect_gitignore,
+                    MAX_NAMESPACE_WALK_DEPTH,
+                    MAX_NAMESPACE_WALK_ENTRIES,
+                )
+                .await?;
+            if walk_truncated {
+                *truncated = true;
+            }
+            for file in files {
+                if matches.len() >= opts.limit {
+                    *truncated = true;
+                    break;
+                }
+                let file_path = Path::new(&file.path);
+                if is_binary_file(file_path)
+                    || file.size > MAX_NAMESPACE_GREP_FILE_BYTES as u64
+                    || !grep_filters_match(root_path, file_path, opts)
+                {
+                    continue;
+                }
+                if let Ok(bytes) = ns
+                    .read_file_bytes(&file.path, MAX_NAMESPACE_GREP_FILE_BYTES)
+                    .await
+                    && !bytes.contains(&0)
+                    && let Ok(content) = String::from_utf8(bytes)
+                {
+                    search_file_content(&content, &file.path, regex, opts, matches, truncated);
+                }
+            }
+        }
+        FileKind::Stream | FileKind::Clone => {
+            // Safely skip streams and clone control files without opening.
+        }
+    }
+    Ok(())
+}
+
 /// glob - Find files matching patterns
 #[derive(Default)]
 pub struct GlobTool;
@@ -420,72 +503,92 @@ impl Tool for GlobTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = match ctx.sandbox() {
-            Ok(sandbox) => sandbox,
-            Err(err) => return Box::pin(async move { Err(err) }),
+        let raw_path = args["path"].as_str();
+        let host_target = match (
+            ctx.sandbox(),
+            ctx.execution_adapter(),
+            match raw_path {
+                Some(path) => ctx.resolve_path(path),
+                None => ctx.cwd(),
+            },
+        ) {
+            (Ok(sandbox), Ok(adapter), Ok(base_path)) => Ok((sandbox, adapter, base_path)),
+            (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => Err(err),
         };
-        let base_path = if let Some(path) = args["path"].as_str() {
-            match ctx.resolve_path(path) {
-                Ok(path) => path,
-                Err(err) => return Box::pin(async move { Err(err) }),
-            }
-        } else {
-            match ctx.cwd() {
-                Ok(cwd) => cwd,
-                Err(err) => return Box::pin(async move { Err(err) }),
-            }
+        let ns_target = match &host_target {
+            Ok(_) => None,
+            Err(_) => ctx.namespace().cloned().map(|transport| {
+                resolve_namespace_path(&ctx.namespace_cwd, raw_path).map(|path| (transport, path))
+            }),
         };
         let pattern = args["pattern"].as_str().unwrap_or("").to_string();
         let limit = (args["limit"].as_u64().unwrap_or(DEFAULT_GLOB_LIMIT as u64) as usize)
             .clamp(1, MAX_GLOB_LIMIT);
         let respect_gitignore = args["respect_gitignore"].as_bool().unwrap_or(true);
-        let adapter = match ctx.execution_adapter() {
-            Ok(adapter) => adapter,
-            Err(err) => return Box::pin(async move { Err(err) }),
-        };
 
         Box::pin(async move {
-            if !sandbox.is_readable(&base_path) {
-                return Err(anyhow!(
-                    "Path outside the Process file view: {}",
-                    base_path.to_string_lossy()
-                ));
-            }
-
             if Path::new(&pattern).is_absolute() {
                 return Err(anyhow!("Glob pattern must be relative to base path"));
             }
 
             let glob_re = compile_glob_regex(&pattern)?;
             let include_hidden = pattern.starts_with('.') || pattern.contains("/.");
-            let ignore = GitignoreMatcher::new(&base_path, &sandbox, respect_gitignore);
-            let mut found = Vec::new();
 
-            if base_path.is_dir() {
-                collect_glob_matches(
-                    &sandbox,
-                    &base_path,
-                    &base_path,
-                    &glob_re,
-                    include_hidden,
-                    &ignore,
-                    &adapter,
-                    &mut found,
-                )
-                .await?;
+            match host_target {
+                Ok((sandbox, adapter, base_path)) => {
+                    if !sandbox.is_readable(&base_path) {
+                        return Err(anyhow!(
+                            "Path outside the Process file view: {}",
+                            base_path.to_string_lossy()
+                        ));
+                    }
+
+                    let ignore = GitignoreMatcher::new(&base_path, &sandbox, respect_gitignore);
+                    let mut found = Vec::new();
+
+                    if base_path.is_dir() {
+                        collect_glob_matches(
+                            &sandbox,
+                            &base_path,
+                            &base_path,
+                            &glob_re,
+                            include_hidden,
+                            &ignore,
+                            &adapter,
+                            &mut found,
+                        )
+                        .await?;
+                    }
+
+                    // Sort newest modification time first, breaking ties deterministically.
+                    found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+                    let truncated = found.len() > limit;
+                    found.truncate(limit);
+                    let matches: Vec<String> = found.into_iter().map(|(_, path)| path).collect();
+
+                    Ok(json!({
+                        "matches": matches,
+                        "total": matches.len(),
+                        "truncated": truncated
+                    }))
+                }
+                Err(host_err) => {
+                    let Some(ns_resolved) = ns_target else {
+                        return Err(host_err);
+                    };
+                    let (transport, base_path) = ns_resolved?;
+                    let ns = NamespaceFs::new(transport);
+                    glob_namespace(
+                        &ns,
+                        &base_path,
+                        &glob_re,
+                        include_hidden,
+                        respect_gitignore,
+                        limit,
+                    )
+                    .await
+                }
             }
-
-            // Sort newest modification time first, breaking ties deterministically.
-            found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-            let truncated = found.len() > limit;
-            found.truncate(limit);
-            let matches: Vec<String> = found.into_iter().map(|(_, path)| path).collect();
-
-            Ok(json!({
-                "matches": matches,
-                "total": matches.len(),
-                "truncated": truncated
-            }))
         })
     }
 
@@ -561,6 +664,53 @@ async fn collect_glob_matches(
     Ok(())
 }
 
+async fn glob_namespace(
+    ns: &NamespaceFs,
+    base_path: &str,
+    glob_re: &Regex,
+    include_hidden: bool,
+    respect_gitignore: bool,
+    limit: usize,
+) -> Result<Value> {
+    let stat = ns.stat(base_path).await?;
+    let mut found = Vec::new();
+    let mut walk_truncated = false;
+
+    if stat.qid.kind == FileKind::Dir {
+        let (files, truncated) = ns
+            .walk_files(
+                base_path,
+                include_hidden,
+                respect_gitignore,
+                MAX_NAMESPACE_WALK_DEPTH,
+                MAX_NAMESPACE_WALK_ENTRIES,
+            )
+            .await?;
+        walk_truncated = truncated;
+        let base = Path::new(base_path);
+        for file in files {
+            let rel = Path::new(&file.path)
+                .strip_prefix(base)
+                .unwrap_or(Path::new(&file.path));
+            let rel_slash = normalize_slashes(rel);
+            if glob_re.is_match(&rel_slash) {
+                found.push((file.version, file.path));
+            }
+        }
+    }
+
+    found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let truncated = walk_truncated || found.len() > limit;
+    found.truncate(limit);
+    let matches: Vec<String> = found.into_iter().map(|(_, path)| path).collect();
+
+    Ok(json!({
+        "matches": matches,
+        "total": matches.len(),
+        "truncated": truncated
+    }))
+}
+
 /// list_dir - List directory contents
 #[derive(Default)]
 pub struct ListDirTool;
@@ -598,6 +748,32 @@ impl Tool for ListDirTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
+        if let Some(transport) = ctx.namespace().cloned() {
+            let path = match resolve_namespace_path(&ctx.namespace_cwd, args["path"].as_str()) {
+                Ok(path) => path,
+                Err(err) => return Box::pin(async move { Err(err) }),
+            };
+            let ns = NamespaceFs::new(transport);
+            return Box::pin(async move {
+                let entries = ns.list_dir_entries(&path).await?;
+                let items: Vec<Value> = entries
+                    .into_iter()
+                    .map(|entry| {
+                        json!({
+                            "name": entry.name,
+                            "type": entry.kind,
+                            "size": entry.size
+                        })
+                    })
+                    .collect();
+                Ok(json!({
+                    "path": path,
+                    "entries": items,
+                    "total": items.len()
+                }))
+            });
+        }
+
         let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),

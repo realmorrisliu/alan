@@ -13,6 +13,7 @@ mod execution_adapter;
 mod exploration_gitignore;
 mod exploration_tools;
 mod file_tools;
+mod namespace_fs;
 #[cfg(test)]
 mod test_support;
 

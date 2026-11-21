@@ -11,6 +11,27 @@ mod sandbox;
 mod sandbox_backend;
 
 pub use alan_agent_protocol::ToolCapability;
+pub use alan_ap;
+
+/// System and control-plane namespace prefixes clamped to read-only in a Tool's
+/// least-privilege namespace view. Explicitly granted data mounts (Host Mounts,
+/// `/memory`, EmbeddedAlan `/mnt/<app>`, etc.) retain their Kernel-granted access.
+pub const TOOL_READ_ONLY_SYSTEM_PREFIXES: &[&str] = &[
+    "/proc",
+    "/agent",
+    "/srv",
+    "/lib",
+    "/man",
+    "/bin",
+    "/mnt/llm",
+    "/mnt/route",
+    "/mnt/connections",
+    "/mnt/service-manager",
+    "/mnt/package",
+    "/mnt/packages",
+    "/mnt/host-mount",
+    "/mnt/host-mounts",
+];
 #[cfg(test)]
 pub(crate) use context::test_execution_binding;
 pub use context::{

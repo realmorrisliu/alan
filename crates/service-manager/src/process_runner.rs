@@ -68,7 +68,10 @@ impl ProcessRunner for SystemProcessRunner {
                             args: invocation.exec.args,
                         },
                         alan_ap::InProcessTransport::new(std::sync::Arc::new(
-                            alan_kernel::MountFs::new(invocation.namespace),
+                            alan_kernel::MountFs::new(invocation.namespace)
+                                .with_read_only_prefixes(
+                                    alan_agent_engine::tools::TOOL_READ_ONLY_SYSTEM_PREFIXES,
+                                ),
                         )),
                     )
                     .await;
