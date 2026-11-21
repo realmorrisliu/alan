@@ -388,11 +388,17 @@ fn inspect_profile_auth(
             },
         ),
         LlmProvider::GoogleGeminiGenerateContent => {
-            if has_secret(profile.credential_id.as_deref()) {
+            if let Some(cred_id) = profile.credential_id.as_deref() {
+                let present = has_secret(Some(cred_id));
+                let status = if present {
+                    "present (secret stored)".to_string()
+                } else {
+                    format!("missing (run `alan connection set-secret {safe_id}`)")
+                };
                 (
                     CredentialKind::SecretString.as_str().to_string(),
-                    true,
-                    "present (secret stored)".to_string(),
+                    present,
+                    status,
                 )
             } else if google_auth_present {
                 (
@@ -414,7 +420,7 @@ fn inspect_profile_auth(
                 )
             }
         }
-        LlmProvider::Magpie | LlmProvider::OpenAiChatCompletionsCompatible => {
+        LlmProvider::Magpie => {
             if has_secret(profile.credential_id.as_deref()) {
                 (
                     CredentialKind::SecretString.as_str().to_string(),
@@ -429,18 +435,15 @@ fn inspect_profile_auth(
                 )
             }
         }
-        LlmProvider::TypesafeEvaluation => ("none".to_string(), true, "not required".to_string()),
         _ => {
             let present = has_secret(profile.credential_id.as_deref());
             let kind = descriptor.credential_kind.as_str().to_string();
             let status = if present {
                 "present (secret stored)".to_string()
-            } else if descriptor.credential_optional {
-                "optional (unset)".to_string()
             } else {
                 format!("missing (run `alan connection set-secret {safe_id}`)")
             };
-            (kind, present || descriptor.credential_optional, status)
+            (kind, present, status)
         }
     };
 
@@ -815,5 +818,99 @@ mod tests {
         assert!(report.environment.system_store.writable);
         assert_eq!(report.version.install_ownership, "dev_or_unmanaged");
         assert_eq!(report.rollouts.rollout_count, 0);
+    }
+
+    #[test]
+    fn doctor_enforces_required_secrets_for_vertex_express_compatible_and_typesafe() {
+        let dir = tempfile::tempdir().unwrap();
+        let system = SystemStorePaths::from_root(&dir.path().join("System Store")).unwrap();
+        let host = HostStorePaths::from_root(&dir.path().join("Host Store")).unwrap();
+        std::fs::create_dir_all(&system.root).unwrap();
+        std::fs::create_dir_all(&host.credentials).unwrap();
+
+        let now = Utc::now();
+        let mut connections = ConnectionsFile::default();
+        // Vertex Express profile with explicit credential_id must NOT fall back to ADC.
+        connections.profiles.insert(
+            "vertex-express".to_string(),
+            ConnectionProfile {
+                provider: LlmProvider::GoogleGeminiGenerateContent,
+                label: None,
+                credential_id: Some("vertex-express".to_string()),
+                created_at: now,
+                updated_at: now,
+                source: "managed".to_string(),
+                settings: BTreeMap::new(),
+            },
+        );
+        // Ambient Vertex profile without credential_id accepts ADC.
+        connections.profiles.insert(
+            "vertex-adc".to_string(),
+            ConnectionProfile {
+                provider: LlmProvider::GoogleGeminiGenerateContent,
+                label: None,
+                credential_id: None,
+                created_at: now,
+                updated_at: now,
+                source: "managed".to_string(),
+                settings: BTreeMap::new(),
+            },
+        );
+        // Compatible and Typesafe require stored secrets at runtime.
+        connections.profiles.insert(
+            "compatible-missing".to_string(),
+            ConnectionProfile {
+                provider: LlmProvider::OpenAiChatCompletionsCompatible,
+                label: None,
+                credential_id: Some("compatible-missing".to_string()),
+                created_at: now,
+                updated_at: now,
+                source: "managed".to_string(),
+                settings: BTreeMap::new(),
+            },
+        );
+        connections.profiles.insert(
+            "typesafe-missing".to_string(),
+            ConnectionProfile {
+                provider: LlmProvider::TypesafeEvaluation,
+                label: None,
+                credential_id: Some("typesafe-missing".to_string()),
+                created_at: now,
+                updated_at: now,
+                source: "managed".to_string(),
+                settings: BTreeMap::new(),
+            },
+        );
+
+        let meta_path = system.connections_metadata().unwrap();
+        std::fs::create_dir_all(meta_path.parent().unwrap()).unwrap();
+        std::fs::write(&meta_path, toml::to_string_pretty(&connections).unwrap()).unwrap();
+
+        let report = collect_diagnostics_at(
+            None,
+            &system,
+            &host,
+            "seatbelt".to_string(),
+            None,
+            true, // ADC present on host
+        );
+
+        assert!(!report.healthy);
+        assert_eq!(
+            report.connections.missing_auth_profiles,
+            vec![
+                "compatible-missing".to_string(),
+                "typesafe-missing".to_string(),
+                "vertex-express".to_string(),
+            ]
+        );
+        let adc_profile = report
+            .connections
+            .profiles
+            .iter()
+            .find(|p| p.profile_id == "vertex-adc")
+            .unwrap();
+        assert!(adc_profile.auth_present);
+        assert_eq!(adc_profile.auth_status, "present (ADC)");
     }
 }

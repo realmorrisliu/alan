@@ -27,7 +27,11 @@ fn alan_doctor(home: &Path, xdg_data: &Path, args: &[&str]) -> Output {
         .args(args)
         .output()
         .unwrap();
-    assert!(output.status.success(), "args={args:?} output={output:?}");
+    assert!(
+        output.status.success(),
+        "alan command failed: status={:?}",
+        output.status
+    );
     output
 }
 
@@ -91,7 +95,8 @@ fn doctor_cli_reports_profiles_rollouts_and_never_leaks_secrets() {
     let data_dir = detected_data_dir(&home, &xdg_data);
     std::fs::create_dir_all(&data_dir).unwrap();
 
-    // Add OpenAI profile and store a secret sentinel.
+    // Add OpenAI profile and store a secret sentinel directly in Host Store
+    // (avoiding passing secret values through command-line args).
     let api_key_sentinel = "sk-live-doctor-integration-secret-value-xyz";
     let _ = alan_doctor(
         &home,
@@ -107,17 +112,12 @@ fn doctor_cli_reports_profiles_rollouts_and_never_leaks_secrets() {
             "--default",
         ],
     );
-    let _ = alan_doctor(
-        &home,
-        &xdg_data,
-        &[
-            "connection",
-            "set-secret",
-            "openai-main",
-            "--value",
-            api_key_sentinel,
-        ],
-    );
+    let host = HostStorePaths::from_data_dir(&data_dir).unwrap();
+    std::fs::create_dir_all(&host.credentials).unwrap();
+    SecretStore::from_directory(&host.credentials)
+        .unwrap()
+        .save("openai-main", api_key_sentinel)
+        .unwrap();
 
     // Add ChatGPT profile and seed managed OAuth with secret token sentinels.
     let _ = alan_doctor(
@@ -125,7 +125,6 @@ fn doctor_cli_reports_profiles_rollouts_and_never_leaks_secrets() {
         &xdg_data,
         &["connection", "add", "chatgpt", "--profile", "chatgpt-main"],
     );
-    let host = HostStorePaths::from_data_dir(&data_dir).unwrap();
     std::fs::create_dir_all(host.managed_auth.parent().unwrap()).unwrap();
     let refresh_sentinel = "rt-super-secret-refresh-token-value-abc";
     let id_token = build_jwt(json!({
