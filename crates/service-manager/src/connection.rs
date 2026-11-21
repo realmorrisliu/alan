@@ -15,10 +15,13 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod catalog;
+pub(crate) mod catalog_cache;
 pub(crate) mod process_binding;
 pub mod provider_packages;
 
-use catalog::{ModelCatalogPublication, needs_live_catalog_discovery};
+use catalog::{
+    CatalogSlot, ModelCatalogPublication, build_published_catalog, needs_live_catalog_discovery,
+};
 
 const FILES: &[(&str, bool)] = &[
     ("metadata", false),
@@ -172,9 +175,10 @@ struct CallableRegistry {
 /// Channel-scoped Connection metadata authority. Secret bytes never enter it.
 pub struct ConnectionService {
     metadata_path: Option<PathBuf>,
-    state: Mutex<State>,
-    callables: tokio::sync::Mutex<Option<CallableRegistry>>,
-    package_service: Mutex<Option<Arc<crate::PackageService>>>,
+    state: Arc<Mutex<State>>,
+    callables: Arc<tokio::sync::Mutex<Option<CallableRegistry>>>,
+    package_service: Arc<Mutex<Option<Arc<crate::PackageService>>>>,
+    catalog_cache_lock: Arc<Mutex<()>>,
     temporary_store: Option<crate::temporary_store::TemporaryStore>,
 }
 
@@ -231,7 +235,7 @@ impl ConnectionService {
             .collect();
         Ok(Arc::new(Self {
             metadata_path: Some(bindings.metadata_path.clone()),
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 connections,
                 selections: BTreeMap::new(),
                 requests: BTreeMap::new(),
@@ -239,9 +243,10 @@ impl ConnectionService {
                 response_order: VecDeque::new(),
                 native_status: BTreeMap::new(),
                 validation,
-            }),
-            callables: tokio::sync::Mutex::new(None),
-            package_service: Mutex::new(None),
+            })),
+            callables: Arc::new(tokio::sync::Mutex::new(None)),
+            package_service: Arc::new(Mutex::new(None)),
+            catalog_cache_lock: Arc::new(Mutex::new(())),
             temporary_store: None,
         }))
     }
@@ -250,7 +255,7 @@ impl ConnectionService {
     pub fn in_memory() -> Arc<Self> {
         Arc::new(Self {
             metadata_path: None,
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 connections: ConnectionsFile::default(),
                 selections: BTreeMap::new(),
                 requests: BTreeMap::new(),
@@ -258,9 +263,10 @@ impl ConnectionService {
                 response_order: VecDeque::new(),
                 native_status: BTreeMap::new(),
                 validation: BTreeMap::new(),
-            }),
-            callables: tokio::sync::Mutex::new(None),
-            package_service: Mutex::new(None),
+            })),
+            callables: Arc::new(tokio::sync::Mutex::new(None)),
+            package_service: Arc::new(Mutex::new(None)),
+            catalog_cache_lock: Arc::new(Mutex::new(())),
             temporary_store: None,
         })
     }
@@ -270,7 +276,7 @@ impl ConnectionService {
         let metadata_path = temporary.path().join("connections.toml");
         Ok(Arc::new(Self {
             metadata_path: Some(metadata_path),
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 connections: ConnectionsFile::default(),
                 selections: BTreeMap::new(),
                 requests: BTreeMap::new(),
@@ -278,9 +284,10 @@ impl ConnectionService {
                 response_order: VecDeque::new(),
                 native_status: BTreeMap::new(),
                 validation: BTreeMap::new(),
-            }),
-            callables: tokio::sync::Mutex::new(None),
-            package_service: Mutex::new(None),
+            })),
+            callables: Arc::new(tokio::sync::Mutex::new(None)),
+            package_service: Arc::new(Mutex::new(None)),
+            catalog_cache_lock: Arc::new(Mutex::new(())),
             temporary_store: Some(temporary),
         }))
     }
@@ -695,6 +702,10 @@ impl ConnectionService {
             registry.published_fallbacks.remove(&name);
         }
 
+        let disk_cache = self
+            .metadata_path
+            .as_deref()
+            .map(catalog_cache::load_cache_file);
         let mut catalog_requests = Vec::new();
         for (profile_id, profile) in ready_profiles {
             let provider_kind = profile.provider;
@@ -750,10 +761,27 @@ impl ConnectionService {
                 );
                 registry
                     .published_profiles
-                    .insert(profile_id.clone(), profile);
+                    .insert(profile_id.clone(), profile.clone());
             }
             if needs_catalog {
-                let publication = Arc::new(std::sync::OnceLock::new());
+                let cached = disk_cache.as_ref().and_then(|cache| {
+                    let account = registry
+                        .published_accounts
+                        .get(&profile_id)
+                        .map(String::as_str);
+                    let models = cache.lookup(&profile_id, &profile, account)?;
+                    build_published_catalog(
+                        provider_kind,
+                        registry.base_config.resolved_model_catalog(),
+                        models,
+                    )
+                });
+                if let Some(cached_pub) = &cached {
+                    registry
+                        .llmfs
+                        .set_connection_models(&profile_id, cached_pub.models.clone());
+                }
+                let publication = CatalogSlot::new(cached);
                 registry
                     .published_catalogs
                     .insert(profile_id.clone(), publication.clone());
@@ -799,8 +827,7 @@ impl ConnectionService {
         self.state.lock().unwrap().validation = validation;
         drop(callables);
         for (profile_id, provider_kind, publication) in catalog_requests {
-            self.discover_catalog(&profile_id, provider_kind, &publication)
-                .await;
+            self.spawn_catalog_discovery(profile_id, provider_kind, publication);
         }
     }
 }

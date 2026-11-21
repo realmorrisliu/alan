@@ -90,7 +90,7 @@ impl ConnectionAuthority for ProcessConnection {
                     self.allow_profile_switch || explicit_profile == target_id,
                     "profile switch is outside Process authority"
                 );
-                let captured = self
+                let mut captured = self
                     .service
                     .capture_model(explicit_profile, Some(actual_model), &self.namespace)
                     .await?;
@@ -106,12 +106,24 @@ impl ConnectionAuthority for ProcessConnection {
                     .lock()
                     .expect("selected profile mutex poisoned") =
                     Some((epoch, explicit_profile.to_string()));
+                if self.allow_profile_switch {
+                    self.service
+                        .persist_root_model_selection(explicit_profile, actual_model, &mut captured)
+                        .await;
+                }
                 Ok(captured)
             }
             Some((None, actual_model)) => {
-                self.service
+                let mut captured = self
+                    .service
                     .capture_model(&target_id, Some(actual_model), &self.namespace)
-                    .await
+                    .await?;
+                if self.allow_profile_switch {
+                    self.service
+                        .persist_root_model_selection(&target_id, actual_model, &mut captured)
+                        .await;
+                }
+                Ok(captured)
             }
             None => {
                 self.service
@@ -155,17 +167,28 @@ impl ConnectionAuthority for ProcessConnection {
             .service
             .capture_model(&identity.profile, None, &self.namespace)
             .await?;
-        let captured = if original.identity.model == identity.model {
+        let mut captured = if original.identity.model == identity.model {
             original
         } else {
             self.service
                 .capture_model(&identity.profile, Some(&identity.model), &self.namespace)
                 .await?
         };
-        ensure!(
-            &captured.identity == identity,
-            "captured connection revision unavailable"
-        );
+        if &captured.identity != identity {
+            let same_non_revision = captured.identity.profile == identity.profile
+                && captured.identity.provider == identity.provider
+                && captured.identity.model == identity.model
+                && captured.identity.credential_ref == identity.credential_ref;
+            ensure!(
+                same_non_revision
+                    && revisions_match_ignoring_default_model(
+                        &captured.identity.revision,
+                        &identity.revision,
+                    ),
+                "captured connection revision unavailable"
+            );
+            captured.identity.revision = identity.revision.clone();
+        }
         if self.allow_profile_switch && is_published_gen {
             *self
                 .selected_profile
@@ -221,9 +244,11 @@ impl ConnectionAuthority for ProcessConnection {
         let published_catalog = registry
             .published_catalogs
             .get(&target_id)
-            .and_then(|publication| publication.get())
-            .and_then(Option::as_ref);
-        if let Some(catalog) = published_catalog.and_then(|cat| cat.engine_catalog.as_ref()) {
+            .and_then(|publication| publication.published());
+        if let Some(catalog) = published_catalog
+            .as_ref()
+            .and_then(|cat| cat.engine_catalog.as_ref())
+        {
             config.set_model_catalog(catalog.clone());
         }
         let packages = self.service.package_service();
@@ -251,8 +276,10 @@ impl ConnectionAuthority for ProcessConnection {
                 "default_reasoning_effort":info.as_ref().and_then(|info| info.default_reasoning_effort)
             }]}));
         }
-        let primary_entries =
-            crate::connection::catalog::catalog_entries_for_config(&config, published_catalog);
+        let primary_entries = crate::connection::catalog::catalog_entries_for_config(
+            &config,
+            published_catalog.as_ref(),
+        );
         if !self.allow_profile_switch {
             let entries = primary_entries?;
             return Ok(serde_json::json!({"profile":target_id,"models":entries}));
@@ -276,9 +303,11 @@ impl ConnectionAuthority for ProcessConnection {
             let p_published = registry
                 .published_catalogs
                 .get(&id)
-                .and_then(|publication| publication.get())
-                .and_then(Option::as_ref);
-            if let Some(catalog) = p_published.and_then(|cat| cat.engine_catalog.as_ref()) {
+                .and_then(|publication| publication.published());
+            if let Some(catalog) = p_published
+                .as_ref()
+                .and_then(|cat| cat.engine_catalog.as_ref())
+            {
                 p_config.set_model_catalog(catalog.clone());
             }
             let hydrated = provider_packages::hydrate_connections_with_package_defaults(
@@ -292,9 +321,10 @@ impl ConnectionAuthority for ProcessConnection {
             {
                 continue;
             }
-            if let Ok(p_entries) =
-                crate::connection::catalog::catalog_entries_for_config(&p_config, p_published)
-                && !p_entries.is_empty()
+            if let Ok(p_entries) = crate::connection::catalog::catalog_entries_for_config(
+                &p_config,
+                p_published.as_ref(),
+            ) && !p_entries.is_empty()
             {
                 profiles_json.push(serde_json::json!({
                     "profile": id,
@@ -374,21 +404,39 @@ impl ConnectionService {
         model: Option<&str>,
         process_namespace: &alan_kernel::LiveNamespace,
     ) -> Result<CapturedCallable> {
+        let mut retried_failed = false;
         if model.is_some() {
             let mut callables = self.callables.lock().await;
             if let Some(registry) = callables.as_mut()
-                && matches!(
-                    registry
-                        .published_catalogs
-                        .get(profile_id)
-                        .and_then(|p| p.get()),
-                    Some(None)
-                )
+                && registry
+                    .published_catalogs
+                    .get(profile_id)
+                    .is_some_and(|slot| slot.is_live_failed())
             {
                 registry.published_catalogs.remove(profile_id);
+                retried_failed = true;
             }
         }
         self.refresh().await?;
+        if let Some(requested_model) = model {
+            let pending_slot = {
+                let callables = self.callables.lock().await;
+                callables.as_ref().and_then(|registry| {
+                    let slot = registry.published_catalogs.get(profile_id)?;
+                    if slot.is_live_settled() {
+                        return None;
+                    }
+                    let already_cached = !retried_failed
+                        && slot.published().is_some_and(|cat| {
+                            cat.models.iter().any(|m| m.slug == requested_model)
+                        });
+                    (!already_cached).then(|| slot.clone())
+                })
+            };
+            if let Some(slot) = pending_slot {
+                slot.wait_settled().await;
+            }
+        }
         let callables = self.callables.lock().await;
         let registry = callables
             .as_ref()
@@ -443,9 +491,11 @@ impl ConnectionService {
         let published_catalog = registry
             .published_catalogs
             .get(profile_id)
-            .and_then(|publication| publication.get())
-            .and_then(Option::as_ref);
-        if let Some(catalog) = published_catalog.and_then(|cat| cat.engine_catalog.as_ref()) {
+            .and_then(|publication| publication.published());
+        if let Some(catalog) = published_catalog
+            .as_ref()
+            .and_then(|cat| cat.engine_catalog.as_ref())
+        {
             config.set_model_catalog(catalog.clone());
         }
         connections.apply_profile_metadata_to_config(Some(profile_id), &mut config)?;
@@ -464,7 +514,7 @@ impl ConnectionService {
                     || crate::connection::catalog::is_model_authorized(
                         &config,
                         model,
-                        published_catalog,
+                        published_catalog.as_ref(),
                     ),
                 "model is unavailable in Connection catalog"
             );
@@ -482,7 +532,7 @@ impl ConnectionService {
         }
         if config.context_window_tokens.is_none()
             && config.effective_model_info().is_none()
-            && let Some(published) = published_catalog
+            && let Some(published) = published_catalog.as_ref()
             && let Some(model_meta) = published
                 .models
                 .iter()
@@ -523,7 +573,7 @@ impl ConnectionService {
                 ),
                 Box::new(ConnectionLlmProvider { client }),
             );
-            if let Some(published) = published_catalog {
+            if let Some(published) = published_catalog.as_ref() {
                 llmfs.set_connection_models(profile_id, published.models.clone());
             } else if let Some(live) = registry.llmfs.connection_models(profile_id) {
                 llmfs.set_connection_models(profile_id, live);
@@ -531,18 +581,10 @@ impl ConnectionService {
             llmfs.connection_snapshot(profile_id)
         };
         // Only non-secret metadata names the exact restore revision.
-        let revision = if let Some(account) = registry.published_accounts.get(profile_id) {
+        if let Some(account) = registry.published_accounts.get(profile_id) {
             config.chatgpt_account_id = Some(account.clone());
-            if original.settings.get("account_id") == Some(account) {
-                // Explicitly bound profiles already carry account identity in their
-                // durable revision; preserve compatibility with earlier captures.
-                serde_json::to_string(&original)?
-            } else {
-                serde_json::to_string(&(original.clone(), account))?
-            }
-        } else {
-            serde_json::to_string(&original)?
-        };
+        }
+        let revision = profile_revision(&original, registry.published_accounts.get(profile_id))?;
         Ok(CapturedCallable {
             identity: CallableIdentity {
                 profile: profile_id.into(),
@@ -555,6 +597,133 @@ impl ConnectionService {
             connection: profile_id.into(),
             config,
         })
+    }
+
+    /// Persist a validated Root interactive `/model` selection into `connections.toml`
+    /// and update `published_profiles` / `llmfs` in-place without dropping live catalogs
+    /// or bumping `reload_epoch`.
+    pub(crate) async fn persist_root_model_selection(
+        &self,
+        profile_id: &str,
+        model: &str,
+        captured: &mut CapturedCallable,
+    ) {
+        let mut callables = self.callables.lock().await;
+        let Some(registry) = callables.as_mut() else {
+            return;
+        };
+        let (candidate_profile, model_changed, default_changed) = {
+            let mut committed = self.state.lock().unwrap();
+            let Some(existing) = committed.connections.profiles.get(profile_id) else {
+                return;
+            };
+            if !existing.provider.supports_generation() {
+                return;
+            }
+            let model_changed = existing.settings.get("model").map(String::as_str) != Some(model);
+            let default_changed =
+                committed.connections.default_profile.as_deref() != Some(profile_id);
+            if !model_changed && !default_changed {
+                return;
+            }
+            let mut next_connections = committed.connections.clone();
+            let updated_profile = next_connections
+                .profiles
+                .get_mut(profile_id)
+                .expect("profile exists");
+            updated_profile
+                .settings
+                .insert("model".into(), model.to_string());
+            next_connections.default_profile = Some(profile_id.to_string());
+            if validate_connections(&next_connections).is_err() {
+                return;
+            }
+            let save_result = match &self.metadata_path {
+                Some(metadata_path) => next_connections
+                    .save_if_unchanged(metadata_path, &committed.connections)
+                    .context("persist Root model selection"),
+                None => Ok(()),
+            };
+            match save_result {
+                Ok(()) => {
+                    let updated = next_connections.profiles[profile_id].clone();
+                    committed.connections = next_connections;
+                    (updated, model_changed, default_changed)
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        profile_id,
+                        model,
+                        "failed to persist Root model selection"
+                    );
+                    return;
+                }
+            }
+        };
+
+        registry
+            .published_profiles
+            .insert(profile_id.to_string(), candidate_profile.clone());
+
+        if model_changed {
+            let connections = self.metadata();
+            let packages = self.package_service();
+            let hydrated = provider_packages::hydrate_connections_with_package_defaults(
+                packages.as_deref(),
+                &connections,
+                profile_id,
+            );
+            if let Ok(client) =
+                registry
+                    .factory
+                    .create(&registry.base_config, Some(profile_id), &hydrated)
+                && client.account_identity()
+                    == registry
+                        .published_accounts
+                        .get(profile_id)
+                        .map(String::as_str)
+            {
+                let live_models = registry.llmfs.connection_models(profile_id);
+                let settings = crate::connection_profile::normalize_profile_settings(
+                    candidate_profile.provider,
+                    &candidate_profile.settings,
+                );
+                registry.llmfs.register_connection_profile(
+                    profile_id,
+                    alan_llmfs::ConnectionProfile::new(
+                        candidate_profile.provider.as_str(),
+                        settings.get("model").cloned().unwrap_or_default(),
+                        candidate_profile.credential_id.clone().unwrap_or_default(),
+                    ),
+                    Box::new(ConnectionLlmProvider { client }),
+                );
+                if let Some(models) = live_models {
+                    registry.llmfs.set_connection_models(profile_id, models);
+                }
+            }
+        }
+
+        if default_changed
+            || (model_changed && registry.published_default.as_deref() == Some(profile_id))
+        {
+            if registry.published_fallbacks.remove("default")
+                || registry.published_default.take().is_some()
+            {
+                registry.llmfs.unregister_connection("default").await;
+            }
+            let _ = registry
+                .llmfs
+                .register_connection_alias("default", profile_id);
+            registry.published_default = Some(profile_id.to_string());
+        }
+
+        if let Ok(revision) = profile_revision(
+            &candidate_profile,
+            registry.published_accounts.get(profile_id),
+        ) {
+            captured.identity.revision = revision;
+        }
     }
 }
 
@@ -584,6 +753,44 @@ fn resolve_target_profile(
         return Some(requested_profile.to_string());
     }
     None
+}
+
+fn profile_revision(profile: &ConnectionProfile, account: Option<&String>) -> Result<String> {
+    if let Some(account) = account {
+        if profile.settings.get("account_id") == Some(account) {
+            // Explicitly bound profiles already carry account identity in their
+            // durable revision; preserve compatibility with earlier captures.
+            Ok(serde_json::to_string(profile)?)
+        } else {
+            Ok(serde_json::to_string(&(profile, account))?)
+        }
+    } else {
+        Ok(serde_json::to_string(profile)?)
+    }
+}
+
+fn parse_revision_profile(raw: &str) -> Option<(ConnectionProfile, Option<String>)> {
+    if let Ok((profile, account)) = serde_json::from_str::<(ConnectionProfile, String)>(raw) {
+        return Some((profile, Some(account)));
+    }
+    serde_json::from_str::<ConnectionProfile>(raw)
+        .ok()
+        .map(|profile| (profile, None))
+}
+
+fn revisions_match_ignoring_default_model(current: &str, expected: &str) -> bool {
+    let (Some((mut curr_prof, curr_acct)), Some((mut exp_prof, exp_acct))) = (
+        parse_revision_profile(current),
+        parse_revision_profile(expected),
+    ) else {
+        return false;
+    };
+    if curr_acct != exp_acct {
+        return false;
+    }
+    curr_prof.settings.remove("model");
+    exp_prof.settings.remove("model");
+    curr_prof == exp_prof
 }
 
 fn captured_namespace(
