@@ -16,9 +16,7 @@ use axum::{
 use serde_json::json;
 use tokio::net::TcpListener;
 
-use super::catalog::{
-    fetch_live_vertex_model_catalog, fetch_live_vertex_model_catalog_with_limits,
-};
+use super::catalog::fetch_live_vertex_model_catalog_with_limits;
 use super::{
     GoogleGeminiGenerateContentClient, VertexAccessTokenSource, VertexAuth, VertexClientConfig,
 };
@@ -335,13 +333,17 @@ async fn live_discovery_retries_401_once_with_refreshed_token() {
 }
 
 #[tokio::test]
-async fn forbidden_or_empty_live_discovery_sanitizes_errors_and_falls_back_to_baseline() {
-    let (base_url, _, handle) = spawn_catalog_server(|_, _, _| {
-        (
-            StatusCode::FORBIDDEN,
-            "sensitive-iam-body-with-secret-project-details",
-        )
-            .into_response()
+async fn forbidden_or_empty_live_discovery_propagates_sanitized_errors_without_leaking_secrets() {
+    let (base_url, _, handle) = spawn_catalog_server(|idx, _, _| {
+        if idx == 0 {
+            (
+                StatusCode::FORBIDDEN,
+                "sensitive-iam-body-with-secret-project-details",
+            )
+                .into_response()
+        } else {
+            Json(json!({ "publisherModels": [] })).into_response()
+        }
     })
     .await;
 
@@ -358,21 +360,19 @@ async fn forbidden_or_empty_live_discovery_sanitizes_errors_and_falls_back_to_ba
     )
     .unwrap();
 
-    // Strict live fetch fails cleanly without leaking auth token or raw response body.
-    let strict_err = fetch_live_vertex_model_catalog(&client.transport)
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(strict_err.contains("403"), "err={strict_err}");
-    assert!(!strict_err.contains("sensitive-iam-body"));
-    assert!(!strict_err.contains("vertex-secret-token"));
+    // Public model_catalog() propagates a sanitized error on HTTP 403 so ConnectionService
+    // keeps `publication = Some(None)`, llmfs stays at `bundled-gemini`, and selection retries.
+    let forbidden_err = client.model_catalog().await.unwrap_err().to_string();
+    assert!(forbidden_err.contains("403"), "err={forbidden_err}");
+    assert!(!forbidden_err.contains("sensitive-iam-body"));
+    assert!(!forbidden_err.contains("vertex-secret-token"));
 
-    // Public model_catalog() falls back gracefully to curated baseline models.
-    let fallback = client.model_catalog().await.unwrap().expect("baseline");
-    let slugs: Vec<&str> = fallback.iter().map(|m| m.slug.as_str()).collect();
-    for baseline in VERTEX_BASELINE_MODEL_SLUGS {
-        assert!(slugs.contains(baseline), "missing baseline {baseline}");
-    }
+    // Empty publisherModels also fails cleanly rather than pretending live discovery succeeded.
+    let empty_err = client.model_catalog().await.unwrap_err().to_string();
+    assert!(
+        empty_err.contains("no selectable Gemini models"),
+        "err={empty_err}"
+    );
     handle.abort();
 }
 
@@ -432,7 +432,7 @@ async fn pagination_cap_and_size_limit_are_enforced() {
 }
 
 #[tokio::test]
-async fn express_mode_skips_publisher_listing_and_returns_curated_baseline() {
+async fn express_mode_skips_publisher_listing_and_returns_none_for_baseline_fallback() {
     let (base_url, recorded, handle) = spawn_catalog_server(|_, _, _| {
         (StatusCode::INTERNAL_SERVER_ERROR, "must not be called").into_response()
     })
@@ -447,11 +447,7 @@ async fn express_mode_skips_publisher_listing_and_returns_curated_baseline() {
     })
     .unwrap();
 
-    let models = client.model_catalog().await.unwrap().expect("baseline");
+    assert!(client.model_catalog().await.unwrap().is_none());
     assert!(recorded.uris.lock().unwrap().is_empty());
-    let slugs: Vec<&str> = models.iter().map(|m| m.slug.as_str()).collect();
-    for baseline in VERTEX_BASELINE_MODEL_SLUGS {
-        assert!(slugs.contains(baseline), "missing baseline {baseline}");
-    }
     handle.abort();
 }

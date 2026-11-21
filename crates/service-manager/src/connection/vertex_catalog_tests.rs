@@ -320,3 +320,233 @@ async fn superseded_vertex_discovery_does_not_overwrite_replacement_llmfs_models
     assert_eq!(llmfs_doc["models"].as_array().unwrap().len(), 1);
     assert_eq!(llmfs_doc["models"][0]["slug"], "gemini-4.1-fresh");
 }
+
+struct StaticVertexTokenSource;
+
+#[async_trait::async_trait]
+impl alan_llm::google_gemini_generate_content::VertexAccessTokenSource for StaticVertexTokenSource {
+    async fn access_token(&self) -> Result<String> {
+        Ok("vertex-e2e-token".to_string())
+    }
+}
+
+#[derive(Debug)]
+struct RealVertexClientFactory {
+    base_url: String,
+    express_api_key: Option<String>,
+}
+
+impl LlmClientFactory for RealVertexClientFactory {
+    fn create(
+        &self,
+        _base: &Config,
+        selected: Option<&str>,
+        connections: &ConnectionsFile,
+    ) -> Result<LlmClient> {
+        let profile_id = selected.context("missing selected profile")?;
+        let prof = connections
+            .profiles
+            .get(profile_id)
+            .context("unknown profile")?;
+        let settings =
+            crate::connection_profile::normalize_profile_settings(prof.provider, &prof.settings);
+        let model = settings
+            .get("model")
+            .cloned()
+            .unwrap_or_else(|| alan_llm::gemini_catalog::GEMINI_DEFAULT_MODEL.to_string());
+        let location = settings
+            .get("location")
+            .cloned()
+            .unwrap_or_else(|| "global".to_string());
+        let client = if let Some(api_key) = &self.express_api_key {
+            alan_llm::GoogleGeminiGenerateContentClient::from_vertex_config(
+                alan_llm::VertexClientConfig {
+                    project_id: None,
+                    location,
+                    model,
+                    auth: alan_llm::VertexAuth::ApiKey(api_key.clone()),
+                    base_url: Some(self.base_url.clone()),
+                },
+            )?
+        } else {
+            alan_llm::GoogleGeminiGenerateContentClient::from_vertex_config_with_token_source(
+                alan_llm::VertexClientConfig {
+                    project_id: settings.get("project_id").cloned(),
+                    location,
+                    model,
+                    auth: alan_llm::VertexAuth::Adc,
+                    base_url: Some(self.base_url.clone()),
+                },
+                Arc::new(StaticVertexTokenSource),
+            )?
+        };
+        Ok(LlmClient::new(client))
+    }
+}
+
+async fn spawn_vertex_http_mock(
+    healthy: Arc<std::sync::atomic::AtomicBool>,
+    requests: Arc<AtomicUsize>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            let healthy = healthy.clone();
+            let requests = requests.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                requests.fetch_add(1, Ordering::SeqCst);
+                let (status, body) = if healthy.load(Ordering::SeqCst) {
+                    (
+                        "200 OK",
+                        r#"{"publisherModels":[{"name":"publishers/google/models/gemini-4.2-pro-preview","launchStage":"PUBLIC_PREVIEW"}]}"#,
+                    )
+                } else {
+                    ("403 Forbidden", r#"{"error":"transient iam error"}"#)
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            });
+        }
+    });
+    (format!("http://{addr}"), handle)
+}
+
+#[tokio::test]
+async fn real_vertex_client_express_and_failed_adc_stay_bundled_until_explicit_retry_recovers() {
+    let healthy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let requests = Arc::new(AtomicUsize::new(0));
+    let (base_url, server_handle) = spawn_vertex_http_mock(healthy.clone(), requests.clone()).await;
+
+    // 1. Express Mode: 0 HTTP requests, llmfs remains `bundled-gemini`, baseline models usable.
+    let express_llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    let express_service = ConnectionService::ephemeral().unwrap();
+    express_service
+        .attach_callable_registry(
+            express_llmfs.clone(),
+            Arc::new(RealVertexClientFactory {
+                base_url: base_url.clone(),
+                express_api_key: Some("express-test-key".to_string()),
+            }),
+            Config::default(),
+            None,
+        )
+        .await
+        .unwrap();
+    let mut express_conns = express_service.metadata();
+    express_conns
+        .profiles
+        .insert("vertex-express".into(), vertex_profile("gemini-2.5-flash"));
+    express_service
+        .apply(ConnectionCommand::ReplaceMetadata {
+            expected: express_service.metadata().fingerprint().unwrap(),
+            connections: express_conns,
+        })
+        .await
+        .unwrap();
+    let express_authority = ProcessConnection {
+        service: express_service.clone(),
+        profile: "vertex-express".into(),
+        namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+        evaluator: None,
+        guardian_profile: None,
+        allow_profile_switch: false,
+        selected_profile: std::sync::Mutex::new(None),
+    };
+    assert_eq!(requests.load(Ordering::SeqCst), 0);
+    let express_doc =
+        read_llmfs_json(&express_llmfs, "/mnt/llm/connections/vertex-express/models").await;
+    assert_eq!(express_doc["source"], "bundled-gemini");
+    let express_ui = express_authority.catalog().await.unwrap();
+    assert!(
+        express_ui["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["model"] == "gemini-2.5-flash")
+    );
+
+    // 2. ADC Mode: transient 403 keeps llmfs at `bundled-gemini` (not falsely `live`) and
+    //    caches `Some(None)` so idle observation does not retry, while explicit selection retries.
+    let adc_llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    let adc_service = ConnectionService::ephemeral().unwrap();
+    adc_service
+        .attach_callable_registry(
+            adc_llmfs.clone(),
+            Arc::new(RealVertexClientFactory {
+                base_url,
+                express_api_key: None,
+            }),
+            Config::default(),
+            None,
+        )
+        .await
+        .unwrap();
+    let mut adc_conns = adc_service.metadata();
+    adc_conns
+        .profiles
+        .insert("vertex-adc".into(), vertex_profile("gemini-2.5-flash"));
+    adc_service
+        .apply(ConnectionCommand::ReplaceMetadata {
+            expected: adc_service.metadata().fingerprint().unwrap(),
+            connections: adc_conns,
+        })
+        .await
+        .unwrap();
+    let adc_authority = ProcessConnection {
+        service: adc_service.clone(),
+        profile: "vertex-adc".into(),
+        namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+        evaluator: None,
+        guardian_profile: None,
+        allow_profile_switch: false,
+        selected_profile: std::sync::Mutex::new(None),
+    };
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+
+    let failed_doc = read_llmfs_json(&adc_llmfs, "/mnt/llm/connections/vertex-adc/models").await;
+    assert_eq!(failed_doc["source"], "bundled-gemini");
+    for _ in 0..5 {
+        let ui = adc_authority.catalog().await.unwrap();
+        assert!(
+            ui["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["model"] == "gemini-2.5-flash")
+        );
+    }
+    assert_eq!(
+        requests.load(Ordering::SeqCst),
+        1,
+        "status observation must not retry failed Vertex discovery"
+    );
+
+    // Once upstream IAM/network recovers, explicit model selection retries discovery and
+    // promotes `/mnt/llm/connections/vertex-adc/models` to `source: "live"`.
+    healthy.store(true, Ordering::SeqCst);
+    let recovered = adc_authority
+        .capture(Some("gemini-4.2-pro-preview"))
+        .await
+        .unwrap();
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    assert_eq!(recovered.config.effective_model(), "gemini-4.2-pro-preview");
+
+    let live_doc = read_llmfs_json(&adc_llmfs, "/mnt/llm/connections/vertex-adc/models").await;
+    assert_eq!(live_doc["source"], "live");
+    assert_eq!(live_doc["models"][0]["slug"], "gemini-4.2-pro-preview");
+    let live_ui = adc_authority.catalog().await.unwrap();
+    assert_eq!(live_ui["models"][0]["model"], "gemini-4.2-pro-preview");
+
+    server_handle.abort();
+}

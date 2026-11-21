@@ -11,7 +11,7 @@ use tracing::warn;
 use crate::gemini_catalog::{
     GeminiVersion, is_gemini_flash, is_gemini_flash_lite, is_gemini_pro,
     is_selectable_gemini_generate_content_slug, merge_and_sort_vertex_catalog,
-    normalize_gemini_slug, parse_gemini_version, vertex_baseline_catalog,
+    normalize_gemini_slug, parse_gemini_version,
 };
 use crate::{ProviderModel, ReasoningEffort};
 
@@ -35,20 +35,27 @@ struct PublisherModelsPage {
     next_page_token: Option<String>,
 }
 
-/// Discover live Vertex AI Gemini models in OAuth/ADC mode, falling back cleanly
-/// to the curated baseline catalog in Express Mode or when live discovery fails.
-pub(super) async fn discover_vertex_model_catalog(transport: &Transport) -> Vec<ProviderModel> {
+/// Discover live Vertex AI Gemini models in OAuth/ADC mode.
+///
+/// Express Mode API keys cannot list Model Garden publisher models and return
+/// `Ok(None)` without issuing HTTP requests. ADC discovery errors are logged
+/// safely (without auth material or raw response bodies) and propagated so
+/// `ConnectionService` and `llmfs` serve the curated `bundled-gemini` baseline
+/// while preserving failed-discovery state for explicit-selection retries.
+pub(super) async fn discover_vertex_model_catalog(
+    transport: &Transport,
+) -> Result<Option<Vec<ProviderModel>>> {
     if transport.is_express_mode() {
-        return vertex_baseline_catalog();
+        return Ok(None);
     }
     match fetch_live_vertex_model_catalog(transport).await {
-        Ok(models) => models,
+        Ok(models) => Ok(Some(models)),
         Err(err) => {
             warn!(
                 reason = %err,
                 "Vertex AI live model catalog unavailable; falling back to curated Gemini baseline"
             );
-            vertex_baseline_catalog()
+            Err(err)
         }
     }
 }
@@ -308,7 +315,9 @@ fn gemini_budget_for_effort(effort: ReasoningEffort) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gemini_catalog::{GEMINI_DEFAULT_CONTEXT_WINDOW, infer_gemini_provider_model};
+    use crate::gemini_catalog::{
+        GEMINI_DEFAULT_CONTEXT_WINDOW, infer_gemini_provider_model, vertex_baseline_catalog,
+    };
 
     #[test]
     fn catalog_includes_gemini_25_and_gemini_3_models_with_valid_efforts() {

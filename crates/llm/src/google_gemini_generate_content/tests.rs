@@ -348,7 +348,7 @@ fn rejects_unqualified_extended_reasoning_efforts() {
 }
 
 #[tokio::test]
-async fn model_catalog_exposes_gemini_25_and_3_models() {
+async fn express_mode_model_catalog_returns_none_while_baseline_exposes_gemini_25_and_3_models() {
     let client = GoogleGeminiGenerateContentClient::from_vertex_config(VertexClientConfig {
         project_id: None,
         location: "global".to_string(),
@@ -357,8 +357,13 @@ async fn model_catalog_exposes_gemini_25_and_3_models() {
         base_url: None,
     })
     .unwrap();
-    let catalog = client.model_catalog().await.unwrap().expect("catalog");
-    let slugs: Vec<&str> = catalog.iter().map(|m| m.slug.as_str()).collect();
+    assert!(
+        client.model_catalog().await.unwrap().is_none(),
+        "Express Mode skips publisher listing so callers fall back to curated baseline"
+    );
+
+    let baseline = crate::gemini_catalog::vertex_baseline_catalog();
+    let slugs: Vec<&str> = baseline.iter().map(|m| m.slug.as_str()).collect();
     assert!(slugs.contains(&"gemini-2.5-pro"));
     assert!(slugs.contains(&"gemini-2.5-flash"));
     assert!(slugs.contains(&"gemini-2.5-flash-lite"));
