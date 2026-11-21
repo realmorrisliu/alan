@@ -79,6 +79,7 @@ pub(super) async fn resolve(
     shell: &alan_shell::Shell,
     value: &Value,
     owner_path: &str,
+    theme: crate::theme::Theme,
 ) -> Resolved {
     let unavailable = |reason: &str| -> Resolved {
         vec![Line::from(format!(
@@ -166,6 +167,6 @@ pub(super) async fn resolve(
         rows.push(Line::from("Redacted evidence (not truncation)"));
     }
     let full = offset == 0 && original == Some(length) && length == stat.length;
-    let readable = super::presentation::acquired_content(&mut rows, &text) && full;
+    let readable = super::presentation::acquired_content(&mut rows, &text, theme) && full;
     Resolved { rows, readable }
 }

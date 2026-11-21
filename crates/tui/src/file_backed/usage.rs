@@ -20,6 +20,7 @@ impl UsageProjection {
         self.snapshot.as_ref().filter(|u| {
             u.input_tokens > 0
                 || u.output_tokens > 0
+                || u.context_tokens > 0
                 || u.session_input_tokens > 0
                 || u.session_output_tokens > 0
         })
@@ -36,14 +37,13 @@ impl UsageProjection {
     fn prompt_parts(&self, include_details: bool) -> Option<String> {
         let u = self.active_snapshot()?;
         let mut parts = Vec::new();
-        if u.context_window > 0 && u.input_tokens > 0 {
-            let pct = ((u.input_tokens as f64 / u.context_window as f64) * 100.0)
-                .round()
-                .clamp(0.0, 999.0) as u64;
+        let ctx = ctx_tokens(u);
+        if u.context_window > 0 && ctx > 0 {
+            let pct = ctx_pct(ctx, u.context_window);
             if include_details {
                 parts.push(format!(
                     "ctx {pct}% ({}/{})",
-                    format_compact_tokens(u.input_tokens),
+                    format_compact_tokens(ctx),
                     format_compact_tokens(u.context_window)
                 ));
             } else {
@@ -53,34 +53,81 @@ impl UsageProjection {
             let total = u.session_input_tokens + u.session_output_tokens;
             parts.push(format!("{} tok", format_compact_tokens(total)));
         }
-        if include_details
-            && let Some(cost) = u.session_cost_usd.or(u.cost_usd)
-            && cost > 0.0
-        {
-            parts.push(format!("${cost:.4}"));
+        if include_details {
+            let (cached, input) = if u.input_tokens > 0 {
+                (u.cached_input_tokens, u.input_tokens)
+            } else {
+                (u.session_cached_input_tokens, u.session_input_tokens)
+            };
+            if let Some(cache_pct) = cache_hit_pct(cached, input) {
+                parts.push(format!("cache {cache_pct}%"));
+            }
+            if let Some(cost) = u.session_cost_usd.or(u.cost_usd)
+                && cost > 0.0
+            {
+                parts.push(format!("${cost:.4}"));
+            }
         }
         Some(parts.join(" · "))
     }
 
     pub fn status(&self) -> Option<String> {
         let u = self.active_snapshot()?;
-        let mut text = format!(
-            "usage: turn in {} out {} · session in {} out {}",
-            u.input_tokens, u.output_tokens, u.session_input_tokens, u.session_output_tokens
+        let mut text = format!("usage: turn in {} out {}", u.input_tokens, u.output_tokens);
+        append_cached_status(&mut text, u.cached_input_tokens, u.input_tokens);
+        text.push_str(&format!(
+            " · session in {} out {}",
+            u.session_input_tokens, u.session_output_tokens
+        ));
+        append_cached_status(
+            &mut text,
+            u.session_cached_input_tokens,
+            u.session_input_tokens,
         );
-        if let Some(cached) = u.cached_input_tokens {
-            text.push_str(&format!(" · cached {cached}"));
-        }
-        if let Some(reasoning) = u.reasoning_tokens {
+        if let Some(reasoning) = u.reasoning_tokens.filter(|&r| r > 0) {
             text.push_str(&format!(" · reasoning {reasoning}"));
         }
         if u.context_window > 0 {
-            text.push_str(&format!(" · ctx {}", u.context_window));
+            let ctx = ctx_tokens(u);
+            if ctx > 0 {
+                let pct = ctx_pct(ctx, u.context_window);
+                text.push_str(&format!(" · ctx {pct}% ({ctx}/{})", u.context_window));
+            } else {
+                text.push_str(&format!(" · ctx {}", u.context_window));
+            }
         }
         if let Some(cost) = u.session_cost_usd.or(u.cost_usd) {
             text.push_str(&format!(" · cost ${cost:.4}"));
         }
         Some(text)
+    }
+}
+
+fn ctx_tokens(u: &UiUsageSnapshot) -> u64 {
+    if u.context_tokens > 0 {
+        u.context_tokens
+    } else {
+        u.input_tokens
+    }
+}
+
+fn ctx_pct(ctx: u64, context_window: u64) -> u64 {
+    ((ctx as f64 / context_window as f64) * 100.0)
+        .round()
+        .clamp(0.0, 999.0) as u64
+}
+
+fn cache_hit_pct(cached: Option<u64>, input: u64) -> Option<u64> {
+    let cached = cached.filter(|&c| c > 0)?;
+    (input > 0).then(|| (((cached as u128) * 100) / (input as u128)).min(100) as u64)
+}
+
+fn append_cached_status(text: &mut String, cached: Option<u64>, input: u64) {
+    if let Some(cached) = cached.filter(|&c| c > 0) {
+        match cache_hit_pct(Some(cached), input) {
+            Some(pct) => text.push_str(&format!(" (cached {cached}, {pct}%)")),
+            None => text.push_str(&format!(" (cached {cached})")),
+        }
     }
 }
 

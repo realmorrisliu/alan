@@ -483,3 +483,307 @@ fn transcript_turn_rhythm_anchors_prompts_calms_thinking_and_prunes_cleanly() {
                 && s.style.add_modifier.is_empty())
     );
 }
+
+#[test]
+fn late_complete_thinking_inserts_above_open_assistant_and_preserves_indices() {
+    use alan_agent_protocol::{InputIntent, UiThinkingSnapshot};
+
+    // Case 1: streaming io/output arrives BEFORE UiThinkingState::Complete.
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.apply_tape_record(super::tests::tape_message("user", "explain"));
+    app.push_output("Here is the answer.".into());
+    app.apply_ui_thinking_snapshot(UiThinkingSnapshot::complete("deep reasoning".into(), 3));
+
+    let lines: Vec<String> = app
+        .styled_history_lines(80)
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(
+        lines,
+        vec!["", ": explain", "· thought · 3s", "Here is the answer."],
+        "completed thinking must render above streamed assistant reply: {lines:?}"
+    );
+
+    // Case 2: fast turn where assistant tape record ALSO arrived before Thinking::Complete.
+    let mut fast = FileBackedApp::new("/agent/1".into());
+    fast.apply_tape_record(super::tests::tape_message("user", "ping"));
+    fast.push_output("pong".into());
+    fast.apply_tape_record(super::tests::tape_message("assistant", "pong"));
+    fast.apply_ui_thinking_snapshot(UiThinkingSnapshot::complete("quick check".into(), 1));
+    assert!(
+        fast.pending_remote_turn_start.is_none(),
+        "thinking belonging to just-completed assistant must not mark a fake remote turn"
+    );
+    let fast_lines: Vec<String> = fast
+        .styled_history_lines(80)
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(fast_lines, vec!["", ": ping", "· thought · 1s", "pong"]);
+
+    // Case 3: multi-step tool turn — step 2 thinking inserts before step 2 assistant without
+    // shifting earlier action_cells, AND step 2 thinking before text never jumps over a Tool.
+    let mut multi = FileBackedApp::new("/agent/1".into());
+    multi.apply_tape_record(super::tests::tape_message("user", "inspect"));
+    multi.upsert_action_cell(
+        "a0".into(),
+        HistoryCell::Tool {
+            action: Some(crate::history::ActionHistory {
+                owner: "/agent/1".into(),
+                id: "a0".into(),
+                read_only: None,
+                frozen_rows: None,
+            }),
+            title: "Read Cargo.toml".into(),
+            status: ToolStatus::Complete,
+            preview: Some("ok".into()),
+            presentation: None,
+        },
+    );
+    assert_eq!(multi.action_cells.get("a0"), Some(&1));
+    multi.push_output("Done.".into());
+    multi.apply_ui_thinking_snapshot(UiThinkingSnapshot::complete("step 2 thought".into(), 2));
+    assert_eq!(multi.action_cells.get("a0"), Some(&1));
+    assert!(matches!(multi.transcript[2], HistoryCell::Thinking { .. }));
+    assert!(matches!(multi.transcript[3], HistoryCell::Assistant(_)));
+
+    // After another tool completes, next thinking must stay AFTER that tool, not jump before
+    // an earlier Assistant cell.
+    multi.upsert_action_cell(
+        "a1".into(),
+        HistoryCell::Tool {
+            action: None,
+            title: "Bash cargo check".into(),
+            status: ToolStatus::Complete,
+            preview: None,
+            presentation: None,
+        },
+    );
+    multi.apply_ui_thinking_snapshot(UiThinkingSnapshot::complete("step 3 thought".into(), 4));
+    assert!(matches!(multi.transcript[4], HistoryCell::Tool { .. }));
+    assert!(matches!(
+        multi.transcript[5],
+        HistoryCell::Thinking {
+            duration_secs: 4,
+            ..
+        }
+    ));
+
+    // Case 4: partially pruned AssistantTail must NOT have Thinking inserted before it, while
+    // an unpruned AssistantTail { committed: (0, 0) } still accepts insertion.
+    let mut pruned = FileBackedApp::new("/agent/1".into());
+    pruned.transcript.push(HistoryCell::AssistantTail {
+        text: "line 1\nline 2".into(),
+        committed: (7, 0),
+    });
+    pruned.apply_ui_thinking_snapshot(UiThinkingSnapshot::complete("late".into(), 1));
+    assert!(matches!(
+        pruned.transcript[0],
+        HistoryCell::AssistantTail { .. }
+    ));
+    assert!(matches!(pruned.transcript[1], HistoryCell::Thinking { .. }));
+
+    let mut unpruned = FileBackedApp::new("/agent/1".into());
+    unpruned.transcript.push(HistoryCell::AssistantTail {
+        text: "still full".into(),
+        committed: (0, 0),
+    });
+    unpruned.apply_ui_thinking_snapshot(UiThinkingSnapshot::complete("before tail".into(), 2));
+    assert!(matches!(
+        unpruned.transcript[0],
+        HistoryCell::Thinking { .. }
+    ));
+    assert!(matches!(
+        unpruned.transcript[1],
+        HistoryCell::AssistantTail { .. }
+    ));
+
+    // Case 5: queued follow-up local input receipt after streaming assistant gets its index shifted.
+    let mut queued = FileBackedApp::new("/agent/1".into());
+    queued.queue.owner = "/agent/1".into();
+    queued.apply_tape_record(super::tests::tape_message("user", "first"));
+    queued.push_output("streaming reply".into());
+    queued.track_local_input(
+        "sub-2",
+        "/agent/1".into(),
+        "follow up".into(),
+        InputIntent::Agent,
+    );
+    queued.acknowledge_local_input("sub-2", "/agent/1");
+    assert_eq!(queued.local_inputs["sub-2"].cell, Some(2));
+    queued.apply_ui_thinking_snapshot(UiThinkingSnapshot::complete("first thought".into(), 5));
+    assert!(matches!(queued.transcript[1], HistoryCell::Thinking { .. }));
+    assert!(matches!(queued.transcript[2], HistoryCell::Assistant(_)));
+    assert_eq!(queued.local_inputs["sub-2"].cell, Some(3));
+}
+
+#[test]
+fn tool_and_plan_to_assistant_gap_matches_prune_rendered_prefix_exactly() {
+    let ro_snapshot = |id: &str| super::file_surface::ActionSnapshot {
+        id: id.into(),
+        name: format!("Read src/{id}.rs"),
+        status: "completed".into(),
+        output: "body".into(),
+        result: serde_json::json!({
+            "title": format!("Read src/{id}.rs"),
+            "presentation": ToolResultPresentation::FileContent {
+                path: format!("src/{id}.rs"),
+                lines: 12,
+                truncated: false,
+            },
+            "read_only_context": {
+                "owner": "/agent/1",
+                "submission": "sub-1",
+                "authority": "grant-1",
+            },
+        })
+        .to_string(),
+    };
+
+    let build_cases = || -> Vec<(&'static str, FileBackedApp)> {
+        // 1. Failed action tool -> Assistant
+        let mut failed_tool = FileBackedApp::new("/agent/1".into());
+        failed_tool
+            .transcript
+            .push(HistoryCell::User("read".into()));
+        super::file_surface::sync_action_snapshot(
+            &mut failed_tool,
+            super::file_surface::ActionSnapshot {
+                id: "a0".into(),
+                name: "read_file".into(),
+                status: "failed".into(),
+                output: r#"{"error":"permission denied","success":false}"#.into(),
+                result: serde_json::json!({
+                    "title": "Read /etc/passwd",
+                    "result_preview": "error: permission denied",
+                })
+                .to_string(),
+            },
+        );
+        failed_tool
+            .transcript
+            .push(HistoryCell::Assistant("Line one\nLine two".into()));
+
+        // 2. Two standalone tools -> Assistant (no blank row between tools, 1 blank before prose)
+        let mut two_tools = FileBackedApp::new("/agent/1".into());
+        two_tools.transcript.push(HistoryCell::Tool {
+            action: None,
+            title: "Bash step 1".into(),
+            status: ToolStatus::Complete,
+            preview: Some("ok 1".into()),
+            presentation: None,
+        });
+        two_tools.transcript.push(HistoryCell::Tool {
+            action: None,
+            title: "Bash step 2".into(),
+            status: ToolStatus::Failed,
+            preview: Some("exit 1".into()),
+            presentation: None,
+        });
+        two_tools
+            .transcript
+            .push(HistoryCell::Assistant("Recovered cleanly.".into()));
+
+        // 3. Read-only grouped tools -> Assistant
+        let mut grouped = FileBackedApp::new("/agent/1".into());
+        super::file_surface::sync_action_snapshot(&mut grouped, ro_snapshot("a0"));
+        super::file_surface::sync_action_snapshot(&mut grouped, ro_snapshot("a1"));
+        grouped
+            .transcript
+            .push(HistoryCell::Assistant("Both files checked.".into()));
+
+        // 4. Plan -> Assistant
+        let mut plan_app = FileBackedApp::new("/agent/1".into());
+        plan_app.apply_ui_plan_snapshot(UiPlanSnapshot::new(
+            None,
+            vec![PlanItem {
+                id: "s1".into(),
+                content: "inspect workspace".into(),
+                status: PlanItemStatus::InProgress,
+            }],
+        ));
+        plan_app
+            .transcript
+            .push(HistoryCell::Assistant("Starting step 1.".into()));
+
+        vec![
+            ("failed_tool", failed_tool),
+            ("two_tools", two_tools),
+            ("grouped_tools", grouped),
+            ("plan", plan_app),
+        ]
+    };
+
+    for width in [48usize, 80, 120] {
+        for (label, base_app) in build_cases() {
+            let before = base_app.styled_history_lines(width);
+            let strings: Vec<String> = before.iter().map(ToString::to_string).collect();
+            let reply_idx = strings
+                .iter()
+                .position(|s| {
+                    matches!(
+                        s.as_str(),
+                        "Line one"
+                            | "Recovered cleanly."
+                            | "Both files checked."
+                            | "Starting step 1."
+                    )
+                })
+                .unwrap_or_else(|| panic!("{label}@{width} missing reply: {strings:?}"));
+            assert_eq!(
+                strings[reply_idx - 1],
+                "",
+                "{label}@{width} must insert 1 blank row before Assistant: {strings:?}"
+            );
+            assert_ne!(
+                strings[reply_idx - 2],
+                "",
+                "{label}@{width} must not insert double blank rows: {strings:?}"
+            );
+            if label == "two_tools" {
+                let second_tool_idx = strings
+                    .iter()
+                    .position(|s| s.contains("Bash step 2"))
+                    .unwrap();
+                assert_ne!(
+                    strings[second_tool_idx - 1],
+                    "",
+                    "no blank row between consecutive tools: {strings:?}"
+                );
+            }
+
+            // One-shot prune at every possible cut k in 1..=before.len().
+            for cut in 1..=before.len() {
+                let mut app = base_app.clone();
+                let opts = app.render_opts(width);
+                assert_eq!(
+                    app.prune_rendered_prefix(opts, cut),
+                    cut,
+                    "{label}@{width} cut={cut}"
+                );
+                assert_eq!(
+                    app.rendered_history_lines(width),
+                    strings[cut..],
+                    "{label}@{width} one-shot cut={cut} drifted"
+                );
+            }
+
+            // Incremental line-by-line prune must match slice-by-slice with zero drift.
+            let mut inc = base_app.clone();
+            let opts = inc.render_opts(width);
+            for step in 1..=before.len() {
+                assert_eq!(
+                    inc.prune_rendered_prefix(opts, 1),
+                    1,
+                    "{label}@{width} inc step={step}"
+                );
+                assert_eq!(
+                    inc.rendered_history_lines(width),
+                    strings[step..],
+                    "{label}@{width} inc step={step} drifted"
+                );
+            }
+        }
+    }
+}
