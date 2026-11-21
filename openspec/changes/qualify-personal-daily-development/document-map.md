@@ -20,9 +20,9 @@ updates below reflect previously merged behavior, not the proposed trust modes.
 | Change | Owns | Dependency |
 | --- | --- | --- |
 | [qualify-personal-daily-development](./) | Unified roadmap, bounded pilot, sample/metrics, actual daily-use verdict | Measured final candidate consumes autonomy and continuity |
-| [delegate-project-autonomy](../delegate-project-autonomy/) | Saved scope, qualified Guardian, budgets, fewer repeated prompts | Existing Host/Process/Connection owners |
-| [add-explicit-trust-posture](../add-explicit-trust-posture/) | Invocation-only bypass and distinct Host-account execution | Delegation change lands and syncs first; cumulative overlapping deltas must not be applied in reverse |
-| [restore-project-continuity](../restore-project-continuity/) | History selection, controlled project summaries and explicit recovery | Saved-authority and budget semantics from delegation |
+| [delegate-project-autonomy](../archive/2026-11-21-delegate-project-autonomy/) | Saved scope, qualified Guardian, budgets, fewer repeated prompts | Merged (`v0.1.0`), synced & archived 2026-11-21 |
+| [add-explicit-trust-posture](../archive/2026-11-21-add-explicit-trust-posture/) | Invocation-only bypass and distinct Host-account execution | Merged (`v0.1.0`), rebased onto delegation, synced & archived 2026-11-21 |
+| [restore-project-continuity](../archive/2026-11-21-restore-project-continuity/) | History selection, controlled project summaries and explicit recovery | Merged (`v0.1.0`), synced & archived 2026-11-21 |
 
 Only project-autonomous tasks count toward the default daily-use score. Fully
 trusted tasks have an independent cohort. Prototype/pilot thresholds are frozen

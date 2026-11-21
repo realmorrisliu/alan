@@ -28,15 +28,22 @@ NOT grant access before Host-adapter authorization.
 
 ### Requirement: Mount authorization cannot be auto-allowed
 Every valid mount request SHALL cross Host Mount Service and a Host-adapter
-native authorization boundary. Agent policy evaluation MAY deny the request,
-but an allow decision MUST only permit creation of the pending service request
-and MUST NOT create or approve a grant. AgentFS and Agent Machine decision files
-MUST NOT bypass native authorization.
+authorization boundary. A previously explicitly saved user authorization MAY
+satisfy this boundary only after the owning service revalidates identity, scope
+and revocation. Agent policy evaluation MAY deny the request, and Agent policy or
+reviewer allow SHALL only permit creation of the pending service request and MUST
+NOT create, approve, or broaden a grant. AgentFS and Agent Machine decision files
+MUST NOT bypass native authorization. Pending service requests SHALL preserve
+existing correlated wait and terminal-state semantics.
+
+#### Scenario: Valid saved delegation
+- **WHEN** the Host adapter and service revalidate an exact saved scope for a request
+- **THEN** the request can settle without another user prompt and records that authorization provenance
 
 #### Scenario: Policy allow creates only a pending request
-- **WHEN** policy evaluation allows a valid `request_mount` call
-- **THEN** the runtime creates a pending Host Mount Service request and Yields
-- **AND** only the Host adapter and Host Mount Service can produce approval
+- **WHEN** an Agent policy or reviewer returns allow without valid saved or new user authorization
+- **THEN** the runtime creates only a pending Host Mount Service request and Yields
+- **AND** access is not granted until the Host adapter and Host Mount Service produce approval
 
 #### Scenario: Policy deny blocks a mount request
 - **WHEN** policy evaluation denies a valid `request_mount` call

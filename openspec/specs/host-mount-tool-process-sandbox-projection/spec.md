@@ -6,6 +6,7 @@ explicitly delegated service-owned Host Mount handles without exposing raw Host
 backing or retaining engine-owned sandbox roots.
 ## Requirements
 ### Requirement: Explicit read-write Host Mounts derive per-Tool-Process authority
+These native projection guarantees SHALL apply to confined execution. Explicit fully trusted Host-account native execution uses separately selected account authority, not a fabricated mount-derived grant. Read-only aP handles, FileServer access checks and service grant identity SHALL remain unchanged; native account rights do not widen those handles.
 The Host adapter SHALL derive native writable authority from the same
 service-owned grant when alan9 starts a native Tool Process with an explicitly
 delegated read-write Host Mount. Agent Execution Engine
@@ -30,6 +31,7 @@ Service and its adapter remain the authority for each launch.
 - **THEN** the Host adapter emits one effective native sandbox authorization
 
 ### Requirement: Read-only Host Mounts do not grant native write authority
+These native projection guarantees SHALL apply to confined execution. Explicit fully trusted Host-account native execution uses separately selected account authority, not a fabricated mount-derived grant. Read-only aP handles, FileServer access checks and service grant identity SHALL remain unchanged; native account rights do not widen those handles.
 The Host adapter SHALL NOT derive native writable authority from a read-only
 Host Mount grant. The approved grant MAY remain readable through its mounted
 file-server handle according to the Tool Process namespace and Host sandbox
@@ -42,6 +44,7 @@ policy.
 - **AND** no engine-owned sandbox state is mutated
 
 ### Requirement: Host adapters enforce delegated Tool Process sandbox authority
+These native projection guarantees SHALL apply to confined execution. Explicit fully trusted Host-account native execution uses separately selected account authority, not a fabricated mount-derived grant. Read-only aP handles, FileServer access checks and service grant identity SHALL remain unchanged; native account rights do not widen those handles.
 Host adapter checks and OS sandbox profiles for native shell actions SHALL
 include only the native backing of the Host Mount grant
 referenced by the Process shared cwd and SHALL reject paths outside that grant's
@@ -183,6 +186,7 @@ namespace for an unavailable resource, or alter native execution authority.
 - **AND** trailing SGR color controls preserve the preceding visible boundary, so colored absolute paths and file URI paths still project while colored token suffixes remain unchanged
 
 ### Requirement: Native shell reads explicitly delegated read-only dependencies
+These native projection guarantees SHALL apply to confined execution. Explicit fully trusted Host-account native execution uses separately selected account authority, not a fabricated mount-derived grant. Read-only aP handles, FileServer access checks and service grant identity SHALL remain unchanged; native account rights do not widen those handles.
 For supported enforcing native execution, the Host adapter SHALL retain the cwd
 selected grant first and SHALL additionally project live read-only Host Mounts
 explicitly held by the same Process. Only the selected grant SHALL contribute
