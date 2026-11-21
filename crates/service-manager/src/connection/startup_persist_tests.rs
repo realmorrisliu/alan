@@ -430,19 +430,22 @@ async fn root_model_selection_persists_across_restarts_while_child_and_restore_d
         selected_profile: std::sync::Mutex::new(None),
     };
 
-    // 1. Restricted child model selection MUST NOT persist to connections.toml.
+    // 1. Restricted child model selection MUST NOT persist to connections.toml,
+    //    even if persist_selection is invoked.
     let initial_root = root.capture_initial().await.unwrap().unwrap();
     assert_eq!(initial_root.identity.model, "gpt-5.3-codex");
-    let child_selected = child.capture(Some("gpt-5.4")).await.unwrap();
+    let mut child_selected = child.capture(Some("gpt-5.4")).await.unwrap();
     assert_eq!(child_selected.identity.model, "gpt-5.4");
+    child.persist_selection(&mut child_selected).await;
     let on_disk_after_child = ConnectionsFile::load_from_path(&conn_path).unwrap().0;
     assert_eq!(
         on_disk_after_child.profiles["chatgpt-main"].settings["model"],
         "gpt-5.3-codex"
     );
 
-    // 2. Root same-profile model selection persists settings["model"] without bumping reload_epoch
-    //    or dropping live catalogs.
+    // 2. Root `capture(Some(...))` alone MUST NOT mutate connections.toml before
+    //    validation succeeds; only `persist_selection()` persists defaults (without
+    //    bumping reload_epoch or dropping live catalogs).
     let epoch_before = service
         .callables
         .lock()
@@ -450,9 +453,16 @@ async fn root_model_selection_persists_across_restarts_while_child_and_restore_d
         .as_ref()
         .unwrap()
         .reload_epoch;
-    let root_same_profile = root.capture(Some("gpt-5.4")).await.unwrap();
+    let mut root_same_profile = root.capture(Some("gpt-5.4")).await.unwrap();
     assert_eq!(root_same_profile.identity.profile, "chatgpt-main");
     assert_eq!(root_same_profile.identity.model, "gpt-5.4");
+    let on_disk_before_persist = ConnectionsFile::load_from_path(&conn_path).unwrap().0;
+    assert_eq!(
+        on_disk_before_persist.profiles["chatgpt-main"].settings["model"], "gpt-5.3-codex",
+        "capture() alone must not persist before request-control validation succeeds"
+    );
+
+    root.persist_selection(&mut root_same_profile).await;
     let epoch_after = service
         .callables
         .lock()
@@ -477,13 +487,15 @@ async fn root_model_selection_persists_across_restarts_while_child_and_restore_d
         initial_root.identity
     );
 
-    // 3. Root cross-profile `profile::model` selection persists both default_profile and model.
-    let root_cross = root
+    // 3. Root cross-profile `profile::model` selection persists both default_profile and model
+    //    when confirmed via persist_selection().
+    let mut root_cross = root
         .capture(Some("magpie-main::auto/qwen-3.5"))
         .await
         .unwrap();
     assert_eq!(root_cross.identity.profile, "magpie-main");
     assert_eq!(root_cross.identity.model, "auto/qwen-3.5");
+    root.persist_selection(&mut root_cross).await;
     let on_disk_cross = ConnectionsFile::load_from_path(&conn_path).unwrap().0;
     assert_eq!(
         on_disk_cross.default_profile.as_deref(),
@@ -535,4 +547,92 @@ async fn root_model_selection_persists_across_restarts_while_child_and_restore_d
     let booted = restarted_root.capture_initial().await.unwrap().unwrap();
     assert_eq!(booted.identity.profile, "magpie-main");
     assert_eq!(booted.identity.model, "auto/qwen-3.5");
+}
+
+#[tokio::test]
+async fn cold_boot_initial_callable_reconciles_live_catalog_metadata_after_background_discovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let conn_path = dir.path().join("connections.toml");
+    write_two_profile_connections(&conn_path);
+
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let factory = Arc::new(ControlledCatalogFactory::default());
+    *factory.gate.lock().unwrap() = Some(gate.clone());
+    factory
+        .account_by_profile
+        .lock()
+        .unwrap()
+        .insert("chatgpt-main".into(), Some("acct-cold".into()));
+    factory.models_by_profile.lock().unwrap().insert(
+        "chatgpt-main".into(),
+        Some(vec![sample_model("gpt-5.3-codex"), sample_model("gpt-5.4")]),
+    );
+    factory.models_by_profile.lock().unwrap().insert(
+        "magpie-main".into(),
+        Some(vec![sample_model("auto/deepseek-v4")]),
+    );
+
+    let service = ConnectionService::open(&ConnectionStoreBindings {
+        metadata_path: conn_path,
+    })
+    .unwrap();
+    service
+        .attach_callable_registry(
+            Arc::new(alan_llmfs::LlmFs::new()),
+            factory.clone(),
+            Config::default(),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let root = ProcessConnection {
+        service: service.clone(),
+        profile: "chatgpt-main".into(),
+        namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+        evaluator: None,
+        guardian_profile: None,
+        allow_profile_switch: true,
+        selected_profile: std::sync::Mutex::new(None),
+    };
+
+    // Cold capture before background discovery settles has no live ChatGPT model metadata yet.
+    let mut initial = root.capture_initial().await.unwrap().unwrap();
+    assert!(
+        initial.config.effective_model_info().is_none(),
+        "cold initial ChatGPT capture should not have live metadata before discovery settles"
+    );
+
+    // Let background discovery finish and reconcile the confirmed callable.
+    gate.add_permits(2);
+    service.wait_for_catalog_discovery().await;
+    root.refresh_callable_catalog(&mut initial).await;
+
+    let info = initial
+        .config
+        .effective_model_info()
+        .expect("reconciled callable must carry live ChatGPT model metadata");
+    assert_eq!(info.default_reasoning_effort, Some(ReasoningEffort::High));
+    assert_eq!(
+        info.supported_reasoning_efforts,
+        vec![ReasoningEffort::Low, ReasoningEffort::High]
+    );
+    let resolved = alan_agent_engine::resolve_runtime_request_controls(
+        &initial.config,
+        alan_agent_engine::provider_capabilities_for_config(&initial.config),
+        alan_agent_engine::RequestControlIntent::default(),
+    )
+    .unwrap();
+    assert_eq!(resolved.reasoning_effort(), Some(ReasoningEffort::High));
+    assert!(
+        alan_agent_engine::resolve_runtime_request_controls(
+            &initial.config,
+            alan_agent_engine::provider_capabilities_for_config(&initial.config),
+            alan_agent_engine::RequestControlIntent::reasoning_effort(Some(
+                ReasoningEffort::Minimal
+            )),
+        )
+        .is_err(),
+        "reconciled callable must reject efforts unsupported by the live catalog"
+    );
 }

@@ -90,7 +90,7 @@ impl ConnectionAuthority for ProcessConnection {
                     self.allow_profile_switch || explicit_profile == target_id,
                     "profile switch is outside Process authority"
                 );
-                let mut captured = self
+                let captured = self
                     .service
                     .capture_model(explicit_profile, Some(actual_model), &self.namespace)
                     .await?;
@@ -106,30 +106,80 @@ impl ConnectionAuthority for ProcessConnection {
                     .lock()
                     .expect("selected profile mutex poisoned") =
                     Some((epoch, explicit_profile.to_string()));
-                if self.allow_profile_switch {
-                    self.service
-                        .persist_root_model_selection(explicit_profile, actual_model, &mut captured)
-                        .await;
-                }
                 Ok(captured)
             }
             Some((None, actual_model)) => {
-                let mut captured = self
-                    .service
+                self.service
                     .capture_model(&target_id, Some(actual_model), &self.namespace)
-                    .await?;
-                if self.allow_profile_switch {
-                    self.service
-                        .persist_root_model_selection(&target_id, actual_model, &mut captured)
-                        .await;
-                }
-                Ok(captured)
+                    .await
             }
             None => {
                 self.service
                     .capture_model(&target_id, None, &self.namespace)
                     .await
             }
+        }
+    }
+
+    async fn persist_selection(&self, captured: &mut CapturedCallable) {
+        if !self.allow_profile_switch {
+            return;
+        }
+        let profile = captured.identity.profile.clone();
+        let model = captured.identity.model.clone();
+        self.service
+            .persist_root_model_selection(&profile, &model, captured)
+            .await;
+    }
+
+    async fn refresh_callable_catalog(&self, callable: &mut CapturedCallable) {
+        let callables = self.service.callables.lock().await;
+        let Some(registry) = callables.as_ref() else {
+            return;
+        };
+        let Some(published) = registry
+            .published_catalogs
+            .get(&callable.identity.profile)
+            .and_then(|slot| slot.published())
+        else {
+            return;
+        };
+        let connections = self.service.metadata();
+        let Some(profile) = connections.profiles.get(&callable.identity.profile) else {
+            return;
+        };
+        if registry.published_profiles.get(&callable.identity.profile) != Some(profile) {
+            return;
+        }
+        let Ok(current_rev) = profile_revision(
+            profile,
+            registry.published_accounts.get(&callable.identity.profile),
+        ) else {
+            return;
+        };
+        if current_rev != callable.identity.revision
+            && !revisions_match_ignoring_default_model(&current_rev, &callable.identity.revision)
+        {
+            return;
+        }
+        if let Some(engine_catalog) = published.engine_catalog.as_ref() {
+            let needs_update = callable
+                .config
+                .model_catalog
+                .as_ref()
+                .is_none_or(|existing| !Arc::ptr_eq(existing, engine_catalog));
+            if needs_update {
+                callable.config.set_model_catalog(engine_catalog.clone());
+            }
+        }
+        if callable.config.context_window_tokens.is_none()
+            && callable.config.effective_model_info().is_none()
+            && let Some(model_meta) = published
+                .models
+                .iter()
+                .find(|entry| entry.slug == callable.config.effective_model())
+        {
+            callable.config.context_window_tokens = Some(model_meta.context_window_tokens);
         }
     }
 
