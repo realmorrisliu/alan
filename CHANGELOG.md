@@ -7,6 +7,21 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-21
+
+### Added
+
+- Add non-blocking fast startup with concurrent background catalog discovery and non-secret disk cache (`catalog-cache.json`), plus persistent Root `/model` selection across restarts (#1127).
+- Add offline, read-only, secret-safe `alan doctor` (`--json`) and TUI `/doctor` diagnostics (#1126).
+
+### Fixed
+
+- Remove internal `/mnt/project-request-*` path leakage from user-facing replies (#1126).
+
+### Changed
+
+- Sync and archive post-merge OpenSpec specs and changes for M1–M5 (#1125).
+
 ## [0.1.2] - 2026-11-21
 
 ### Added
