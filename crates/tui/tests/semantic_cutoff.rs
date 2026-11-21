@@ -44,15 +44,19 @@ fn review_literal_grapheme_boundary() {
             let opts = RenderOpts::new(width, false);
             let mut cell = HistoryCell::User(source.clone());
             let rows = cell.render_lines(opts);
+            assert_eq!(rows[0], "", "turn-start blank separator");
             assert!(
                 rows.iter().any(|row| row.contains(cluster)),
                 "cluster split: {rows:?}"
             );
-            let body = rows.iter().map(|row| &row[2..]).collect::<String>();
+            let body = rows[1..].iter().map(|row| &row[2..]).collect::<String>();
             // Word wrapping intentionally elides inter-row whitespace; compare
             // non-whitespace content while checking clusters separately above.
             let visible = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
             assert_eq!(visible(&body), visible(&source));
+            // Trim leading turn separator first, keeping `: ` on the first content row.
+            cell.trim_rendered_prefix(opts, 1);
+            assert_eq!(cell.render_lines(opts), rows[1..]);
             for count in [1, 1] {
                 cell.trim_rendered_prefix(opts, count);
                 let HistoryCell::InputTail {
@@ -114,6 +118,7 @@ fn literal_exact_tab_blank_indent_and_grapheme_cuts() {
         assert_eq!(
             before,
             vec![
+                String::new(),
                 format!("{}      leading", if command { "! " } else { ": " }),
                 "  ".into(),
                 "    indented".into(),
@@ -124,10 +129,12 @@ fn literal_exact_tab_blank_indent_and_grapheme_cuts() {
         assert_eq!(cell.render_lines(opts), before[1..]);
         cell.trim_rendered_prefix(opts, 1);
         assert_eq!(cell.render_lines(opts), before[2..]);
+        cell.trim_rendered_prefix(opts, 1);
+        assert_eq!(cell.render_lines(opts), before[3..]);
         for width in [24, 80] {
             assert_eq!(
                 cell.render_lines(RenderOpts::new(width, false)),
-                before[2..]
+                before[3..]
             );
         }
     }
@@ -207,8 +214,8 @@ fn long_word_wrapped_prose_keeps_byte_and_atom_cursors_aligned() {
 fn late_fence_close_keeps_uncommitted_literal_code() {
     let opts = RenderOpts::new(40, false);
     let mut cell = HistoryCell::Assistant(format!("```diff\n+{}", "a".repeat(77)));
-    assert_eq!(cell.render_lines(opts)[2], format!("▎ +{}", "a".repeat(37)));
-    cell.trim_rendered_prefix(opts, 3);
+    assert_eq!(cell.render_lines(opts)[1], format!("▎ +{}", "a".repeat(37)));
+    cell.trim_rendered_prefix(opts, 2);
     if let HistoryCell::AssistantTail { text, .. } = &mut cell {
         text.push_str("\n``");
     }
@@ -235,7 +242,7 @@ fn late_fence_close_keeps_uncommitted_literal_code() {
 fn partial_tab_and_unicode_cluster_have_stable_content_slots() {
     let opts = RenderOpts::new(40, false);
     let mut cell = HistoryCell::Assistant(format!("```\n{}\t界e\u{301}", "a".repeat(38)));
-    cell.trim_rendered_prefix(opts, 3);
+    cell.trim_rendered_prefix(opts, 2);
     assert_eq!(cell.render_lines(opts).concat(), "▎     界e\u{301}");
     if let HistoryCell::AssistantTail { text, .. } = &mut cell {
         text.push_str("\n```\n**ok**");
@@ -249,9 +256,9 @@ fn partial_tab_and_unicode_cluster_have_stable_content_slots() {
 fn late_emphasis_close_preserves_uncommitted_content() {
     let mut cell = HistoryCell::Assistant(format!("**{}", "a".repeat(78)));
     let opts = RenderOpts::new(40, false);
-    let committed = cell.render_lines(opts)[1].clone();
+    let committed = cell.render_lines(opts)[0].clone();
     assert_eq!(committed, format!("**{}", "a".repeat(38)));
-    assert!(cell.trim_rendered_prefix(opts, 2));
+    assert!(cell.trim_rendered_prefix(opts, 1));
     if let HistoryCell::AssistantTail { text, .. } = &mut cell {
         text.push_str("**");
     } else {
@@ -300,23 +307,26 @@ fn markdown_intraword_underscores_preserve_identifiers_and_source_cut() {
             escaped_text.contains("_escaped_") && escaped_text.contains("name_with_underscores")
         );
         let before = cell.render_styled_lines(opts);
-        cell.trim_rendered_prefix(opts, 2);
-        assert_eq!(cell.render_styled_lines(opts), before[2..]);
-        let HistoryCell::AssistantTail { text, committed } = &cell else {
-            panic!()
-        };
-        assert_eq!(text, source);
-        assert!(source.is_char_boundary(committed.0));
-        let cut = *committed;
-        for resized in [40, 120, 60] {
-            assert_eq!(
-                cell.render_styled_lines(RenderOpts::new(resized, false)),
-                HistoryCell::AssistantTail {
-                    text: source.into(),
-                    committed: cut
-                }
-                .render_styled_lines(RenderOpts::new(resized, false))
-            );
+        let trim = if before.len() > 1 { 1 } else { 0 };
+        if trim > 0 {
+            cell.trim_rendered_prefix(opts, trim);
+            assert_eq!(cell.render_styled_lines(opts), before[trim..]);
+            let HistoryCell::AssistantTail { text, committed } = &cell else {
+                panic!()
+            };
+            assert_eq!(text, source);
+            assert!(source.is_char_boundary(committed.0));
+            let cut = *committed;
+            for resized in [40, 120, 60] {
+                assert_eq!(
+                    cell.render_styled_lines(RenderOpts::new(resized, false)),
+                    HistoryCell::AssistantTail {
+                        text: source.into(),
+                        committed: cut
+                    }
+                    .render_styled_lines(RenderOpts::new(resized, false))
+                );
+            }
         }
     }
 }

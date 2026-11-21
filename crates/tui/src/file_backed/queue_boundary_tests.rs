@@ -400,7 +400,7 @@ async fn remaining_partial_receipt_tape_never_replays_prefix() {
         InputIntent::Agent,
     );
     queue::confirm_local_receipts(&mut app, &pending);
-    assert_eq!(app.prune_rendered_prefix(RenderOpts::new(24, false), 1), 1);
+    assert_eq!(app.prune_rendered_prefix(RenderOpts::new(24, false), 2), 2);
     assert!(
         !app.rendered_history_lines(24)
             .join("\n")
@@ -433,7 +433,7 @@ async fn remaining_partial_receipt_hydration_resize_never_replays_prefix() {
         InputIntent::Agent,
     );
     queue::confirm_local_receipts(&mut app, &pending);
-    assert_eq!(app.prune_rendered_prefix(RenderOpts::new(24, false), 1), 1);
+    assert_eq!(app.prune_rendered_prefix(RenderOpts::new(24, false), 2), 2);
     for width in [18, 80, 24] {
         let tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
             .await

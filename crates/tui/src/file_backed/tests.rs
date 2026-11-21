@@ -305,15 +305,18 @@ fn ctrl_r_toggles_thinking_expansion() {
     ));
 
     let collapsed = app.rendered_history_lines(80).join("\n");
-    assert!(collapsed.contains("ctrl+r to expand"));
+    assert!(collapsed.contains("· thought · 3s"), "{collapsed}");
+    assert!(!collapsed.contains("step one"), "{collapsed}");
+    assert!(!collapsed.contains("ctrl+r to expand"), "{collapsed}");
     assert!(!app.expand_thinking);
 
     press(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
 
     assert!(app.expand_thinking);
     let expanded = app.rendered_history_lines(80).join("\n");
-    assert!(expanded.contains("step one"));
-    assert!(!expanded.contains("ctrl+r to expand"));
+    assert!(expanded.contains("thought · 3s"), "{expanded}");
+    assert!(expanded.contains("step one"), "{expanded}");
+    assert!(!expanded.contains("· thought · 3s"), "{expanded}");
 }
 
 #[test]

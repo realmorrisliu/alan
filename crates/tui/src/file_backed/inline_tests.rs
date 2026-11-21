@@ -13,9 +13,16 @@ fn semantic_markdown_production_buffer_removes_markers_and_preserves_roles() {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
         assert_eq!(
-            buffer.cell((0, 1)).unwrap().symbol(),
+            buffer.cell((0, 0)).unwrap().symbol(),
             "标",
             "heading marker at {width}"
+        );
+        assert!(
+            buffer
+                .cell((0, 0))
+                .unwrap()
+                .modifier
+                .contains(Modifier::BOLD)
         );
         assert!(
             buffer
@@ -26,24 +33,17 @@ fn semantic_markdown_production_buffer_removes_markers_and_preserves_roles() {
         );
         assert!(
             buffer
-                .cell((0, 2))
-                .unwrap()
-                .modifier
-                .contains(Modifier::BOLD)
-        );
-        assert!(
-            buffer
-                .cell((11, 2))
+                .cell((11, 1))
                 .unwrap()
                 .modifier
                 .contains(Modifier::ITALIC)
         );
-        assert_eq!(buffer.cell((0, 3)).unwrap().symbol(), "•");
-        assert_eq!(buffer.cell((6, 5)).unwrap().symbol(), "l");
-        assert_eq!(buffer.cell((2, 8)).unwrap().symbol(), "+");
-        assert_eq!(buffer.cell((2, 8)).unwrap().fg, theme.status_run);
-        assert_eq!(buffer.cell((2, 9)).unwrap().fg, theme.status_block);
-        for row in [11, 12, 13] {
+        assert_eq!(buffer.cell((0, 2)).unwrap().symbol(), "•");
+        assert_eq!(buffer.cell((6, 4)).unwrap().symbol(), "l");
+        assert_eq!(buffer.cell((2, 7)).unwrap().symbol(), "+");
+        assert_eq!(buffer.cell((2, 7)).unwrap().fg, theme.status_run);
+        assert_eq!(buffer.cell((2, 8)).unwrap().fg, theme.status_block);
+        for row in [10, 11, 12] {
             assert_eq!(
                 buffer.cell((0, row)).unwrap().fg,
                 Color::Reset,
@@ -275,7 +275,7 @@ fn scrollback_retention_counts_physical_rows_at_narrow_widths() {
     let mut terminal = Terminal::new(TestBackend::new(8, height)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
 
-    assert_eq!(drained.len(), 5);
+    assert_eq!(drained.len(), 2);
     assert_eq!(retained.len(), 1);
     assert_eq!(terminal.backend().cursor_position().y, 5);
     let prompt = (0..8)
@@ -373,8 +373,8 @@ fn completed_turn_is_followed_by_the_next_inline_alan_prompt() {
             .to_string()
     };
 
-    assert_eq!(line(0), ": pwd");
-    assert_eq!(line(1), "");
+    assert_eq!(line(0), "");
+    assert_eq!(line(1), ": pwd");
     assert_eq!(line(2), "/workspace/alan");
     assert_eq!(line(3), "");
     assert_eq!(line(4), "─".repeat(80));

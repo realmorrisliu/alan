@@ -32,7 +32,7 @@ fn syntax_highlighting_styles_fenced_blocks_and_preserves_unknown_plain() {
     let unknown = HistoryCell::Assistant("```unknown_lang\nfn foo() {}\n```".into())
         .render_styled_lines(RenderOpts::new(80, false));
     assert!(
-        unknown[2]
+        unknown[1]
             .spans
             .iter()
             .skip(1)
@@ -203,5 +203,103 @@ fn confirmation_yield_card_shows_numbered_hints_default_allow_session_and_colore
                 && r.spans.iter().any(|s| s.style.fg == Some(theme.status_run))
         }),
         "{joined}"
+    );
+}
+
+#[test]
+fn list_hanging_indent_for_unordered_ordered_and_nested_preserves_cuts_and_dumb_mode() {
+    let cases = [
+        ("- alpha beta gamma delta", "• ", "  "),
+        ("* alpha beta gamma delta", "• ", "  "),
+        ("+ alpha beta gamma delta", "• ", "  "),
+        ("  - alpha beta gamma delta", "  • ", "    "),
+        ("1. alpha beta gamma delta", "1. ", "   "),
+        ("10. alpha beta gamma delta", "10. ", "    "),
+        ("  10. alpha beta gamma delta", "  10. ", "      "),
+        ("> alpha beta gamma delta", "│ ", "│ "),
+    ];
+    for (src, first_prefix, cont_prefix) in cases {
+        let opts = RenderOpts::new(20, false);
+        let mut cell = HistoryCell::Assistant(src.into());
+        let rows = cell.render_styled_lines(opts);
+        let strings: Vec<String> = rows.iter().map(ToString::to_string).collect();
+        assert!(strings.len() >= 2, "{src} did not wrap: {strings:?}");
+        assert!(
+            strings[0].starts_with(first_prefix),
+            "{src}: expected first row prefix {first_prefix:?}, got {strings:?}"
+        );
+        for row in &strings[1..] {
+            assert!(
+                row.starts_with(cont_prefix),
+                "{src}: expected continuation prefix {cont_prefix:?}, got {strings:?}"
+            );
+        }
+        // Partial drain cutting row 0 must retain exact hanging indent on row 1.
+        assert!(cell.trim_rendered_prefix(opts, 1));
+        assert_eq!(cell.render_styled_lines(opts), rows[1..]);
+        let resized: Vec<String> = cell
+            .render_styled_lines(RenderOpts::new(40, false))
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert!(
+            resized[0].starts_with(cont_prefix),
+            "{src}: resize lost hanging indent: {resized:?}"
+        );
+    }
+
+    // Dumb mode degrades bullet glyph to '-' while keeping hanging indent plain.
+    let dumb_opts = RenderOpts::new(18, false).with_theme(Theme::dumb());
+    let dumb_rows =
+        HistoryCell::Assistant("- alpha beta gamma delta".into()).render_styled_lines(dumb_opts);
+    assert!(dumb_rows.len() >= 2, "{dumb_rows:?}");
+    assert!(dumb_rows[0].to_string().starts_with("- "));
+    assert!(dumb_rows[1].to_string().starts_with("  "));
+    assert!(
+        dumb_rows
+            .iter()
+            .flat_map(|row| &row.spans)
+            .all(|s| s.style.fg.is_none() && s.style.add_modifier.is_empty())
+    );
+}
+
+#[test]
+fn inline_code_uses_calm_tint_without_underline_while_links_remain_underlined() {
+    let md = "Check `AGENTS.md` and `/mnt/project-request-1` or [docs](https://example.com).";
+    for theme in [Theme::midnight(), Theme::paper(), Theme::ansi()] {
+        let rows = HistoryCell::Assistant(md.into())
+            .render_styled_lines(RenderOpts::new(120, false).with_theme(theme));
+        assert_eq!(rows.len(), 1);
+        let spans = &rows[0].spans;
+        let rendered = rows[0].to_string();
+        for token in ["AGENTS.md", "/mnt/project-request-1"] {
+            let start = rendered.find(token).expect("code token in rendered line");
+            let token_spans = &spans[start..start + token.len()];
+            assert!(
+                token_spans
+                    .iter()
+                    .all(|s| s.style.fg == Some(theme.syntax_type)
+                        && !s.style.add_modifier.contains(Modifier::UNDERLINED)),
+                "{theme:?}: inline code `{token}` must use syntax_type tint without underline: {token_spans:?}"
+            );
+        }
+        let link_text: String = spans
+            .iter()
+            .filter(|s| s.style.add_modifier.contains(Modifier::UNDERLINED))
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(
+            link_text, "docs",
+            "{theme:?}: only links should be underlined"
+        );
+    }
+
+    let dumb_rows = HistoryCell::Assistant(md.into())
+        .render_styled_lines(RenderOpts::new(120, false).with_theme(Theme::dumb()));
+    assert!(
+        dumb_rows
+            .iter()
+            .flat_map(|row| &row.spans)
+            .all(|s| s.style.fg.is_none() && s.style.add_modifier.is_empty())
     );
 }

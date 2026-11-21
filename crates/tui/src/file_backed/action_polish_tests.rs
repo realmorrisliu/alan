@@ -130,8 +130,8 @@ fn polish_fence_language_boundary_stream_resize_and_second_drain() {
         }
         app.push_output(format!("\n\t界{}\n+next\t", "x".repeat(100)));
         let before = app.styled_history_lines(73);
-        assert_eq!(before[1].to_string(), format!("▎ {language}"));
-        assert_eq!(app.prune_rendered_prefix(app.render_opts(73), 3), 3);
+        assert_eq!(before[0].to_string(), format!("▎ {language}"));
+        assert_eq!(app.prune_rendered_prefix(app.render_opts(73), 2), 2);
         let resized = app.styled_history_lines(40);
         assert!(!resized.is_empty());
         assert_eq!(app.prune_rendered_prefix(app.render_opts(40), 1), 1);
@@ -152,8 +152,6 @@ fn polish_fence_language_boundary_stream_resize_and_second_drain() {
 fn answer_spacing_and_fence_label_commit_once_before_late_code() {
     let opts = RenderOpts::new(24, false);
     let mut cell = HistoryCell::Assistant("```rust".into());
-    assert_eq!(cell.render_lines(opts), ["", "▎ rust"]);
-    assert!(cell.trim_rendered_prefix(opts, 1));
     assert_eq!(cell.render_lines(opts), ["▎ rust"]);
     assert!(cell.trim_rendered_prefix(opts, 1));
     cell.replace_assistant_source("```rust\n    let 界 = 1;\n```".into());

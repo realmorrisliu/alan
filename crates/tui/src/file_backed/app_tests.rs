@@ -710,13 +710,13 @@ fn live_and_rehydrated_transcripts_preserve_command_route_and_body() {
     assert_eq!(app.transcript, hydrated);
     assert_eq!(hydrated, [HistoryCell::Command(body.into())]);
     let lines = hydrated[0].render_lines(RenderOpts::new(80, false));
-    assert_eq!(lines, ["! printf '你好'", "    pwd"]);
+    assert_eq!(lines, ["", "! printf '你好'", "    pwd"]);
     let legacy = crate::file_backed::file_surface::parse_tape_history(
         r#"{"version":1,"kind":"message","role":"user","content":"!literal"}"#,
     );
     assert_eq!(legacy, [HistoryCell::User("!literal".into())]);
     assert_eq!(
         legacy[0].render_lines(RenderOpts::new(80, false)),
-        [": !literal"]
+        ["", ": !literal"]
     );
 }

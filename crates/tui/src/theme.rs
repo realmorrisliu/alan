@@ -378,6 +378,31 @@ impl Theme {
     pub fn diff_remove_style(self) -> Style {
         self.block_style()
     }
+
+    /// Semantic style for inline code spans (`` `code` ``): calm tint without underline.
+    pub fn inline_code_style(self) -> Style {
+        if self.is_dumb {
+            Style::default()
+        } else {
+            Style::default().fg(self.syntax_type)
+        }
+    }
+
+    /// Semantic style for user/command prompt sigils (`: ` / `! `) in transcript history.
+    pub fn user_prompt_prefix_style(self, command: bool) -> Style {
+        if self.is_dumb {
+            Style::default()
+        } else if command {
+            self.bold_if_capable(self.wait_style())
+        } else {
+            self.accent_bold()
+        }
+    }
+
+    /// Semantic style for user/command prompt body text in transcript history.
+    pub fn user_prompt_body_style(self) -> Style {
+        self.bold_if_capable(Style::default())
+    }
 }
 
 pub(crate) fn colorterm_is_truecolor(colorterm: Option<&str>) -> bool {
