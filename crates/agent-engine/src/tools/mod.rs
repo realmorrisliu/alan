@@ -50,7 +50,8 @@ pub use reified_namespace::{
 };
 pub(crate) use sandbox::parse_standalone_cd;
 pub use sandbox::{
-    ExecResult, NetworkPosture, OutputProgressCallback, Sandbox, SandboxHostMount, SandboxSpec,
+    ExecResult, NetworkPosture, OutputProgressCallback, PROTECTED_SUBPATHS, Sandbox,
+    SandboxHostMount, SandboxSpec,
 };
 pub use sandbox_backend::{
     LinuxReificationCapability, LinuxReificationCapabilityReport, LinuxReificationStatus,

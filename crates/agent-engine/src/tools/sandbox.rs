@@ -25,6 +25,7 @@ mod shell_syntax;
 pub use command_process::OutputProgressCallback;
 #[cfg(any(target_os = "linux", all(test, unix)))]
 pub(in crate::tools) use command_wrappers::command_and_args;
+pub use path_safety::PROTECTED_SUBPATHS;
 pub use sandbox_spec::{NetworkPosture, SandboxHostMount, SandboxSpec};
 
 #[cfg(test)]

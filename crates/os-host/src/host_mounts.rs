@@ -12,10 +12,11 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use alan_agent_engine::tools::{
-    ReifiedMountAccess, Sandbox, SandboxHostMount, SandboxSpec, ToolExecutionAdapter,
+    PROTECTED_SUBPATHS, ReifiedMountAccess, Sandbox, SandboxHostMount, SandboxSpec,
+    ToolExecutionAdapter,
 };
 use alan_ap::InProcessTransport;
-use alan_hostfs::{HostDirAccess, HostDirFs};
+use alan_hostfs::{HostDirAccess, HostDirFs, HostDirPolicy};
 use alan_kernel::Access;
 use alan_service_manager::{
     HostMountAccess, HostMountExport, HostMountExportAdapter, HostMountGrantRecord,
@@ -340,13 +341,20 @@ pub(super) fn native_export(
         HostMountAccess::ReadWrite => Access::ReadWrite,
     };
     let host_path = canonical_host_path(host_path)?;
+    let policy = HostDirPolicy::for_host_mount(
+        &host_path,
+        &SandboxSpec::read_denylist_for_mount(&host_path),
+        PROTECTED_SUBPATHS,
+    );
     let tree = Arc::new(
-        HostDirFs::new(&host_path, hostfs_access(kernel_access)).with_context(|| {
-            format!(
-                "failed to export host directory {} at {namespace_path}",
-                host_path.display()
-            )
-        })?,
+        HostDirFs::new(&host_path, hostfs_access(kernel_access))
+            .map(|fs| fs.with_policy(policy))
+            .with_context(|| {
+                format!(
+                    "failed to export host directory {} at {namespace_path}",
+                    host_path.display()
+                )
+            })?,
     );
     Ok(Arc::new(NativeHostMountExport {
         tree,
