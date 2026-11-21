@@ -25,7 +25,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream};
-use alan_llm::LlmProvider;
+use alan_llm::{LlmProvider, ProviderModel};
 use async_trait::async_trait;
 
 mod generation;
@@ -34,9 +34,9 @@ mod request_wire;
 
 use generation::{Connection, Generation, abort_generation, commit_request, generation_status_doc};
 use provider_catalog::{
-    connection_capabilities_doc, connection_profile_doc, is_known_provider, known_provider_names,
-    provider_capabilities_doc, provider_capabilities_for_name, provider_models_doc,
-    provider_status_doc,
+    connection_capabilities_doc, connection_models_doc, connection_profile_doc, is_known_provider,
+    known_provider_names, provider_capabilities_doc, provider_capabilities_for_name,
+    provider_models_doc, provider_status_doc,
 };
 
 /// Cap on a buffered request document, so a hostile writer cannot exhaust the
@@ -98,6 +98,7 @@ enum Node {
     ConnectionProfile(String),
     ConnectionMeter(String),
     ConnectionCapabilities(String),
+    ConnectionModels(String),
     Clone(String),
     Evaluate(String),
     Gen(String),
@@ -166,6 +167,11 @@ impl State {
                 .connections
                 .get(conn)
                 .map(|connection| connection.meter_version())
+                .unwrap_or(self.listing_version),
+            Node::ConnectionModels(conn) => self
+                .connections
+                .get(conn)
+                .map(|connection| connection.models_version())
                 .unwrap_or(self.listing_version),
             Node::Root
             | Node::ProvidersDir
@@ -342,6 +348,39 @@ impl LlmFs {
         Ok(())
     }
 
+    /// Publish or update the live model catalog served at `connections/<name>/models`.
+    pub fn set_connection_models(&self, name: &str, models: Vec<ProviderModel>) -> bool {
+        let state = self.state.lock().unwrap();
+        let Some(connection) = state.connections.get(name) else {
+            return false;
+        };
+        connection.set_live_models(Some(models));
+        true
+    }
+
+    /// Clear a Connection's live model catalog override so `connections/<name>/models`
+    /// falls back to the provider baseline.
+    pub fn clear_connection_models(&self, name: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        let Some(connection) = state.connections.get(name) else {
+            return false;
+        };
+        connection.set_live_models(None);
+        true
+    }
+
+    /// Read the live published model catalog for a visible Connection, if any.
+    pub fn connection_models(&self, name: &str) -> Option<Vec<ProviderModel>> {
+        if !self.connection_visible(name) {
+            return None;
+        }
+        let state = self.state.lock().unwrap();
+        state
+            .connections
+            .get(name)
+            .and_then(|connection| connection.live_models())
+    }
+
     pub async fn unregister_connection(&self, name: &str) {
         let active = {
             let mut state = self.state.lock().unwrap();
@@ -449,6 +488,8 @@ impl LlmFs {
                     Ok(Node::ConnectionMeter(conn.clone()))
                 } else if name == "capabilities" {
                     Ok(Node::ConnectionCapabilities(conn.clone()))
+                } else if name == "models" {
+                    Ok(Node::ConnectionModels(conn.clone()))
                 } else if state
                     .gens
                     .get(name)
@@ -804,6 +845,7 @@ fn computed_bytes(
                 "profile".to_string(),
                 "meter".to_string(),
                 "capabilities".to_string(),
+                "models".to_string(),
             ];
             let mut ids: Vec<_> = state
                 .gens
@@ -843,6 +885,12 @@ fn computed_bytes(
                 connection.generation_supported,
             )
             .into_bytes()
+        }
+        Node::ConnectionModels(conn) => {
+            let connection = state.connections.get(conn).ok_or(ErrorCode::NotFound)?;
+            let live_models = connection.live_models();
+            connection_models_doc(conn, &connection.provider_name, live_models.as_deref())
+                .into_bytes()
         }
         Node::Gen(_) => b"data\nevents\nctl\nstatus".to_vec(),
         Node::GenStatus(id) => {
@@ -896,6 +944,7 @@ fn node_identity(node: &Node) -> (FileKind, String) {
         Node::ConnectionCapabilities(c) => {
             (FileKind::File, format!("connections/{c}/capabilities"))
         }
+        Node::ConnectionModels(c) => (FileKind::File, format!("connections/{c}/models")),
         Node::Clone(c) => (FileKind::Clone, format!("connections/{c}/clone")),
         Node::Evaluate(c) => (FileKind::Clone, format!("connections/{c}/evaluate")),
         Node::Gen(id) => (FileKind::Dir, format!("gen/{id}")),

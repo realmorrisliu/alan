@@ -1,6 +1,9 @@
 //! Provider identity, capability, and model introspection documents.
 
-use alan_llm::{CompatibilityTier, ProviderCapabilities, factory::ProviderType};
+use alan_llm::{
+    CompatibilityTier, ProviderCapabilities, ProviderModel as LiveProviderModel,
+    factory::ProviderType, gemini_catalog,
+};
 
 use super::render_json_doc;
 
@@ -116,23 +119,45 @@ pub(super) fn connection_profile_doc(
     }))
 }
 
+pub(super) fn connection_models_doc(
+    connection: &str,
+    provider: &str,
+    live_models: Option<&[LiveProviderModel]>,
+) -> String {
+    let (source, models) = if let Some(live_models) = live_models {
+        (
+            "live",
+            live_models.iter().map(live_model_json).collect::<Vec<_>>(),
+        )
+    } else if provider == "google_gemini_generate_content" {
+        ("bundled-gemini", gemini_baseline_models_json())
+    } else if let Some(catalog) = provider_model_catalog(provider) {
+        (catalog.source, static_models_json(catalog.models))
+    } else {
+        ("unavailable", Vec::new())
+    };
+    render_json_doc(serde_json::json!({
+        "version": 1,
+        "connection": connection,
+        "provider": provider,
+        "source": source,
+        "models": models,
+    }))
+}
+
 pub(super) fn provider_models_doc(provider: &str) -> String {
+    if provider == "google_gemini_generate_content" {
+        return render_json_doc(serde_json::json!({
+            "version": 1,
+            "provider": provider,
+            "source": "bundled-gemini",
+            "default_model": gemini_catalog::GEMINI_DEFAULT_MODEL,
+            "models": gemini_baseline_models_json(),
+        }));
+    }
     let catalog = provider_model_catalog(provider);
     let models = catalog
-        .map(|catalog| {
-            catalog
-                .models
-                .iter()
-                .map(|model| {
-                    serde_json::json!({
-                        "slug": model.slug,
-                        "family": model.family,
-                        "context_window_tokens": model.context_window_tokens,
-                        "supports_reasoning": model.supports_reasoning,
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
+        .map(|catalog| static_models_json(catalog.models))
         .unwrap_or_default();
     render_json_doc(serde_json::json!({
         "version": 1,
@@ -149,12 +174,53 @@ pub(super) fn provider_status_doc(provider: &str) -> String {
         "provider": provider,
         "status": "available",
         "callable": false,
-        "has_model_catalog": provider_model_catalog(provider).is_some(),
+        "has_model_catalog": provider == "google_gemini_generate_content"
+            || provider_model_catalog(provider).is_some(),
     }))
 }
 
+fn live_model_json(model: &LiveProviderModel) -> serde_json::Value {
+    serde_json::json!({
+        "slug": model.slug,
+        "context_window_tokens": model.context_window_tokens,
+        "supports_reasoning": !model.supported_reasoning_efforts.is_empty(),
+        "supported_reasoning_efforts": model.supported_reasoning_efforts,
+        "default_reasoning_effort": model.default_reasoning_effort,
+    })
+}
+
+fn gemini_baseline_models_json() -> Vec<serde_json::Value> {
+    gemini_catalog::vertex_baseline_catalog()
+        .into_iter()
+        .map(|model| {
+            serde_json::json!({
+                "slug": model.slug,
+                "family": gemini_catalog::gemini_model_family(&model.slug),
+                "context_window_tokens": model.context_window_tokens,
+                "supports_reasoning": !model.supported_reasoning_efforts.is_empty(),
+                "supported_reasoning_efforts": model.supported_reasoning_efforts,
+                "default_reasoning_effort": model.default_reasoning_effort,
+            })
+        })
+        .collect()
+}
+
+fn static_models_json(models: &[StaticProviderModel]) -> Vec<serde_json::Value> {
+    models
+        .iter()
+        .map(|model| {
+            serde_json::json!({
+                "slug": model.slug,
+                "family": model.family,
+                "context_window_tokens": model.context_window_tokens,
+                "supports_reasoning": model.supports_reasoning,
+            })
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy)]
-struct ProviderModel {
+struct StaticProviderModel {
     slug: &'static str,
     family: &'static str,
     context_window_tokens: u32,
@@ -165,59 +231,59 @@ struct ProviderModel {
 struct ProviderModelCatalog {
     default_model: &'static str,
     source: &'static str,
-    models: &'static [ProviderModel],
+    models: &'static [StaticProviderModel],
 }
 
-const OPENAI_GPT_MODELS: &[ProviderModel] = &[
-    ProviderModel {
+const OPENAI_GPT_MODELS: &[StaticProviderModel] = &[
+    StaticProviderModel {
         slug: "gpt-5.4",
         family: "gpt-5",
         context_window_tokens: 1_050_000,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "gpt-5.4-pro",
         family: "gpt-5",
         context_window_tokens: 1_050_000,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "gpt-5.2",
         family: "gpt-5",
         context_window_tokens: 400_000,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "gpt-5.2-pro",
         family: "gpt-5",
         context_window_tokens: 400_000,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "gpt-5.1",
         family: "gpt-5",
         context_window_tokens: 400_000,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "gpt-5-mini",
         family: "gpt-5",
         context_window_tokens: 400_000,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "gpt-5-nano",
         family: "gpt-5",
         context_window_tokens: 400_000,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "gpt-oss-120b",
         family: "gpt-oss",
         context_window_tokens: 131_072,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "gpt-oss-20b",
         family: "gpt-oss",
         context_window_tokens: 131_072,
@@ -225,44 +291,44 @@ const OPENAI_GPT_MODELS: &[ProviderModel] = &[
     },
 ];
 
-const OPENAI_COMPATIBLE_MODELS: &[ProviderModel] = &[
-    ProviderModel {
+const OPENAI_COMPATIBLE_MODELS: &[StaticProviderModel] = &[
+    StaticProviderModel {
         slug: "qwen3.5-plus",
         family: "qwen3.5",
         context_window_tokens: 1_000_000,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "minimax-m2.5",
         family: "minimax-m2.5",
         context_window_tokens: 204_800,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "minimax-m2.5-highspeed",
         family: "minimax-m2.5",
         context_window_tokens: 204_800,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "glm-5",
         family: "glm-5",
         context_window_tokens: 200_000,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "kimi-k2.5",
         family: "kimi-k2.5",
         context_window_tokens: 250_000,
         supports_reasoning: true,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "deepseek-chat",
         family: "deepseek-v3",
         context_window_tokens: 128_000,
         supports_reasoning: false,
     },
-    ProviderModel {
+    StaticProviderModel {
         slug: "deepseek-reasoner",
         family: "deepseek-r1",
         context_window_tokens: 128_000,
@@ -270,67 +336,28 @@ const OPENAI_COMPATIBLE_MODELS: &[ProviderModel] = &[
     },
 ];
 
-const CHATGPT_MODELS: &[ProviderModel] = &[ProviderModel {
+const CHATGPT_MODELS: &[StaticProviderModel] = &[StaticProviderModel {
     slug: "gpt-5.3-codex",
     family: "gpt-5-codex",
     context_window_tokens: 400_000,
     supports_reasoning: true,
 }];
 
-const GEMINI_MODELS: &[ProviderModel] = &[
-    ProviderModel {
-        slug: "gemini-2.5-pro",
-        family: "gemini-2.5",
-        context_window_tokens: 1_048_576,
-        supports_reasoning: true,
-    },
-    ProviderModel {
-        slug: "gemini-2.5-flash",
-        family: "gemini-2.5",
-        context_window_tokens: 1_048_576,
-        supports_reasoning: true,
-    },
-    ProviderModel {
-        slug: "gemini-2.5-flash-lite",
-        family: "gemini-2.5",
-        context_window_tokens: 1_048_576,
-        supports_reasoning: true,
-    },
-    ProviderModel {
-        slug: "gemini-3-pro-preview",
-        family: "gemini-3",
-        context_window_tokens: 1_048_576,
-        supports_reasoning: true,
-    },
-    ProviderModel {
-        slug: "gemini-3-flash-preview",
-        family: "gemini-3",
-        context_window_tokens: 1_048_576,
-        supports_reasoning: true,
-    },
-    ProviderModel {
-        slug: "gemini-3.1-pro-preview",
-        family: "gemini-3.1",
-        context_window_tokens: 1_048_576,
-        supports_reasoning: true,
-    },
-];
-
-const ANTHROPIC_MODELS: &[ProviderModel] = &[ProviderModel {
+const ANTHROPIC_MODELS: &[StaticProviderModel] = &[StaticProviderModel {
     slug: "claude-sonnet-4-5",
     family: "claude-4.5",
     context_window_tokens: 200_000,
     supports_reasoning: true,
 }];
 
-const MAGPIE_MODELS: &[ProviderModel] = &[ProviderModel {
+const MAGPIE_MODELS: &[StaticProviderModel] = &[StaticProviderModel {
     slug: "default",
     family: "magpie",
     context_window_tokens: 128_000,
     supports_reasoning: true,
 }];
 
-const OPENROUTER_MODELS: &[ProviderModel] = &[ProviderModel {
+const OPENROUTER_MODELS: &[StaticProviderModel] = &[StaticProviderModel {
     slug: "moonshotai/kimi-k2.6",
     family: "kimi-k2.6",
     context_window_tokens: 256_000,
@@ -363,11 +390,6 @@ fn provider_model_catalog(provider: &str) -> Option<ProviderModelCatalog> {
             default_model: "gpt-5.3-codex",
             source: "bundled-chatgpt",
             models: CHATGPT_MODELS,
-        }),
-        "google_gemini_generate_content" => Some(ProviderModelCatalog {
-            default_model: "gemini-2.5-flash",
-            source: "bundled-gemini",
-            models: GEMINI_MODELS,
         }),
         "anthropic_messages" => Some(ProviderModelCatalog {
             default_model: "claude-sonnet-4-5",

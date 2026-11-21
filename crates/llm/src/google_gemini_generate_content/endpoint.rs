@@ -7,6 +7,7 @@ use super::auth::{AuthState, VertexAuth};
 use super::wire::GoogleGeminiGenerateContentRequest;
 
 const GLOBAL_HOST: &str = "https://aiplatform.googleapis.com";
+const DEFAULT_CATALOG_HOST: &str = "https://us-central1-aiplatform.googleapis.com";
 
 /// Construction contract for a Vertex AI Gemini client.
 #[derive(Debug, Clone)]
@@ -22,11 +23,15 @@ pub struct VertexClientConfig {
     pub base_url: Option<String>,
 }
 
-/// Fully resolved model resource URL prefix.
+/// Fully resolved model resource URL prefix and catalog discovery endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Endpoint {
     /// `{origin}/v1/{resource}` without the `:method` suffix.
     model_url: String,
+    /// `{catalog_origin}/v1beta1/publishers/google/models` for live discovery.
+    catalog_url: String,
+    /// Configured GCP project sent as `x-goog-user-project` on catalog GETs.
+    user_project: Option<String>,
 }
 
 /// GenerateContent RPC methods.
@@ -52,15 +57,19 @@ impl Endpoint {
             "Vertex AI model `{model}` must be a publisher model id"
         );
         let location = location.trim();
-        let (default_origin, resource) = if api_key_mode {
+        let trimmed_project = project_id
+            .map(str::trim)
+            .filter(|project| !project.is_empty())
+            .map(ToString::to_string);
+        let (default_origin, default_catalog_origin, resource) = if api_key_mode {
             (
                 GLOBAL_HOST.to_string(),
+                DEFAULT_CATALOG_HOST.to_string(),
                 format!("publishers/google/models/{model}"),
             )
         } else {
-            let project = project_id
-                .map(str::trim)
-                .filter(|project| !project.is_empty())
+            let project = trimmed_project
+                .as_deref()
                 .context("Vertex AI ADC authentication requires project_id")?;
             anyhow::ensure!(
                 !location.is_empty()
@@ -71,14 +80,17 @@ impl Endpoint {
             );
             (
                 origin_for_location(location),
+                catalog_origin_for_location(location),
                 format!("projects/{project}/locations/{location}/publishers/google/models/{model}"),
             )
         };
-        let origin = base_url
-            .map(|url| url.trim_end_matches('/').to_string())
-            .unwrap_or(default_origin);
+        let origin_override = base_url.map(|url| url.trim_end_matches('/').to_string());
+        let origin = origin_override.clone().unwrap_or(default_origin);
+        let catalog_origin = origin_override.unwrap_or(default_catalog_origin);
         Ok(Self {
             model_url: format!("{origin}/v1/{resource}"),
+            catalog_url: format!("{catalog_origin}/v1beta1/publishers/google/models"),
+            user_project: trimmed_project,
         })
     }
 
@@ -88,12 +100,30 @@ impl Endpoint {
             Method::StreamSse => format!("{}:streamGenerateContent?alt=sse", self.model_url),
         }
     }
+
+    pub(super) fn catalog_url(&self) -> &str {
+        &self.catalog_url
+    }
+
+    pub(super) fn user_project(&self) -> Option<&str> {
+        self.user_project.as_deref()
+    }
 }
 
 /// `global` has no regional prefix; `global-aiplatform` does not exist.
 fn origin_for_location(location: &str) -> String {
     if location.eq_ignore_ascii_case("global") {
         GLOBAL_HOST.to_string()
+    } else {
+        format!("https://{location}-aiplatform.googleapis.com")
+    }
+}
+
+/// Vertex Model Garden `publishers.models.list` requires a regional host; use
+/// `us-central1-aiplatform.googleapis.com` when the client location is `global`.
+fn catalog_origin_for_location(location: &str) -> String {
+    if location.eq_ignore_ascii_case("global") {
+        DEFAULT_CATALOG_HOST.to_string()
     } else {
         format!("https://{location}-aiplatform.googleapis.com")
     }
@@ -116,6 +146,50 @@ pub(super) struct Transport {
 }
 
 impl Transport {
+    pub(super) fn is_express_mode(&self) -> bool {
+        matches!(self.auth, AuthState::ApiKey(_))
+    }
+
+    /// GET a Vertex Model Garden publisher models page using OAuth/ADC, retrying
+    /// once with a refreshed token on HTTP 401. Never includes auth material or
+    /// raw response bodies in returned errors.
+    pub(super) async fn get_catalog_page(&self, url: &reqwest::Url) -> Result<reqwest::Response> {
+        let AuthState::Adc(cache) = &self.auth else {
+            anyhow::bail!("Vertex AI Express Mode does not support publisher model listing");
+        };
+        let token = cache.token().await.map_err(|_| {
+            anyhow::anyhow!("Cannot resolve Vertex AI credentials for model catalog")
+        })?;
+        let response = self.send_catalog_get(url, &token).await?;
+        let response = if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            warn!(
+                "Vertex AI rejected the access token during model catalog discovery; refreshing once"
+            );
+            let token = cache.refresh_rejected(&token).await.map_err(|_| {
+                anyhow::anyhow!("Cannot refresh Vertex AI credentials for model catalog")
+            })?;
+            self.send_catalog_get(url, &token).await?
+        } else {
+            response
+        };
+        anyhow::ensure!(
+            response.status().is_success(),
+            "Vertex AI model catalog HTTP {}",
+            response.status().as_u16()
+        );
+        Ok(response)
+    }
+
+    async fn send_catalog_get(&self, url: &reqwest::Url, token: &str) -> Result<reqwest::Response> {
+        let mut request = self.http.get(url.clone()).bearer_auth(token);
+        if let Some(project) = self.endpoint.user_project() {
+            request = request.header("x-goog-user-project", project);
+        }
+        request
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("Cannot request Vertex AI model catalog"))
+    }
     /// POST a request, retrying once with a refreshed ADC token on HTTP 401.
     pub(super) async fn post(
         &self,
@@ -231,6 +305,29 @@ mod tests {
         assert_eq!(
             endpoint.url(Method::Generate),
             "http://127.0.0.1:9/v1/projects/p/locations/europe-west4/publishers/google/models/gemini-2.5-pro:generateContent"
+        );
+        assert_eq!(
+            endpoint.catalog_url(),
+            "http://127.0.0.1:9/v1beta1/publishers/google/models"
+        );
+        assert_eq!(endpoint.user_project(), Some("p"));
+    }
+
+    #[test]
+    fn catalog_url_uses_us_central1_for_global_and_regional_host_otherwise() {
+        let global =
+            Endpoint::resolve(Some("proj"), "global", "gemini-3-pro-preview", false, None).unwrap();
+        assert_eq!(
+            global.catalog_url(),
+            "https://us-central1-aiplatform.googleapis.com/v1beta1/publishers/google/models"
+        );
+        assert_eq!(global.user_project(), Some("proj"));
+
+        let regional =
+            Endpoint::resolve(Some("proj"), "europe-west4", "gemini-2.5-pro", false, None).unwrap();
+        assert_eq!(
+            regional.catalog_url(),
+            "https://europe-west4-aiplatform.googleapis.com/v1beta1/publishers/google/models"
         );
     }
 }

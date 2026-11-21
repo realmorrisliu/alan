@@ -18,7 +18,7 @@ pub(crate) mod catalog;
 pub(crate) mod process_binding;
 pub mod provider_packages;
 
-use catalog::{ModelCatalogPublication, build_published_catalog, needs_live_catalog_discovery};
+use catalog::{ModelCatalogPublication, needs_live_catalog_discovery};
 
 const FILES: &[(&str, bool)] = &[
     ("metadata", false),
@@ -735,23 +735,19 @@ impl ConnectionService {
                         .insert(profile_id.clone(), account.into());
                 }
                 let provider = Box::new(ConnectionLlmProvider { client });
-                if provider.supports_choice_evaluation() {
-                    let settings = crate::connection_profile::normalize_profile_settings(
-                        profile.provider,
-                        &profile.settings,
-                    );
-                    registry.llmfs.register_connection_profile(
-                        &profile_id,
-                        alan_llmfs::ConnectionProfile::new(
-                            profile.provider.as_str(),
-                            settings.get("model").cloned().unwrap_or_default(),
-                            profile.credential_id.clone().unwrap_or_default(),
-                        ),
-                        provider,
-                    );
-                } else {
-                    registry.llmfs.register_connection(&profile_id, provider);
-                }
+                let settings = crate::connection_profile::normalize_profile_settings(
+                    profile.provider,
+                    &profile.settings,
+                );
+                registry.llmfs.register_connection_profile(
+                    &profile_id,
+                    alan_llmfs::ConnectionProfile::new(
+                        profile.provider.as_str(),
+                        settings.get("model").cloned().unwrap_or_default(),
+                        profile.credential_id.clone().unwrap_or_default(),
+                    ),
+                    provider,
+                );
                 registry
                     .published_profiles
                     .insert(profile_id.clone(), profile);
@@ -806,76 +802,6 @@ impl ConnectionService {
             self.discover_catalog(&profile_id, provider_kind, &publication)
                 .await;
         }
-    }
-
-    async fn discover_catalog(
-        &self,
-        profile_id: &str,
-        provider_kind: alan_agent_engine::LlmProvider,
-        publication: &ModelCatalogPublication,
-    ) {
-        let discovery = async {
-            let (client, base_catalog) = {
-                let callables = self.callables.lock().await;
-                let registry = callables
-                    .as_ref()
-                    .context("callable registry unavailable")?;
-                let connections = self.metadata();
-                ensure!(
-                    registry
-                        .published_catalogs
-                        .get(profile_id)
-                        .is_some_and(|current| Arc::ptr_eq(current, publication)),
-                    "catalog publication replaced"
-                );
-                ensure!(
-                    registry.published_profiles.get(profile_id)
-                        == connections.profiles.get(profile_id)
-                        && registry.published_profiles.contains_key(profile_id),
-                    "profile publication changed"
-                );
-                let packages = self.package_service();
-                let hydrated = provider_packages::hydrate_connections_with_package_defaults(
-                    packages.as_deref(),
-                    &connections,
-                    profile_id,
-                );
-                let client =
-                    registry
-                        .factory
-                        .create(&registry.base_config, Some(profile_id), &hydrated)?;
-                if provider_kind == alan_agent_engine::LlmProvider::Chatgpt {
-                    let account = registry
-                        .published_accounts
-                        .get(profile_id)
-                        .context("managed catalog account unavailable")?;
-                    ensure!(
-                        client.account_identity() == Some(account.as_str()),
-                        "provider account changed since callable publication"
-                    );
-                } else if let Some(account) = registry.published_accounts.get(profile_id) {
-                    ensure!(
-                        client.account_identity() == Some(account.as_str()),
-                        "provider account changed since callable publication"
-                    );
-                }
-                (
-                    client,
-                    registry.base_config.resolved_model_catalog().clone(),
-                )
-            };
-            // Never hold the global callable lock across provider IO. The publication
-            // slot is detached on replacement, so late results cannot authorize it.
-            let models = client
-                .model_catalog()
-                .await?
-                .context("model catalog unavailable")?;
-            build_published_catalog(provider_kind, &base_catalog, models)
-                .context("model catalog unavailable")
-        }
-        .await;
-        // A settled failure is cached too. Only explicit selection retries it.
-        let _ = publication.set(discovery.ok());
     }
 }
 
