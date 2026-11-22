@@ -20,6 +20,8 @@ mod file_surface;
 mod fork_picker;
 mod history_merge;
 mod interrupt;
+mod issue_flow;
+pub use issue_flow::{IssueControl, IssueControlFuture, IssueControlHandler, IssueSubmitResult};
 mod layout;
 mod login;
 mod login_flow;
@@ -184,6 +186,10 @@ pub struct FileBackedRunConfig {
     pub login_control: Option<LoginControlHandler>,
     /// Host-local `/settings` reset handler supplied by the CLI to the TUI.
     pub settings_control: Option<SettingsControlHandler>,
+    /// Host-local `/issue` submission handler supplied by the CLI to the TUI.
+    pub issue_control: Option<IssueControlHandler>,
+    /// Optional target `owner/repo` slug for `/issue` (defaults to `realmorrisliu/alan`).
+    pub issue_repo: Option<String>,
     /// Automatically enter First-Run Setup Wizard on launch when unconfigured.
     pub auto_setup_on_unconfigured: bool,
     /// Pre-mounted project receipt + canonical Host root hydrated on frame 1.
@@ -212,6 +218,8 @@ impl FileBackedRunConfig {
             initial_attachments: Vec::new(),
             login_control: None,
             settings_control: None,
+            issue_control: None,
+            issue_repo: None,
             auto_setup_on_unconfigured: false,
             initial_project_mount: None,
             connection_configured: None,
@@ -239,6 +247,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     app.settings_available = config.settings_control.is_some();
     app.connection_configured = config.connection_configured;
     app.update_notice = config.update_notice.clone();
+    app.set_issue_repo(config.issue_repo.clone());
     if !config.initial_attachments.is_empty() {
         app.pending_attachments = config.initial_attachments.clone();
     }
@@ -301,6 +310,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let mut grant_read_pending = false;
     let mut active_login_task: Option<(u64, tokio::task::AbortHandle)> = None;
     let mut active_settings_task: Option<(u64, tokio::task::AbortHandle)> = None;
+    let mut active_issue_task: Option<(u64, tokio::task::AbortHandle)> = None;
     settings::maybe_start_first_run_setup(&config, &mut app, &tx, &mut active_login_task);
     let mut draw_result = Ok(());
     loop {
@@ -453,6 +463,14 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             &model_reads,
                         );
                     }
+                    FileBackedEvent::IssueSubmitted { generation, result } => {
+                        issue_flow::handle_issue_completed(
+                            &mut app,
+                            generation,
+                            result,
+                            &mut active_issue_task,
+                        );
+                    }
                     FileBackedEvent::GitStatusUpdated { root, status } => {
                         if app.project_host_root.as_ref() == Some(&root) {
                             app.git_status = status;
@@ -512,27 +530,11 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                                 submitted_at_ms,
                                             });
                                             if let Some(host_root) = app.project_host_root.clone()
-                    && (is_input_completed || (!was_project_mounted))
-                {
-                    git_status::spawn_refresh(host_root.clone(), &mut jobs, &tx);
-                    let refresh_tx = tx.clone();
-                    jobs.spawn(async move {
-                        let candidates = tokio::task::spawn_blocking(move || {
-                            (
-                                crate::build_file_index(&host_root, crate::FILE_INDEX_LIMIT),
-                                host_root,
-                            )
-                        })
-                        .await
-                        .ok();
-                        if let Some((candidates, root)) = candidates {
-                            let _ = refresh_tx
-                                .send(FileBackedEvent::FileIndexUpdated { root, candidates })
-                                .await;
-                        }
-                    });
-                }
-                if follows_root_agent {
+                                                && (is_input_completed || (!was_project_mounted))
+                                            {
+                                                spawn_host_workspace_refresh(host_root, &mut jobs, &tx);
+                                            }
+                                            if follows_root_agent {
                                                 watchers
                                                     .refresh_root_agent_attachment(
                                                     &shell,
@@ -679,79 +681,38 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                     }
                                 }
                                 FileBackedAction::ReadTape => {
-                                    let owner = watchers
-                                        .root_agent_pid
-                                        .and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid))
-                                        .unwrap_or_else(|| app.agent_path.clone());
+                                    let owner = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid)).unwrap_or_else(|| app.agent_path.clone());
                                     tape_view::start(&shell, &mut app, &tx, &owner);
                                 }
-                                FileBackedAction::ReadMan { topic, generation } => {
-                                    man_view::spawn_read(&shell, &tx, topic, generation);
-                                }
-                                FileBackedAction::ReadHistoryCatalog { generation } => {
-                                    resume_picker::spawn_load_catalog(&shell, &tx, generation);
-                                }
-                                FileBackedAction::SwitchRollout { rollout_id } => {
-                                    resume_picker::spawn_switch_rollout(&shell, &tx, rollout_id);
-                                }
-                                FileBackedAction::InspectProjectSummary => {
-                                    summary_view::spawn_inspect(&shell, &tx);
-                                }
-                                FileBackedAction::EditProjectSummary {
-                                    text,
-                                    expected_revision,
-                                } => {
-                                    summary_view::spawn_edit(&shell, &tx, text, expected_revision);
-                                }
-                                FileBackedAction::DeleteProjectSummary { expected_revision } => {
-                                    summary_view::spawn_delete(&shell, &tx, expected_revision);
-                                }
+                                FileBackedAction::ReadMan { topic, generation } => man_view::spawn_read(&shell, &tx, topic, generation),
+                                FileBackedAction::ReadHistoryCatalog { generation } => resume_picker::spawn_load_catalog(&shell, &tx, generation),
+                                FileBackedAction::SwitchRollout { rollout_id } => resume_picker::spawn_switch_rollout(&shell, &tx, rollout_id),
+                                FileBackedAction::InspectProjectSummary => summary_view::spawn_inspect(&shell, &tx),
+                                FileBackedAction::EditProjectSummary { text, expected_revision } => summary_view::spawn_edit(&shell, &tx, text, expected_revision),
+                                FileBackedAction::DeleteProjectSummary { expected_revision } => summary_view::spawn_delete(&shell, &tx, expected_revision),
                                 FileBackedAction::LoginListProviders { generation } => {
-                                    if let Some((_, prev)) = active_login_task.take() {
-                                        prev.abort();
-                                    }
+                                    if let Some((_, prev)) = active_login_task.take() { prev.abort(); }
                                     if let Some(handler) = config.login_control.clone() {
-                                        let abort = login::spawn_list_providers(
-                                            handler,
-                                            tx.clone(),
-                                            generation,
-                                        );
-                                        active_login_task = Some((generation, abort));
+                                        active_login_task = Some((generation, login::spawn_list_providers(handler, tx.clone(), generation)));
                                     }
                                 }
-                                FileBackedAction::LoginSubmit {
-                                    generation,
-                                    submission,
-                                    progress_rx,
-                                } => {
-                                    if let Some((_, prev)) = active_login_task.take() {
-                                        prev.abort();
-                                    }
+                                FileBackedAction::LoginSubmit { generation, submission, progress_rx } => {
+                                    if let Some((_, prev)) = active_login_task.take() { prev.abort(); }
                                     if let Some(handler) = config.login_control.clone() {
-                                        let abort = login::spawn_login_submit(
-                                            handler,
-                                            tx.clone(),
-                                            generation,
-                                            submission,
-                                            progress_rx,
-                                        );
-                                        active_login_task = Some((generation, abort));
+                                        active_login_task = Some((generation, login::spawn_login_submit(handler, tx.clone(), generation, submission, progress_rx)));
                                     }
                                 }
                                 FileBackedAction::CancelLogin => {
-                                    if let Some((_, prev)) = active_login_task.take() {
-                                        prev.abort();
-                                    }
+                                    if let Some((_, prev)) = active_login_task.take() { prev.abort(); }
                                 }
                                 FileBackedAction::SettingsControl { generation, control } => {
-                                    settings::dispatch_settings_action(
-                                        &config,
-                                        &mut app,
-                                        &tx,
-                                        generation,
-                                        control,
-                                        &mut active_settings_task,
-                                    );
+                                    settings::dispatch_settings_action(&config, &mut app, &tx, generation, control, &mut active_settings_task);
+                                }
+                                FileBackedAction::SubmitIssue { generation, repo, title, body } => {
+                                    issue_flow::dispatch_issue_action(&shell, config.issue_control.clone(), &tx, generation, repo, title, body, &mut active_issue_task);
+                                }
+                                FileBackedAction::CancelIssue => {
+                                    if let Some((_, prev)) = active_issue_task.take() { prev.abort(); }
                                 }
                                 FileBackedAction::Suspend => {
                                     reader_stop.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -779,23 +740,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 if let Some(host_root) = app.project_host_root.clone()
                     && (is_input_completed || (!was_project_mounted))
                 {
-                    git_status::spawn_refresh(host_root.clone(), &mut jobs, &tx);
-                    let refresh_tx = tx.clone();
-                    jobs.spawn(async move {
-                        let candidates = tokio::task::spawn_blocking(move || {
-                            (
-                                crate::build_file_index(&host_root, crate::FILE_INDEX_LIMIT),
-                                host_root,
-                            )
-                        })
-                        .await
-                        .ok();
-                        if let Some((candidates, root)) = candidates {
-                            let _ = refresh_tx
-                                .send(FileBackedEvent::FileIndexUpdated { root, candidates })
-                                .await;
-                        }
-                    });
+                    spawn_host_workspace_refresh(host_root, &mut jobs, &tx);
                 }
                 if follows_root_agent {
                     settle_unknown_replaced_input(&mut pending_root_agent_turns, watchers.root_agent_pid, &mut app);
@@ -873,11 +818,14 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         }
     }
 
-    if let Some((_, prev)) = active_login_task.take() {
-        prev.abort();
-    }
-    if let Some((_, prev)) = active_settings_task.take() {
-        prev.abort();
+    for task in [
+        &mut active_login_task,
+        &mut active_settings_task,
+        &mut active_issue_task,
+    ] {
+        if let Some((_, prev)) = task.take() {
+            prev.abort();
+        }
     }
     jobs.abort_all();
     while jobs.join_next().await.is_some() {}
@@ -924,6 +872,30 @@ fn spawn_control_write(
                 result,
             })
             .await;
+    });
+}
+
+fn spawn_host_workspace_refresh(
+    host_root: PathBuf,
+    jobs: &mut tokio::task::JoinSet<()>,
+    tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
+) {
+    git_status::spawn_refresh(host_root.clone(), jobs, tx);
+    let refresh_tx = tx.clone();
+    jobs.spawn(async move {
+        let candidates = tokio::task::spawn_blocking(move || {
+            (
+                crate::build_file_index(&host_root, crate::FILE_INDEX_LIMIT),
+                host_root,
+            )
+        })
+        .await
+        .ok();
+        if let Some((candidates, root)) = candidates {
+            let _ = refresh_tx
+                .send(FileBackedEvent::FileIndexUpdated { root, candidates })
+                .await;
+        }
     });
 }
 

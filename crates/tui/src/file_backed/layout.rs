@@ -128,6 +128,10 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
         super::resume_picker::draw(frame, app);
         return;
     }
+    if app.issue.is_active() {
+        super::issue_flow::draw(frame, app);
+        return;
+    }
     let mut lines = history_lines(app, width);
     let history_height = wrapped_line_count(&lines, width);
     let (mut live_lines, prompt_start) = live_region_lines_at(app, width, now_ms);
@@ -510,7 +514,7 @@ pub(super) fn base_viewport_height(
     terminal_height: usize,
 ) -> u16 {
     // Details are stable full-screen content, never transient candidates.
-    if app.modal.active || app.resume_picker.active {
+    if app.modal.active || app.resume_picker.active || app.issue.is_active() {
         return terminal_height.max(1).min(u16::MAX as usize) as u16;
     }
     wrapped_line_count(&history_lines(app, width), width)
@@ -524,7 +528,7 @@ pub(super) fn inline_viewport_height(
     width: usize,
     terminal_height: usize,
 ) -> u16 {
-    if app.modal.active || app.resume_picker.active {
+    if app.modal.active || app.resume_picker.active || app.issue.is_active() {
         return terminal_height.max(1).min(u16::MAX as usize) as u16;
     }
     wrapped_line_count(&history_lines(app, width), width)

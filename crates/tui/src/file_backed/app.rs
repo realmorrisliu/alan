@@ -48,6 +48,8 @@ pub(super) struct FileBackedApp {
     pub(super) login_available: bool,
     pub(super) settings: super::settings_flow::SettingsFlowState,
     pub(super) settings_available: bool,
+    pub(super) issue: super::issue_flow::IssueFlowState,
+    pub(super) issue_repo: String,
     pub(super) pending_login_submission: Option<super::login::LoginSubmission>,
     pub(super) connection_configured: Option<bool>,
     pub(super) turn_prompts: Vec<(String, bool)>,
@@ -100,6 +102,7 @@ pub(super) struct FileBackedApp {
     pub(super) expand_thinking: bool,
     pub(super) theme: crate::theme::Theme,
     pub(super) notice: Option<Notice>,
+    pub(super) last_diagnostic_notice: Option<String>,
     pub(super) expected_terminal_error: Option<String>,
     pub(super) should_quit: bool,
     /// The pure state machine reconciling the optimistic `io/output` stream
@@ -129,6 +132,7 @@ impl FileBackedApp {
         Self {
             tape_consumed_offset: 0,
             notice: None,
+            last_diagnostic_notice: None,
             expected_terminal_error: None,
             agent_path,
             model_chooser: model_control::ModelChooser::default(),
@@ -138,6 +142,8 @@ impl FileBackedApp {
             login_available: false,
             settings: super::settings_flow::SettingsFlowState::default(),
             settings_available: false,
+            issue: super::issue_flow::IssueFlowState::default(),
+            issue_repo: super::issue_flow::DEFAULT_ISSUE_REPO.to_string(),
             pending_login_submission: None,
             connection_configured: None,
             turn_prompts: Vec::new(),
@@ -287,6 +293,10 @@ impl FileBackedApp {
                 let (_, next_action) = self.apply_settings_result(generation, result);
                 next_action
             }
+            FileBackedEvent::IssueSubmitted { generation, result } => {
+                self.apply_issue_submit_result(generation, result);
+                None
+            }
             FileBackedEvent::ActionDetails {
                 path,
                 generation,
@@ -314,6 +324,12 @@ impl FileBackedApp {
                 None
             }
             FileBackedEvent::Terminal(TerminalEvent::Key(key)) => {
+                if let Some(notice) = &self.notice
+                    && (notice.kind != UiNoticeKind::None || notice.runtime_owned)
+                    && !notice.trim().is_empty()
+                {
+                    self.last_diagnostic_notice = Some(notice.to_string());
+                }
                 self.handle_key_with_pending_submission(key, has_pending_submission)
             }
             FileBackedEvent::Terminal(TerminalEvent::Paste(text)) => {
@@ -321,11 +337,16 @@ impl FileBackedApp {
                     self.login_paste(&text);
                     return None;
                 }
+                if self.issue.is_editing() {
+                    self.issue_paste(&text);
+                    return None;
+                }
                 if self.modal.active
                     || self.resume_picker.active
                     || self.fork_picker.active
                     || self.login.is_active()
                     || self.settings.is_active()
+                    || self.issue.is_active()
                 {
                     return None;
                 }
@@ -386,6 +407,28 @@ impl FileBackedApp {
                 None
             }
             FileBackedEvent::Ui(event) => {
+                match &event {
+                    UiEvent::Notice { snapshot }
+                        if snapshot.kind != UiNoticeKind::None
+                            && !snapshot.message.trim().is_empty() =>
+                    {
+                        self.last_diagnostic_notice =
+                            Some(notice::humanize_protocol_message(&snapshot.message));
+                    }
+                    UiEvent::Error { message, .. } if !message.trim().is_empty() => {
+                        self.last_diagnostic_notice =
+                            Some(notice::humanize_protocol_message(message));
+                    }
+                    UiEvent::InputCompleted {
+                        status: UiInputStatus::Failed,
+                        error: Some(message),
+                        ..
+                    } if !message.trim().is_empty() => {
+                        self.last_diagnostic_notice =
+                            Some(notice::humanize_protocol_message(message));
+                    }
+                    _ => {}
+                }
                 self.apply_ui_event(event);
                 None
             }
@@ -421,6 +464,7 @@ impl FileBackedApp {
             | FileBackedEvent::RequestsChanged
             | FileBackedEvent::ActionsChanged { .. } => None,
             FileBackedEvent::Error(message) | FileBackedEvent::TerminalError(message) => {
+                self.last_diagnostic_notice = Some(notice::humanize_protocol_message(&message));
                 self.push_error(message);
                 None
             }
@@ -454,6 +498,9 @@ impl FileBackedApp {
         }
         if self.settings.is_active() {
             return self.settings_key(key);
+        }
+        if self.issue.is_active() {
+            return self.issue_key(key);
         }
         if self.modal_key(key, has_pending_submission) {
             return None;
@@ -819,7 +866,7 @@ impl FileBackedApp {
         viewport_width: usize,
         viewport_height: usize,
     ) -> Vec<Line<'static>> {
-        if self.modal.active {
+        if self.modal.active || self.resume_picker.active || self.issue.is_active() {
             return Vec::new();
         }
         let opts = self.render_opts(viewport_width);

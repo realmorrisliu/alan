@@ -54,6 +54,13 @@ pub(in crate::file_backed) enum FileBackedAction {
         generation: u64,
         control: super::super::settings::SettingsControl,
     },
+    SubmitIssue {
+        generation: u64,
+        repo: String,
+        title: String,
+        body: String,
+    },
+    CancelIssue,
     Suspend,
     Interrupt,
     Quit,
@@ -102,6 +109,10 @@ pub(in crate::file_backed) enum FileBackedEvent {
     SettingsCompleted {
         generation: u64,
         result: Result<super::super::settings::SettingsResult, String>,
+    },
+    IssueSubmitted {
+        generation: u64,
+        result: Result<super::super::issue_flow::IssueSubmissionOutcome, String>,
     },
     ActionDetails {
         path: String,
