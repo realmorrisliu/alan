@@ -301,11 +301,15 @@ fn run_welcome_case(extra_env: &[(&str, &OsStr)], expect_banner: bool) -> Result
     let reader = spawn_reader(master_read, master_write.clone(), screen.clone());
 
     let screen_out = screen.wait_for("empty startup frame", Duration::from_secs(6), |s| {
-        s.contains("seatbelt")
+        s.contains("Select project")
             && s.contains(": ")
             && (!expect_banner
                 || (s.contains("gpt-5.4") && s.contains("ALAN(1) · alan9") && s.contains("(\\_/)")))
     })?;
+    assert!(
+        !screen_out.contains("seatbelt") && !screen_out.contains("os-sandbox"),
+        "welcome screen leaked raw sandbox label:\n{screen_out}"
+    );
     if !expect_banner {
         assert!(!screen_out.contains("ALAN(1) · alan9"), "{screen_out}");
         assert!(!screen_out.contains("(\\_/)"), "{screen_out}");

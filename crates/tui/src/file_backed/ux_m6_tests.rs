@@ -366,17 +366,13 @@ fn shift_tab_and_permissions_cycle_trust_posture_and_respect_unsandboxed_and_for
 
     let first = app
         .handle_key(key(KeyCode::BackTab, KeyModifiers::SHIFT))
-        .expect("Shift+Tab switches to confined-trusted");
+        .expect("Shift+Tab switches to auto-approve");
     assert!(matches!(
         first,
         FileBackedAction::MachineCtl { ref command, .. } if command == "trust-posture confined-trusted"
     ));
-    assert_eq!(app.trust_posture_label.as_deref(), Some("confined/trusted"));
-    assert!(
-        app.context_line(100)
-            .to_string()
-            .contains("confined/trusted")
-    );
+    assert_eq!(app.trust_posture_label.as_deref(), Some("auto-approve"));
+    assert!(app.context_line(100).to_string().contains("auto-approve"));
 
     let second = app
         .handle_key(key(KeyCode::Tab, KeyModifiers::SHIFT))
@@ -385,17 +381,33 @@ fn shift_tab_and_permissions_cycle_trust_posture_and_respect_unsandboxed_and_for
         second,
         FileBackedAction::MachineCtl { ref command, .. } if command == "trust-posture governed"
     ));
-    assert_eq!(app.trust_posture_label.as_deref(), Some("governed"));
-    assert!(app.context_line(100).to_string().contains("governed"));
+    assert_eq!(app.trust_posture_label.as_deref(), None);
+    let governed_ctx = app.context_line(100).to_string();
+    assert!(!governed_ctx.contains("auto-approve"), "{governed_ctx}");
+    assert!(!governed_ctx.contains("seatbelt"), "{governed_ctx}");
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap_or("")
+            .contains("Permissions: governed")
+    );
 
-    // /permissions explicit subcommands work too.
+    // /permissions explicit subcommands work cleanly (including legacy alias).
+    assert!(matches!(
+        app.handle_command("/permissions auto-approve"),
+        Some(FileBackedAction::MachineCtl { ref command, .. }) if command == "trust-posture confined-trusted"
+    ));
+    assert!(matches!(
+        app.handle_command("/permissions governed"),
+        Some(FileBackedAction::MachineCtl { ref command, .. }) if command == "trust-posture governed"
+    ));
     assert!(matches!(
         app.handle_command("/permissions trusted"),
         Some(FileBackedAction::MachineCtl { ref command, .. }) if command == "trust-posture confined-trusted"
     ));
 
     // --unsafe-host-account blocks runtime posture switching cleanly.
-    app.trust_posture_label = Some("UNSANDBOXED host-account".into());
+    app.trust_posture_label = Some("unsandboxed".into());
     assert!(
         app.handle_key(key(KeyCode::BackTab, KeyModifiers::NONE))
             .is_none()

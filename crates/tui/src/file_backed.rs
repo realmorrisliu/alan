@@ -173,10 +173,10 @@ pub struct FileBackedRunConfig {
     pub project_candidate: Option<PathBuf>,
     /// Host-local project grant/revoke control for this Alan invocation.
     pub project_control: Option<ProjectControlHandler>,
-    /// Active OS sandbox backend name displayed in the status bar when supplied.
+    /// Active OS sandbox backend name used for diagnostics and access badge gating.
     pub sandbox_backend: Option<String>,
-    /// Optional explicit invocation trust posture badge (for example `"confined/trusted"`
-    /// or `"UNSANDBOXED host-account"`). `None` keeps standard governed status display.
+    /// Optional explicit invocation permission/trust badge (for example `"auto-approve"`
+    /// or `"unsandboxed"`). `None` keeps standard governed status display.
     pub trust_posture_label: Option<String>,
     /// Optional image/content attachments queued for the first user prompt (from `--image`).
     pub initial_attachments: Vec<alan_agent_protocol::ContentPart>,

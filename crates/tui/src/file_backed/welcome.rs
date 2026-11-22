@@ -131,7 +131,7 @@ pub(crate) fn render_banner_lines(
             Line::from(spans)
         } else {
             let summary = clamp_width(
-                &format!("{} · {} · {}", banner.project, banner.model, banner.sandbox),
+                &format!("{} · {}", banner.project, banner.model),
                 right_budget,
             );
             Line::from(vec![
@@ -251,14 +251,22 @@ mod tests {
 
         let default_banner = from_app(&app);
         assert!(default_banner.update_notice.is_none());
-        assert_eq!(
-            render_banner_lines(&default_banner, 80, Theme::midnight()).len(),
-            4
-        );
-        assert_eq!(
-            render_banner_lines(&default_banner, 48, Theme::midnight()).len(),
-            2
-        );
+        let wide = render_banner_lines(&default_banner, 80, Theme::midnight());
+        assert_eq!(wide.len(), 4);
+        let wide_str: String = wide
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!wide_str.contains("seatbelt") && !wide_str.contains("os-sandbox"));
+        let narrow = render_banner_lines(&default_banner, 48, Theme::midnight());
+        assert_eq!(narrow.len(), 2);
+        let narrow_str: String = narrow
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!narrow_str.contains("seatbelt") && !narrow_str.contains("os-sandbox"));
 
         app.update_notice = Some("Update available: v0.1.1 — run 'alan update'\x1b".into());
         let with_notice = from_app(&app);

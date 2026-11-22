@@ -14,7 +14,7 @@ use crate::theme::Theme;
 #[test]
 fn trust_posture_badges_render_distinctly_in_context_line_and_welcome_banner() {
     let mut confined = FileBackedApp::new("/agent/root".to_string());
-    confined.trust_posture_label = Some("confined/trusted".to_string());
+    confined.trust_posture_label = Some("auto-approve".to_string());
     confined.set_effective_model(Some("gpt-5.4".to_string()));
     let confined_line = confined.context_line(80);
     let confined_text: String = confined_line
@@ -22,38 +22,32 @@ fn trust_posture_badges_render_distinctly_in_context_line_and_welcome_banner() {
         .iter()
         .map(|s| s.content.as_ref())
         .collect();
-    assert!(
-        confined_text.contains("confined/trusted"),
-        "{confined_text}"
-    );
+    assert!(confined_text.contains("auto-approve"), "{confined_text}");
     let confined_banner = render_banner_lines(&from_app(&confined), 80, Theme::midnight())
         .into_iter()
         .map(|l| l.to_string())
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        confined_banner.contains("confined/trusted"),
+        confined_banner.contains("auto-approve"),
         "{confined_banner}"
     );
 
     let mut unsafe_app = FileBackedApp::new("/agent/root".to_string());
-    unsafe_app.trust_posture_label = Some("UNSANDBOXED host-account".to_string());
+    unsafe_app.trust_posture_label = Some("unsandboxed".to_string());
     unsafe_app.set_effective_model(Some("gpt-5.4".to_string()));
-    // Even on narrower context lines, UNSANDBOXED posture stays visible and bold.
+    // Even on narrower context lines, unsandboxed posture stays visible and bold.
     let unsafe_line = unsafe_app.context_line(52);
     let unsafe_text: String = unsafe_line
         .spans
         .iter()
         .map(|s| s.content.as_ref())
         .collect();
-    assert!(
-        unsafe_text.contains("UNSANDBOXED host-account"),
-        "{unsafe_text}"
-    );
+    assert!(unsafe_text.contains("unsandboxed"), "{unsafe_text}");
     let badge_span = unsafe_line
         .spans
         .iter()
-        .find(|s| s.content.contains("UNSANDBOXED"))
+        .find(|s| s.content.contains("unsandboxed"))
         .expect("unsandboxed span present");
     assert!(badge_span.style.add_modifier.contains(Modifier::BOLD));
     assert_eq!(badge_span.style.fg, Some(Theme::midnight().status_block));
@@ -66,10 +60,7 @@ fn trust_posture_badges_render_distinctly_in_context_line_and_welcome_banner() {
         .iter()
         .map(|s| s.content.as_ref())
         .collect();
-    assert!(
-        dumb_text.contains("! UNSANDBOXED host-account"),
-        "{dumb_text}"
-    );
+    assert!(dumb_text.contains("! unsandboxed"), "{dumb_text}");
 }
 
 #[test]
