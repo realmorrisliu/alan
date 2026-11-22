@@ -1,0 +1,4 @@
+schema_version = 1
+kind = "skill"
+version = "0.1.0"
+description = "Bounded human-gated release-preparation workflow: inspect commits and PRs since previous tag, draft version bump and changelog in an isolated worktree, verify release packaging, open a release PR without autonomous merge/tag/publish, and document post-release alan update close-out."

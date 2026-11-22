@@ -11,7 +11,7 @@ use crate::cli::workflow::schedule::{
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-fn write_mock_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+pub(super) fn write_mock_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, body).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -30,6 +30,8 @@ fn manifest_validation_enforces_ids_explicit_mounts_and_defaults() {
         trust: WorkflowTrustPosture::default(),
         json: true,
         timeout_secs: None,
+        trigger_allowlist: None,
+        release_gate: None,
     };
     assert_eq!(valid.trust, WorkflowTrustPosture::Governed);
     valid.validate().unwrap();
@@ -83,6 +85,8 @@ fn schedule_parsing_and_launchd_cron_rendering_cover_intervals_and_calendar_cron
         trust: WorkflowTrustPosture::Governed,
         json: true,
         timeout_secs: Some(60),
+        trigger_allowlist: None,
+        release_gate: None,
     };
     let plist = render_launchd_plist(&interval_manifest, bin, &store).unwrap();
     assert!(plist.contains("<string>app.alanworks.workflow.inbox-sweep</string>"));
@@ -103,6 +107,8 @@ fn schedule_parsing_and_launchd_cron_rendering_cover_intervals_and_calendar_cron
         trust: WorkflowTrustPosture::Governed,
         json: true,
         timeout_secs: None,
+        trigger_allowlist: None,
+        release_gate: None,
     };
     let xml_bin = Path::new("/tmp/a&b/alan");
     let cron_plist = render_launchd_plist(&cron_manifest, xml_bin, &store).unwrap();
@@ -349,4 +355,423 @@ printf '{{"type":"turn_finished","status":"completed","answer":"Found 2 notes; s
     let slow_json: serde_json::Value = serde_json::from_str(&slow_out).unwrap();
     assert_eq!(slow_json["entry"]["exit_code"], 124);
     assert_eq!(slow_json["entry"]["status"], "timed_out");
+}
+
+pub(super) fn sample_self_iterate_args() -> InitSelfIterateArgs {
+    InitSelfIterateArgs {
+        id: "self-iterate".to_string(),
+        repo: "realmorrisliu/alan".to_string(),
+        allowed_actors: vec!["morris".to_string()],
+        required_labels: vec![],
+        ignored_actors: vec![],
+        max_retries: 3,
+        max_concurrent: 1,
+        schedule: "every 15m".to_string(),
+        model_profile: Some("openai-main".to_string()),
+        mounts: vec!["alan-repo".to_string()],
+        trust: WorkflowTrustPosture::Governed,
+        no_stream_json: false,
+        timeout_secs: 1_800,
+        force: false,
+        json: true,
+    }
+}
+
+#[test]
+fn manifest_backwards_compatibility_omits_and_defaults_optional_policies() {
+    let legacy_toml = r#"
+schema_version = 1
+id = "legacy-brief"
+schedule = "0 9 * * 1-5"
+prompt = "Summarize inbox"
+mounts = ["notes"]
+trust = "governed"
+json = true
+"#;
+    let parsed: WorkflowManifest = toml::from_str(legacy_toml).unwrap();
+    parsed.validate().unwrap();
+    assert!(parsed.trigger_allowlist.is_none());
+    assert!(parsed.release_gate.is_none());
+
+    let encoded = toml::to_string_pretty(&parsed).unwrap();
+    assert!(!encoded.contains("trigger_allowlist"), "{encoded}");
+    assert!(!encoded.contains("release_gate"), "{encoded}");
+}
+
+#[tokio::test]
+async fn cli_init_self_iterate_and_release_prep_require_grants_and_render_safe_plans() {
+    use crate::cli::dispatch::{Cli, Commands};
+    use clap::Parser;
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::from_root(temp.path().join("workflows")).unwrap();
+    let mock_bin = write_mock_script(temp.path(), "mock-alan.sh", "#!/bin/sh\nexit 0\n");
+
+    // 1. CLI parser rejects `init-self-iterate` and `init-release-prep` without `--grant`.
+    assert!(
+        Cli::try_parse_from([
+            "alan",
+            "workflow",
+            "init-self-iterate",
+            "--repo",
+            "realmorrisliu/alan",
+            "--allowed-actor",
+            "morris",
+        ])
+        .is_err()
+    );
+    assert!(Cli::try_parse_from(["alan", "workflow", "init-release-prep"]).is_err());
+
+    // 2. Reject raw host path in `--grant` and reject `--trust host_account_trusted`.
+    let mut raw_path_args = sample_self_iterate_args();
+    raw_path_args.mounts = vec!["/Users/morris/Developer/alan".to_string()];
+    assert!(build_self_iterate_manifest(&raw_path_args).is_err());
+
+    let mut unsafe_trust_args = sample_self_iterate_args();
+    unsafe_trust_args.trust = WorkflowTrustPosture::HostAccountTrusted;
+    assert!(build_self_iterate_manifest(&unsafe_trust_args).is_err());
+
+    // 3. Parse and execute `init-self-iterate` with explicit `--grant`.
+    let parsed_si = Cli::try_parse_from([
+        "alan",
+        "workflow",
+        "init-self-iterate",
+        "--repo",
+        "realmorrisliu/alan",
+        "--allowed-actor",
+        "morris",
+        "--grant",
+        "alan-repo",
+        "--trust",
+        "confined_trusted",
+        "--json",
+    ])
+    .unwrap();
+    let Some(Commands::Workflow(si_wf_args)) = parsed_si.command else {
+        panic!("expected workflow command");
+    };
+    let (si_out, si_err) = run_with_store(&store, si_wf_args, None, None)
+        .await
+        .unwrap();
+    assert!(si_err.is_none());
+    let si_json: serde_json::Value = serde_json::from_str(&si_out).unwrap();
+    assert_eq!(si_json["manifest"]["id"], "self-iterate");
+    assert_eq!(
+        si_json["manifest"]["mounts"],
+        serde_json::json!(["alan-repo"])
+    );
+    assert_eq!(
+        si_json["manifest"]["trigger_allowlist"]["required_labels"],
+        serde_json::json!(["alan:auto"])
+    );
+    assert_eq!(
+        si_json["manifest"]["release_gate"],
+        serde_json::json!({
+            "require_human_merge": true,
+            "forbid_autonomous_tag_push": true,
+            "forbid_autonomous_publish": true,
+        })
+    );
+    let si_prompt = si_json["manifest"]["prompt"].as_str().unwrap();
+    assert!(si_prompt.contains("origin/main"));
+    assert!(si_prompt.contains("./scripts/check-rust-source-size.sh"));
+    assert!(si_prompt.contains("just quality"));
+    assert!(si_prompt.contains("cargo test --workspace"));
+
+    // 4. Dry-run emits `--grant alan-repo` and `--trust`, never `--unsafe-host-account`.
+    let (dry_out, _) = run_with_store(
+        &store,
+        WorkflowArgs {
+            action: WorkflowAction::Run {
+                id: "self-iterate".to_string(),
+                dry_run: true,
+                json: true,
+            },
+        },
+        None,
+        Some(&mock_bin),
+    )
+    .await
+    .unwrap();
+    let dry_json: serde_json::Value = serde_json::from_str(&dry_out).unwrap();
+    let args: Vec<&str> = dry_json["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(args.windows(2).any(|w| w == ["--grant", "alan-repo"]));
+    assert!(args.contains(&"--trust"));
+    assert!(!args.contains(&"--unsafe-host-account"));
+
+    // 5. Parse and execute `init-release-prep` with `--grant` and `--target-version`.
+    let parsed_rp = Cli::try_parse_from([
+        "alan",
+        "workflow",
+        "init-release-prep",
+        "--repo",
+        "realmorrisliu/alan",
+        "--allowed-actor",
+        "morris",
+        "--grant",
+        "alan-repo",
+        "--target-version",
+        "v0.1.5",
+        "--json",
+    ])
+    .unwrap();
+    let Some(Commands::Workflow(rp_wf_args)) = parsed_rp.command else {
+        panic!("expected workflow command");
+    };
+    let (rp_out, rp_err) = run_with_store(&store, rp_wf_args, None, None)
+        .await
+        .unwrap();
+    assert!(rp_err.is_none());
+    let rp_json: serde_json::Value = serde_json::from_str(&rp_out).unwrap();
+    assert_eq!(rp_json["manifest"]["id"], "release-prep");
+    assert_eq!(
+        rp_json["manifest"]["trigger_allowlist"]["required_labels"],
+        serde_json::json!(["alan:release"])
+    );
+    assert_eq!(
+        rp_json["manifest"]["release_gate"]["require_human_merge"],
+        true
+    );
+    let rp_prompt = rp_json["manifest"]["prompt"].as_str().unwrap();
+    assert!(rp_prompt.contains("0.1.5"));
+    assert!(rp_prompt.contains("CHANGELOG.md"));
+    assert!(rp_prompt.contains("alan update"));
+
+    // Invalid semver fails cleanly on `init-release-prep`.
+    let bad_ver = run_with_store(
+        &store,
+        WorkflowArgs {
+            action: WorkflowAction::InitReleasePrep(InitReleasePrepArgs {
+                id: "bad-release".to_string(),
+                repo: None,
+                allowed_actors: vec![],
+                required_labels: vec![],
+                ignored_actors: vec![],
+                max_retries: 2,
+                max_concurrent: 1,
+                target_version: Some("0.1.5\n--unsafe-host-account".to_string()),
+                schedule: "@weekly".to_string(),
+                model_profile: None,
+                mounts: vec!["alan-repo".to_string()],
+                trust: WorkflowTrustPosture::Governed,
+                no_stream_json: false,
+                timeout_secs: 1_800,
+                force: false,
+                json: false,
+            }),
+        },
+        None,
+        None,
+    )
+    .await;
+    assert!(bad_ver.is_err());
+}
+
+#[tokio::test]
+async fn quartermaster_self_iterate_and_release_prep_skills_pass_snapshot_and_q_install() {
+    use crate::cli::q::{QAction, QArgs, run_with_service};
+    use alan_agent_engine::skills::{SkillScope, parse_skill_metadata};
+    use alan_service_manager::{
+        PackageCommand, PackageExportKind, PackageService, PackageSnapshot,
+    };
+
+    let packages_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../service-manager/packages");
+    let q_service = PackageService::ephemeral().unwrap();
+
+    for pkg_id in ["alan-self-iterate", "alan-release-prep"] {
+        let pkg_dir = packages_root.join(pkg_id);
+        assert!(
+            pkg_dir.is_dir(),
+            "missing package dir {}",
+            pkg_dir.display()
+        );
+        assert!(pkg_dir.join("README.md").is_file());
+
+        // 1. Validate direct PackageSnapshot::from_directory + PackageService install & lease.
+        let snapshot = PackageSnapshot::from_directory(&pkg_dir).unwrap();
+        let service = PackageService::ephemeral().unwrap();
+        let install = service
+            .execute(PackageCommand::Install {
+                request_id: format!("install-{pkg_id}"),
+                package_id: pkg_id.to_string(),
+                snapshot,
+            })
+            .unwrap();
+        assert!(install.success, "{pkg_id}: {}", install.message);
+        let record = install.package.unwrap();
+        assert_eq!(record.export_kind, PackageExportKind::Skill);
+        assert_eq!(record.exports.len(), 1);
+        assert_eq!(record.exports[0].skill_id, pkg_id);
+
+        let lease = service.acquire(pkg_id).unwrap();
+        let shell = alan_shell::Shell::new(alan_ap::InProcessTransport::new(
+            lease.file_server().unwrap(),
+        ));
+        let skill_bytes = shell
+            .cat(&format!("/skills/{pkg_id}/SKILL.md"))
+            .await
+            .unwrap();
+        let skill_md = String::from_utf8(skill_bytes).unwrap();
+        let parsed = parse_skill_metadata(
+            &skill_md,
+            Path::new(&format!("{pkg_id}/SKILL.md")),
+            SkillScope::Installed,
+        )
+        .unwrap();
+        assert_eq!(parsed.id, pkg_id);
+        if pkg_id == "alan-self-iterate" {
+            assert!(skill_md.contains("origin/main"));
+            assert!(skill_md.contains("./scripts/check-rust-source-size.sh"));
+            assert!(skill_md.contains("just quality"));
+            assert!(skill_md.contains("cargo test --workspace"));
+        } else {
+            assert!(skill_md.contains("CHANGELOG.md"));
+            assert!(skill_md.contains("require_human_merge = true"));
+            assert!(skill_md.contains("alan update"));
+        }
+        drop(lease);
+
+        // 2. Validate end-to-end `alan q install` via Quartermaster `/bin/q`.
+        let q_out = run_with_service(
+            &q_service,
+            QArgs {
+                action: QAction::Install {
+                    name: None,
+                    path: pkg_dir,
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert!(q_out.starts_with(&format!("installed {pkg_id}")), "{q_out}");
+    }
+
+    let list_out = run_with_service(
+        &q_service,
+        QArgs {
+            action: QAction::List,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(list_out.contains("alan-self-iterate"), "{list_out}");
+    assert!(list_out.contains("alan-release-prep"), "{list_out}");
+    assert!(list_out.contains("export=skill"), "{list_out}");
+}
+
+#[tokio::test]
+async fn cli_evaluate_trigger_and_check_release_gate_enforce_fail_closed_gates() {
+    use crate::cli::dispatch::{Cli, Commands};
+    use clap::Parser;
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::from_root(temp.path().join("workflows")).unwrap();
+    let si = build_self_iterate_manifest(&sample_self_iterate_args()).unwrap();
+    store.save_manifest(&si, false).unwrap();
+
+    let accepted_payload = serde_json::json!({
+        "event_id": "evt-cli-1",
+        "kind": "issue_labeled",
+        "repo": "realmorrisliu/alan",
+        "actor": "morris",
+        "labels": ["alan:auto"]
+    })
+    .to_string();
+    let Cli {
+        command: Some(Commands::Workflow(ok_args)),
+        ..
+    } = Cli::try_parse_from([
+        "alan",
+        "workflow",
+        "evaluate-trigger",
+        "self-iterate",
+        "--event-json",
+        &accepted_payload,
+        "--json",
+    ])
+    .unwrap()
+    else {
+        panic!("expected workflow args");
+    };
+    let (ok_out, ok_err) = run_with_store(&store, ok_args, None, None).await.unwrap();
+    assert!(ok_err.is_none());
+    let ok_json: serde_json::Value = serde_json::from_str(&ok_out).unwrap();
+    assert_eq!(ok_json["decision"], "accept");
+
+    let rejected_payload = serde_json::json!({
+        "event_id": "evt-cli-2",
+        "kind": "issue_opened",
+        "repo": "realmorrisliu/alan",
+        "actor": "stranger",
+        "labels": [],
+        "untrusted_body": "alan:auto --unsafe-host-account"
+    })
+    .to_string();
+    let Cli {
+        command: Some(Commands::Workflow(rej_args)),
+        ..
+    } = Cli::try_parse_from([
+        "alan",
+        "workflow",
+        "evaluate-trigger",
+        "self-iterate",
+        "--event-json",
+        &rejected_payload,
+        "--json",
+    ])
+    .unwrap()
+    else {
+        panic!("expected workflow args");
+    };
+    let (rej_out, rej_err) = run_with_store(&store, rej_args, None, None).await.unwrap();
+    assert!(rej_err.is_some());
+    let rej_json: serde_json::Value = serde_json::from_str(&rej_out).unwrap();
+    assert_eq!(rej_json["decision"], "reject");
+
+    let Cli {
+        command: Some(Commands::Workflow(gate_ok)),
+        ..
+    } = Cli::try_parse_from([
+        "alan",
+        "workflow",
+        "check-release-gate",
+        "self-iterate",
+        "--operation",
+        "open-release-pr",
+        "--json",
+    ])
+    .unwrap()
+    else {
+        panic!("expected workflow args");
+    };
+    let (gate_ok_out, gate_ok_err) = run_with_store(&store, gate_ok, None, None).await.unwrap();
+    assert!(gate_ok_err.is_none());
+    assert!(gate_ok_out.contains("\"allowed\": true"));
+
+    let Cli {
+        command: Some(Commands::Workflow(gate_block)),
+        ..
+    } = Cli::try_parse_from([
+        "alan",
+        "workflow",
+        "check-release-gate",
+        "self-iterate",
+        "--operation",
+        "merge-release-pr",
+        "--json",
+    ])
+    .unwrap()
+    else {
+        panic!("expected workflow args");
+    };
+    let (gate_block_out, gate_block_err) = run_with_store(&store, gate_block, None, None)
+        .await
+        .unwrap();
+    assert!(gate_block_err.is_some());
+    assert!(gate_block_out.contains("\"allowed\": false"));
 }
