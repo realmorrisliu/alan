@@ -11,6 +11,11 @@ use serde::{Deserialize, Serialize};
 pub(crate) const SUPPORTED_MANIFEST_VERSION: u16 = 1;
 pub(crate) const DEFAULT_TIMEOUT_SECS: u64 = 300;
 pub(crate) const MAX_TIMEOUT_SECS: u64 = 86_400;
+pub(crate) const DEFAULT_TRIGGER_MAX_RETRIES: u32 = 3;
+pub(crate) const MAX_TRIGGER_RETRIES: u32 = 20;
+pub(crate) const DEFAULT_TRIGGER_MAX_CONCURRENT: u32 = 1;
+pub(crate) const MAX_TRIGGER_CONCURRENT: u32 = 16;
+const MAX_ALLOWLIST_ENTRIES: usize = 64;
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 const MAX_PROMPT_BYTES: usize = 32 * 1024;
 
@@ -49,6 +54,126 @@ impl WorkflowTrustPosture {
     }
 }
 
+/// Control-plane allowlist governing autonomous triggers for self-iteration workflows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerAllowlist {
+    /// Canonical GitHub repository slug (`owner/repo`).
+    pub repo: String,
+    /// GitHub actor logins explicitly allowed to trigger autonomous runs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_actors: Vec<String>,
+    /// Labels required on the issue or PR before dispatch (for example `["alan:auto"]`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_labels: Vec<String>,
+    /// Self or bot actor logins always suppressed to prevent feedback loops.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignored_actors: Vec<String>,
+    /// Maximum bounded retry attempts per item before escalating to human review.
+    #[serde(default = "default_trigger_max_retries")]
+    pub max_retries: u32,
+    /// Maximum concurrent autonomous worker processes allowed for this trigger.
+    #[serde(default = "default_trigger_max_concurrent")]
+    pub max_concurrent: u32,
+}
+
+const fn default_trigger_max_retries() -> u32 {
+    DEFAULT_TRIGGER_MAX_RETRIES
+}
+
+const fn default_trigger_max_concurrent() -> u32 {
+    DEFAULT_TRIGGER_MAX_CONCURRENT
+}
+
+impl TriggerAllowlist {
+    /// Validate repository slug, explicit actor/label lists, and bounded concurrency/retry caps.
+    pub fn validate(&self) -> Result<()> {
+        validate_github_repo(&self.repo)?;
+
+        ensure!(
+            !self.allowed_actors.is_empty(),
+            "trigger_allowlist.allowed_actors must contain at least one explicit actor login"
+        );
+        validate_actor_list(&self.allowed_actors, "trigger_allowlist.allowed_actors")?;
+
+        ensure!(
+            !self.required_labels.is_empty(),
+            "trigger_allowlist.required_labels must contain at least one explicit label (for example `alan:auto`)"
+        );
+        ensure!(
+            self.required_labels.len() <= MAX_ALLOWLIST_ENTRIES,
+            "trigger_allowlist.required_labels exceeds {MAX_ALLOWLIST_ENTRIES} entries"
+        );
+        let mut seen_labels = std::collections::BTreeSet::new();
+        for label in &self.required_labels {
+            validate_label_name(label)?;
+            let key = label.to_ascii_lowercase();
+            ensure!(
+                seen_labels.insert(key),
+                "duplicate label `{label}` in trigger_allowlist.required_labels"
+            );
+        }
+
+        validate_actor_list(&self.ignored_actors, "trigger_allowlist.ignored_actors")?;
+
+        ensure!(
+            self.max_retries <= MAX_TRIGGER_RETRIES,
+            "trigger_allowlist.max_retries must be <= {MAX_TRIGGER_RETRIES}"
+        );
+        ensure!(
+            (1..=MAX_TRIGGER_CONCURRENT).contains(&self.max_concurrent),
+            "trigger_allowlist.max_concurrent must be between 1 and {MAX_TRIGGER_CONCURRENT}"
+        );
+        Ok(())
+    }
+}
+
+/// Fail-closed human gate preventing autonomous merge, tag push, or release publication.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseGatePolicy {
+    /// Require explicit human approval and merge on pull requests (`true` required).
+    pub require_human_merge: bool,
+    /// Forbid autonomous `v*` git tag creation or push (`true` required).
+    pub forbid_autonomous_tag_push: bool,
+    /// Forbid autonomous GitHub release publication or package uploads (`true` required).
+    pub forbid_autonomous_publish: bool,
+}
+
+impl ReleaseGatePolicy {
+    /// Construct the enforced fail-closed release gate with all three safety flags enabled.
+    pub const fn enforced() -> Self {
+        Self {
+            require_human_merge: true,
+            forbid_autonomous_tag_push: true,
+            forbid_autonomous_publish: true,
+        }
+    }
+
+    /// Validate that every release safety flag remains strictly enabled (`true`).
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.require_human_merge,
+            "release_gate.require_human_merge must be true (autonomous PR merge is forbidden)"
+        );
+        ensure!(
+            self.forbid_autonomous_tag_push,
+            "release_gate.forbid_autonomous_tag_push must be true (autonomous git tag push is forbidden)"
+        );
+        ensure!(
+            self.forbid_autonomous_publish,
+            "release_gate.forbid_autonomous_publish must be true (autonomous release publication is forbidden)"
+        );
+        Ok(())
+    }
+}
+
+impl Default for ReleaseGatePolicy {
+    fn default() -> Self {
+        Self::enforced()
+    }
+}
+
 /// Declarative TOML workflow manifest stored in System Store (`services/workflows/manifests/<id>.toml`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -77,6 +202,12 @@ pub struct WorkflowManifest {
     /// Optional hard timeout in seconds for a single scheduled run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+    /// Optional control-plane trigger allowlist for bounded self-iteration workflows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_allowlist: Option<TriggerAllowlist>,
+    /// Optional fail-closed human release gate policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_gate: Option<ReleaseGatePolicy>,
 }
 
 const fn default_schema_version() -> u16 {
@@ -93,7 +224,7 @@ impl WorkflowManifest {
         self.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS)
     }
 
-    /// Validate all fields, IDs, schedule syntax, explicit mount grants, and bounds.
+    /// Validate all fields, IDs, schedule syntax, explicit mount grants, allowlists, and gates.
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.schema_version == SUPPORTED_MANIFEST_VERSION,
@@ -141,8 +272,120 @@ impl WorkflowManifest {
             );
         }
 
+        if let Some(allowlist) = &self.trigger_allowlist {
+            allowlist.validate()?;
+        }
+        if let Some(gate) = &self.release_gate {
+            gate.validate()?;
+        }
+        if (self.trigger_allowlist.is_some() || self.release_gate.is_some())
+            && self.trust == WorkflowTrustPosture::HostAccountTrusted
+        {
+            bail!(
+                "workflows with `trigger_allowlist` or `release_gate` must remain OS-confined (`governed` or `confined_trusted`); `host_account_trusted` is forbidden"
+            );
+        }
+
         Ok(())
     }
+}
+
+/// Validates a canonical GitHub `owner/repo` slug.
+pub(crate) fn validate_github_repo(repo: &str) -> Result<()> {
+    let trimmed = repo.trim();
+    ensure!(
+        trimmed == repo && !trimmed.is_empty(),
+        "trigger_allowlist.repo must be non-empty without surrounding whitespace"
+    );
+    ensure!(
+        !trimmed.contains("://")
+            && !trimmed.contains('\\')
+            && !trimmed.chars().any(char::is_whitespace),
+        "trigger_allowlist.repo `{repo}` must be a canonical `owner/repo` slug"
+    );
+    let (owner, name) = trimmed
+        .split_once('/')
+        .context("trigger_allowlist.repo must be formatted as `owner/repo`")?;
+    ensure!(
+        !name.contains('/'),
+        "trigger_allowlist.repo `{repo}` must contain exactly one `/`"
+    );
+    validate_repo_segment(owner, "owner")?;
+    validate_repo_segment(name, "repo")?;
+    Ok(())
+}
+
+fn validate_repo_segment(segment: &str, label: &str) -> Result<()> {
+    ensure!(
+        !segment.is_empty() && segment.len() <= 100,
+        "trigger_allowlist.repo {label} `{segment}` must be 1..=100 characters"
+    );
+    ensure!(
+        segment != "." && segment != "..",
+        "trigger_allowlist.repo {label} `{segment}` must not be `.` or `..`"
+    );
+    let bytes = segment.as_bytes();
+    ensure!(
+        bytes[0].is_ascii_alphanumeric() && bytes[bytes.len() - 1].is_ascii_alphanumeric(),
+        "trigger_allowlist.repo {label} `{segment}` must start and end with an ASCII letter or digit"
+    );
+    ensure!(
+        bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(*b, b'-' | b'_' | b'.')),
+        "trigger_allowlist.repo {label} `{segment}` contains unsupported characters"
+    );
+    Ok(())
+}
+
+fn validate_actor_list(actors: &[String], field: &str) -> Result<()> {
+    ensure!(
+        actors.len() <= MAX_ALLOWLIST_ENTRIES,
+        "{field} exceeds {MAX_ALLOWLIST_ENTRIES} entries"
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    for actor in actors {
+        validate_actor_login(actor, field)?;
+        ensure!(
+            seen.insert(actor.to_ascii_lowercase()),
+            "duplicate actor `{actor}` in {field}"
+        );
+    }
+    Ok(())
+}
+
+/// Validates a GitHub actor login (`[a-zA-Z0-9_-]` plus `[bot]` suffix brackets).
+pub(crate) fn validate_actor_login(actor: &str, field: &str) -> Result<()> {
+    let trimmed = actor.trim();
+    ensure!(
+        trimmed == actor && !trimmed.is_empty() && trimmed.len() <= 64,
+        "{field} entry `{actor}` must be 1..=64 characters without surrounding whitespace"
+    );
+    ensure!(
+        trimmed.as_bytes()[0].is_ascii_alphanumeric(),
+        "{field} entry `{actor}` must start with an ASCII letter or digit"
+    );
+    ensure!(
+        trimmed
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'[' | b']')),
+        "{field} entry `{actor}` contains unsupported characters"
+    );
+    Ok(())
+}
+
+/// Validates a GitHub label name (`1..=64` non-control chars without surrounding whitespace).
+pub(crate) fn validate_label_name(label: &str) -> Result<()> {
+    let trimmed = label.trim();
+    ensure!(
+        trimmed == label && !trimmed.is_empty() && trimmed.len() <= 64,
+        "trigger_allowlist.required_labels entry `{label}` must be 1..=64 characters without surrounding whitespace"
+    );
+    ensure!(
+        !trimmed.chars().any(char::is_control),
+        "trigger_allowlist.required_labels entry `{label}` contains control characters"
+    );
+    Ok(())
 }
 
 /// Validates a canonical workflow identifier (`1..=64` lowercase ASCII alphanumeric, `-`, `_`).
@@ -429,5 +672,45 @@ pub(crate) fn atomic_write_file(path: &Path, bytes: &[u8]) -> Result<()> {
     drop(file);
     fs::rename(&tmp_path, path)
         .with_context(|| format!("atomically replace {}", path.display()))?;
+    Ok(())
+}
+
+/// Trim entries, drop empties, and deduplicate case-insensitively while preserving order.
+pub(crate) fn normalize_unique_entries(entries: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut normalized = Vec::new();
+    for entry in entries {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_ascii_lowercase()) {
+            normalized.push(trimmed.to_string());
+        }
+    }
+    normalized
+}
+
+/// Normalize optional model profile string to `None` when empty or whitespace-only.
+pub(crate) fn normalize_model_profile(model_profile: Option<String>) -> Option<String> {
+    model_profile
+        .map(|profile| profile.trim().to_string())
+        .filter(|profile| !profile.is_empty())
+}
+
+/// Ensure a template workflow uses explicit grants and OS-confined trust posture.
+pub(crate) fn ensure_confined_template_inputs(
+    mounts: &[String],
+    trust: WorkflowTrustPosture,
+    kind: &str,
+) -> Result<()> {
+    ensure!(
+        !mounts.is_empty(),
+        "{kind} workflow requires at least one explicit `--grant <GRANT_ID>` binding; register paths first with `alan host grant save <id> <path>`"
+    );
+    ensure!(
+        trust != WorkflowTrustPosture::HostAccountTrusted,
+        "{kind} workflow must remain OS-confined (`governed` or `confined_trusted`); `host_account_trusted` is forbidden"
+    );
     Ok(())
 }

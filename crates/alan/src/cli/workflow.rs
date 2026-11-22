@@ -1,10 +1,12 @@
-//! Scheduled personal workflows (`alan workflow init|list|run|render-schedule|logs`)
+//! Scheduled personal workflows (`alan workflow init|init-self-iterate|init-release-prep|evaluate-trigger|check-release-gate|list|run|render-schedule|logs`)
 //! executed via bounded, ephemeral `alan -p --ephemeral --json` invocations.
 
 mod logs;
 mod manifest;
+mod release_prep;
 mod runner;
 mod schedule;
+mod self_iterate;
 #[cfg(test)]
 mod tests;
 
@@ -16,11 +18,32 @@ use clap::{Args, Subcommand};
 use serde::Serialize;
 
 use logs::{WorkflowRunLogEntry, read_run_logs};
-use manifest::validate_workflow_id;
-pub use manifest::{WorkflowManifest, WorkflowStore, WorkflowTrustPosture};
+pub use manifest::{
+    ReleaseGatePolicy, TriggerAllowlist, WorkflowManifest, WorkflowStore, WorkflowTrustPosture,
+};
+use manifest::{normalize_model_profile, validate_workflow_id};
+use release_prep::run_check_release_gate;
+#[allow(
+    unused_imports,
+    reason = "re-exported for alan library callers; main.rs includes cli privately"
+)]
+pub use release_prep::{
+    CheckReleaseGateArgs, InitReleasePrepArgs, ReleaseOperation, build_release_prep_manifest,
+    ensure_release_operation_allowed,
+};
 use runner::{build_dry_run_plan, execute_workflow_run, resolve_alan_binary};
 pub use schedule::ScheduleTarget;
 use schedule::{install_launchd_plist, launchd_label, render_cron_entry, render_launchd_plist};
+use self_iterate::run_evaluate_trigger;
+#[allow(
+    unused_imports,
+    reason = "re-exported for alan library callers; main.rs includes cli privately"
+)]
+pub use self_iterate::{
+    AcceptedTriggerDispatch, EvaluateTriggerArgs, InitSelfIterateArgs, TriggerDecision,
+    TriggerEvent, TriggerEventKind, TriggerGuardState, TriggerRejectionReason,
+    build_self_iterate_manifest, evaluate_trigger_event,
+};
 
 /// Top-level arguments for `alan workflow`.
 #[derive(Debug, Args)]
@@ -65,6 +88,14 @@ pub enum WorkflowAction {
         #[arg(long)]
         json: bool,
     },
+    /// Register a bounded self-iteration workflow with control-plane actor/label allowlists
+    InitSelfIterate(InitSelfIterateArgs),
+    /// Register a bounded, strictly human-gated release-preparation workflow
+    InitReleasePrep(InitReleasePrepArgs),
+    /// Evaluate an external GitHub trigger event JSON payload against a workflow's allowlist
+    EvaluateTrigger(EvaluateTriggerArgs),
+    /// Verify whether a release operation is allowed under a workflow's `release_gate` policy
+    CheckReleaseGate(CheckReleaseGateArgs),
     /// List registered workflows from System Store
     List {
         /// Emit structured JSON instead of a table
@@ -168,39 +199,26 @@ pub async fn run_with_store(
                 id,
                 schedule: schedule.trim().to_string(),
                 prompt,
-                model_profile: model_profile
-                    .map(|p| p.trim().to_string())
-                    .filter(|p| !p.is_empty()),
+                model_profile: normalize_model_profile(model_profile),
                 mounts,
                 trust,
                 json: !no_stream_json,
                 timeout_secs,
+                trigger_allowlist: None,
+                release_gate: None,
             };
-            let path = store.save_manifest(&manifest, force)?;
-            let out = if json {
-                format!(
-                    "{}\n",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "manifest": manifest,
-                        "path": path,
-                    }))?
-                )
-            } else {
-                format!(
-                    "initialized workflow `{}` at {}\n  schedule: {}\n  trust: {}\n  mounts: {}\n",
-                    manifest.id,
-                    path.display(),
-                    manifest.schedule,
-                    manifest.trust.as_str(),
-                    if manifest.mounts.is_empty() {
-                        "none".to_string()
-                    } else {
-                        manifest.mounts.join(", ")
-                    }
-                )
-            };
-            Ok((out, None))
+            save_and_format_init_manifest(store, &manifest, force, json)
         }
+        WorkflowAction::InitSelfIterate(init_args) => {
+            let manifest = build_self_iterate_manifest(&init_args)?;
+            save_and_format_init_manifest(store, &manifest, init_args.force, init_args.json)
+        }
+        WorkflowAction::InitReleasePrep(init_args) => {
+            let manifest = build_release_prep_manifest(&init_args)?;
+            save_and_format_init_manifest(store, &manifest, init_args.force, init_args.json)
+        }
+        WorkflowAction::EvaluateTrigger(eval_args) => run_evaluate_trigger(store, eval_args),
+        WorkflowAction::CheckReleaseGate(gate_args) => run_check_release_gate(store, gate_args),
         WorkflowAction::List { json } => {
             let manifests = store.list_manifests()?;
             let mut items = Vec::with_capacity(manifests.len());
@@ -257,7 +275,7 @@ pub async fn run_with_store(
                 let out = if json {
                     format!("{}\n", serde_json::to_string_pretty(&plan)?)
                 } else {
-                    format!(
+                    let mut text = format!(
                         "dry-run workflow `{}`\n  binary: {}\n  args: {}\n  trust: {}\n  mounts: {}\n  model_profile: {}\n  timeout_secs: {}\n",
                         plan.workflow_id,
                         plan.binary.display(),
@@ -270,7 +288,24 @@ pub async fn run_with_store(
                         },
                         plan.model_profile.as_deref().unwrap_or("default"),
                         plan.timeout_secs
-                    )
+                    );
+                    if let Some(allowlist) = &plan.trigger_allowlist {
+                        text.push_str(&format!(
+                            "  trigger_repo: {} (actors: {}, labels: {})\n",
+                            allowlist.repo,
+                            allowlist.allowed_actors.join(", "),
+                            allowlist.required_labels.join(", ")
+                        ));
+                    }
+                    if let Some(gate) = &plan.release_gate {
+                        text.push_str(&format!(
+                            "  release_gate: human_merge={} forbid_tag_push={} forbid_publish={}\n",
+                            gate.require_human_merge,
+                            gate.forbid_autonomous_tag_push,
+                            gate.forbid_autonomous_publish
+                        ));
+                    }
+                    text
                 };
                 return Ok((out, None));
             }
@@ -367,4 +402,61 @@ pub async fn run_with_store(
             Ok((out, None))
         }
     }
+}
+
+fn save_and_format_init_manifest(
+    store: &WorkflowStore,
+    manifest: &WorkflowManifest,
+    force: bool,
+    json: bool,
+) -> Result<(String, Option<String>)> {
+    let path = store.save_manifest(manifest, force)?;
+    let out = if json {
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "manifest": manifest,
+                "path": path,
+            }))?
+        )
+    } else {
+        let mut text = format!(
+            "initialized workflow `{}` at {}\n  schedule: {}\n  trust: {}\n  mounts: {}\n",
+            manifest.id,
+            path.display(),
+            manifest.schedule,
+            manifest.trust.as_str(),
+            if manifest.mounts.is_empty() {
+                "none".to_string()
+            } else {
+                manifest.mounts.join(", ")
+            }
+        );
+        if let Some(allowlist) = &manifest.trigger_allowlist {
+            text.push_str(&format_allowlist_line(allowlist));
+        }
+        if let Some(gate) = &manifest.release_gate {
+            text.push_str(&format_release_gate_line(gate));
+        }
+        text
+    };
+    Ok((out, None))
+}
+
+fn format_allowlist_line(allowlist: &TriggerAllowlist) -> String {
+    format!(
+        "  trigger_repo: {} (actors: {}, labels: {}, max_retries: {}, max_concurrent: {})\n",
+        allowlist.repo,
+        allowlist.allowed_actors.join(", "),
+        allowlist.required_labels.join(", "),
+        allowlist.max_retries,
+        allowlist.max_concurrent
+    )
+}
+
+fn format_release_gate_line(gate: &ReleaseGatePolicy) -> String {
+    format!(
+        "  release_gate: human_merge={} forbid_tag_push={} forbid_publish={}\n",
+        gate.require_human_merge, gate.forbid_autonomous_tag_push, gate.forbid_autonomous_publish
+    )
 }
