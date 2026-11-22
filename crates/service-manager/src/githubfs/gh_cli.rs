@@ -125,9 +125,17 @@ impl GhCliGithubBackend {
             let bytes = serde_json::to_vec(payload).map_err(|err| {
                 GithubBackendError::redacted(ErrorCode::BadRequest, err.to_string(), secret_ref)
             })?;
-            stdin.write_all(&bytes).await.map_err(|err| {
-                GithubBackendError::redacted(ErrorCode::Io, err.to_string(), secret_ref)
-            })?;
+            match stdin.write_all(&bytes).await {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {}
+                Err(err) => {
+                    return Err(GithubBackendError::redacted(
+                        ErrorCode::Io,
+                        err.to_string(),
+                        secret_ref,
+                    ));
+                }
+            }
             drop(stdin);
         }
         let output = child.wait_with_output().await.map_err(|err| {
@@ -479,14 +487,17 @@ impl GithubBackend for GhCliGithubBackend {
 
         let raw_events: Vec<Value> = serde_json::from_str(&resp.body)
             .map_err(|err| GithubBackendError::new(ErrorCode::Io, err.to_string()))?;
-        let new_events = {
-            let mut seen = self
+        let candidate_events: Vec<GithubEvent> = {
+            let seen = self
                 .seen_event_ids
                 .lock()
                 .expect("seen events lock poisoned");
+            let mut batch_seen = std::collections::HashSet::new();
             parse_gh_events(repo, &raw_events)
                 .into_iter()
-                .filter(|event| seen.insert(event.event_id.clone()))
+                .filter(|event| {
+                    !seen.contains(&event.event_id) && batch_seen.insert(event.event_id.clone())
+                })
                 .collect()
         };
 
@@ -526,12 +537,25 @@ impl GithubBackend for GhCliGithubBackend {
             })
             .collect();
 
+        // Commit deduplication state only after every fallible API call in sync succeeds.
+        let new_events = {
+            let mut seen = self
+                .seen_event_ids
+                .lock()
+                .expect("seen events lock poisoned");
+            candidate_events
+                .into_iter()
+                .filter(|event| seen.insert(event.event_id.clone()))
+                .collect()
+        };
+
         Ok(SyncRepoOutcome::Updated(SyncRepoData {
             etag: resp.etag,
             rate_limit: pulls_resp.rate_limit.or(resp.rate_limit),
             issues,
             pulls,
             events: new_events,
+            details_hydrated: false,
         }))
     }
 

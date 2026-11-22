@@ -355,8 +355,9 @@ async fn confined_fileserver_lifecycle_enforces_clunk_atomicity_mounts_and_confi
     .unwrap();
     assert_eq!(installed.exit_code, 0);
 
-    // Prepare a read-only Host dir and a local TCP listener for OS confinement tests.
-    let ro_host_dir = tempfile::tempdir().unwrap();
+    // Prepare a read-only Host dir outside `/tmp`/`TMPDIR` (Landlock allows `/tmp`
+    // scratch writes) and a local TCP listener for OS confinement tests.
+    let ro_host_dir = tempdir_outside_tmp();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let accept_task =
@@ -710,4 +711,27 @@ socket_name = \"extfs.sock\"
 
     manager.stop_all().await.unwrap();
     assert!(srvfs.lookup("sockfs").await.is_none());
+}
+
+fn tempdir_outside_tmp() -> tempfile::TempDir {
+    use std::path::Path;
+
+    let blocked: Vec<PathBuf> = ["/tmp", "/var/tmp"]
+        .into_iter()
+        .map(PathBuf::from)
+        .chain(std::env::var_os("TMPDIR").map(PathBuf::from))
+        .flat_map(|p| [p.clone(), std::fs::canonicalize(&p).unwrap_or(p)])
+        .collect();
+    let workspace_target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+    if workspace_target.is_dir() {
+        let canonical = std::fs::canonicalize(&workspace_target).unwrap_or(workspace_target);
+        if !blocked.iter().any(|b| canonical.starts_with(b))
+            && let Ok(dir) = tempfile::Builder::new()
+                .prefix("alan-ro-host-")
+                .tempdir_in(&canonical)
+        {
+            return dir;
+        }
+    }
+    tempfile::tempdir().unwrap()
 }

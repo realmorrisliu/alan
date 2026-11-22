@@ -306,6 +306,8 @@ pub struct SyncRepoData {
     pub issues: Vec<IssueRecord>,
     pub pulls: Vec<PullRecord>,
     pub events: Vec<GithubEvent>,
+    /// `true` when `issues`/`pulls` include full comments/checks/reviews; `false` for list-only syncs.
+    pub details_hydrated: bool,
 }
 
 /// Result of conditional `If-None-Match` repository sync.
@@ -655,6 +657,7 @@ impl GithubBackend for MemoryGithubBackend {
             issues: entry.issues.values().cloned().collect(),
             pulls: entry.pulls.values().cloned().collect(),
             events,
+            details_hydrated: true,
         }))
     }
 

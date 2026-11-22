@@ -1,10 +1,9 @@
 //! Confined external `aP` file-server supervision, `/srv/<id>` publication, and `/mnt/<id>` binding.
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context as TaskContext, Poll};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use alan_agent_engine::TrustPosture;
@@ -12,18 +11,14 @@ use alan_agent_engine::tools::{
     ReifiedMountAccess, Sandbox, SandboxBackendKind, SandboxHostMount, SandboxSpec, detect_backend,
     seatbelt_profile,
 };
-use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, ImportedFileServer, InProcessTransport,
-    MAX_WIRE_FRAME_BYTES, Offset, OpenMode, Qid, Stat, WireTransportClient,
-};
+use alan_ap::{Fid, FileServer, ImportedFileServer, InProcessTransport, WireTransportClient};
 use alan_kernel::{Access, LiveNamespace, Namespace, SrvFs};
 use anyhow::{Context, Result, bail, ensure};
-use async_trait::async_trait;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::process::{Child, ChildStderr, Command};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use crate::package::validate_package_id;
@@ -33,6 +28,9 @@ use crate::{
     FileserverPackageExport, FileserverTransportSpec, PackageExportKind, PackageReferenceLease,
     PackageService,
 };
+
+mod proxy;
+use proxy::{BoundedLineReader, SupervisedFileserver};
 
 const MINIMAL_SAFE_PATH: &str = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin";
 const MAX_STDERR_LINES: usize = 64;
@@ -103,11 +101,40 @@ pub struct FileserverStatus {
     pub running: bool,
 }
 
+enum ServiceSlot {
+    Starting(u64),
+    Running(Box<RunningFileserver>),
+}
+
+struct StartingReservation {
+    instances: Arc<StdMutex<BTreeMap<String, ServiceSlot>>>,
+    service_id: String,
+    launch_id: u64,
+    armed: bool,
+}
+
+impl Drop for StartingReservation {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Ok(mut guard) = self.instances.lock()
+            && matches!(
+                guard.get(&self.service_id),
+                Some(ServiceSlot::Starting(id)) if *id == self.launch_id
+            )
+        {
+            guard.remove(&self.service_id);
+        }
+    }
+}
+
 /// Supervises explicitly started external `fileserver` packages over confined aP wire transport.
 pub struct FileserverManager {
     packages: Arc<PackageService>,
     srvfs: Arc<SrvFs>,
-    instances: Mutex<BTreeMap<String, RunningFileserver>>,
+    instances: Arc<StdMutex<BTreeMap<String, ServiceSlot>>>,
+    next_launch_id: AtomicU64,
 }
 
 impl FileserverManager {
@@ -116,7 +143,8 @@ impl FileserverManager {
         Self {
             packages,
             srvfs,
-            instances: Mutex::new(BTreeMap::new()),
+            instances: Arc::new(StdMutex::new(BTreeMap::new())),
+            next_launch_id: AtomicU64::new(1),
         }
     }
 
@@ -146,10 +174,26 @@ impl FileserverManager {
             !RESERVED_MNT_ROOTS.contains(&sid.as_str()),
             "service `{sid}` is reserved"
         );
-        ensure!(
-            !self.instances.lock().await.contains_key(&sid),
-            "fileserver `{sid}` is running"
-        );
+
+        let launch_id = self.next_launch_id.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut guard = self
+                .instances
+                .lock()
+                .expect("fileserver instances lock poisoned");
+            ensure!(
+                !guard.contains_key(&sid),
+                "fileserver `{sid}` is already running or starting"
+            );
+            guard.insert(sid.clone(), ServiceSlot::Starting(launch_id));
+        }
+        let mut reservation = StartingReservation {
+            instances: Arc::clone(&self.instances),
+            service_id: sid.clone(),
+            launch_id,
+            armed: true,
+        };
+
         ensure!(
             self.srvfs.lookup(&sid).await.is_none(),
             "/srv/{sid} is already occupied"
@@ -158,17 +202,48 @@ impl FileserverManager {
         let running = RunningFileserver::launch(lease, export, &grant).await?;
         let (meta, child) = running.snapshot_parts();
         let status = complete_status(meta, &child).await;
+        let still_reserved = {
+            let guard = self
+                .instances
+                .lock()
+                .expect("fileserver instances lock poisoned");
+            matches!(
+                guard.get(&sid),
+                Some(ServiceSlot::Starting(id)) if *id == launch_id
+            )
+        };
+        if !still_reserved {
+            running.shutdown().await;
+            bail!("fileserver `{sid}` startup cancelled");
+        }
+
         self.srvfs
             .post(&sid, running.transport.clone(), grant.mount_access)
             .await;
 
-        let mut instances = self.instances.lock().await;
-        if instances.contains_key(&sid) {
-            self.srvfs.unpost(&sid).await;
+        let err_running = {
+            let mut guard = self
+                .instances
+                .lock()
+                .expect("fileserver instances lock poisoned");
+            if matches!(
+                guard.get(&sid),
+                Some(ServiceSlot::Starting(id)) if *id == launch_id
+            ) {
+                guard.insert(sid.clone(), ServiceSlot::Running(Box::new(running)));
+                reservation.armed = false;
+                None
+            } else {
+                Some((!guard.contains_key(&sid), running))
+            }
+        };
+        if let Some((should_unpost, running)) = err_running {
+            if should_unpost {
+                self.srvfs.unpost(&sid).await;
+            }
             running.shutdown().await;
-            bail!("fileserver `{sid}` started concurrently");
+            bail!("fileserver `{sid}` startup cancelled");
         }
-        instances.insert(sid, running);
         Ok(status)
     }
 
@@ -228,10 +303,16 @@ impl FileserverManager {
         service_id: &str,
     ) -> Result<WireTransportClient<BufReader<OwnedReadHalf>, OwnedWriteHalf>> {
         let sock = {
-            let guard = self.instances.lock().await;
-            let inst = guard
+            let guard = self
+                .instances
+                .lock()
+                .expect("fileserver instances lock poisoned");
+            let ServiceSlot::Running(inst) = guard
                 .get(service_id)
-                .with_context(|| format!("fileserver `{service_id}` is not running"))?;
+                .with_context(|| format!("fileserver `{service_id}` is not running"))?
+            else {
+                bail!("fileserver `{service_id}` is still starting");
+            };
             inst.socket_path
                 .clone()
                 .with_context(|| format!("fileserver `{service_id}` does not use unix_socket"))?
@@ -248,12 +329,22 @@ impl FileserverManager {
 
     /// Stop one running `fileserver`, unpost `/srv/<service_id>`, and kill its process group.
     pub async fn stop(&self, service_id: &str) -> Result<()> {
-        let running = self
-            .instances
-            .lock()
-            .await
-            .remove(service_id)
-            .with_context(|| format!("fileserver `{service_id}` is not running"))?;
+        let running = {
+            let mut guard = self
+                .instances
+                .lock()
+                .expect("fileserver instances lock poisoned");
+            match guard.get(service_id) {
+                Some(ServiceSlot::Running(_)) => match guard.remove(service_id) {
+                    Some(ServiceSlot::Running(running)) => *running,
+                    _ => unreachable!(),
+                },
+                Some(ServiceSlot::Starting(_)) => {
+                    bail!("fileserver `{service_id}` is still starting")
+                }
+                None => bail!("fileserver `{service_id}` is not running"),
+            }
+        };
         self.srvfs.unpost(service_id).await;
         running.shutdown().await;
         Ok(())
@@ -261,10 +352,18 @@ impl FileserverManager {
 
     /// Stop all running `fileserver` instances cleanly.
     pub async fn stop_all(&self) -> Result<()> {
-        let drained = std::mem::take(&mut *self.instances.lock().await);
-        for (service_id, running) in drained {
-            self.srvfs.unpost(&service_id).await;
-            running.shutdown().await;
+        let drained = {
+            let mut guard = self
+                .instances
+                .lock()
+                .expect("fileserver instances lock poisoned");
+            std::mem::take(&mut *guard)
+        };
+        for (service_id, slot) in drained {
+            if let ServiceSlot::Running(running) = slot {
+                self.srvfs.unpost(&service_id).await;
+                (*running).shutdown().await;
+            }
         }
         Ok(())
     }
@@ -272,10 +371,14 @@ impl FileserverManager {
     /// Return current runtime status for `service_id`, if started.
     pub async fn status(&self, service_id: &str) -> Option<FileserverStatus> {
         let (meta, child) = {
-            let guard = self.instances.lock().await;
-            guard
-                .get(service_id)
-                .map(RunningFileserver::snapshot_parts)?
+            let guard = self
+                .instances
+                .lock()
+                .expect("fileserver instances lock poisoned");
+            match guard.get(service_id)? {
+                ServiceSlot::Running(inst) => inst.snapshot_parts(),
+                ServiceSlot::Starting(_) => return None,
+            }
         };
         Some(complete_status(meta, &child).await)
     }
@@ -283,10 +386,16 @@ impl FileserverManager {
     /// List all supervised `fileserver` instances.
     pub async fn list(&self) -> Vec<FileserverStatus> {
         let items: Vec<_> = {
-            let guard = self.instances.lock().await;
+            let guard = self
+                .instances
+                .lock()
+                .expect("fileserver instances lock poisoned");
             guard
                 .values()
-                .map(RunningFileserver::snapshot_parts)
+                .filter_map(|slot| match slot {
+                    ServiceSlot::Running(inst) => Some(inst.snapshot_parts()),
+                    ServiceSlot::Starting(_) => None,
+                })
                 .collect()
         };
         let mut out = Vec::with_capacity(items.len());
@@ -298,7 +407,16 @@ impl FileserverManager {
 
     /// Return recent bounded stderr lines captured from `service_id`.
     pub async fn recent_stderr(&self, service_id: &str) -> Option<String> {
-        let sink = Arc::clone(&self.instances.lock().await.get(service_id)?.stderr_lines);
+        let sink = {
+            let guard = self
+                .instances
+                .lock()
+                .expect("fileserver instances lock poisoned");
+            match guard.get(service_id)? {
+                ServiceSlot::Running(inst) => Arc::clone(&inst.stderr_lines),
+                ServiceSlot::Starting(_) => return None,
+            }
+        };
         Some(read_stderr_lines(&sink).await)
     }
 }
@@ -672,199 +790,6 @@ impl Drop for FileserverProcessGuard {
     }
 }
 
-struct SupervisedFileserver {
-    inner: RwLock<Option<Arc<dyn FileServer>>>,
-    timeout: Duration,
-    max_payload_chunk: usize,
-    stream_fids: Mutex<HashSet<Fid>>,
-}
-
-impl SupervisedFileserver {
-    fn new(inner: Arc<dyn FileServer>, timeout: Duration, max_message_bytes: usize) -> Self {
-        // JSON byte arrays can take up to 5 bytes per byte ("255, "), plus envelope overhead.
-        let max_payload_chunk =
-            (max_message_bytes.saturating_sub(256) / 5).clamp(128, MAX_WIRE_FRAME_BYTES / 8);
-        Self {
-            inner: RwLock::new(Some(inner)),
-            timeout,
-            max_payload_chunk,
-            stream_fids: Mutex::new(HashSet::new()),
-        }
-    }
-
-    async fn deactivate(&self) {
-        *self.inner.write().await = None;
-        self.stream_fids.lock().await.clear();
-    }
-
-    async fn server(&self) -> Result<Arc<dyn FileServer>, ErrorCode> {
-        self.inner
-            .read()
-            .await
-            .as_ref()
-            .cloned()
-            .ok_or(ErrorCode::NoAccess)
-    }
-
-    async fn timed<T>(
-        &self,
-        fut: impl std::future::Future<Output = Result<T, ErrorCode>>,
-    ) -> Result<T, ErrorCode> {
-        tokio::time::timeout(self.timeout, fut)
-            .await
-            .map_err(|_| ErrorCode::Io)?
-    }
-
-    async fn track_stream_fid(&self, fid: Fid, qid: Qid) {
-        if qid.kind == FileKind::Stream {
-            self.stream_fids.lock().await.insert(fid);
-        }
-    }
-}
-
-#[async_trait]
-impl FileServer for SupervisedFileserver {
-    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
-        let qid = self
-            .timed(self.server().await?.walk(fid, newfid, names))
-            .await?;
-        self.track_stream_fid(newfid, qid).await;
-        Ok(qid)
-    }
-
-    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
-        let qid = self.timed(self.server().await?.open(fid, mode)).await?;
-        self.track_stream_fid(fid, qid).await;
-        Ok(qid)
-    }
-
-    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        let server = self.server().await?;
-        let bounded = count.min(self.max_payload_chunk as u32);
-        if self.stream_fids.lock().await.contains(&fid) {
-            server.read(fid, offset, bounded).await
-        } else {
-            self.timed(server.read(fid, offset, bounded)).await
-        }
-    }
-
-    async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-        let server = self.server().await?;
-        if data.is_empty() {
-            return self.timed(server.write(fid, offset, data)).await;
-        }
-        let mut accepted_total = 0usize;
-        for chunk in data.chunks(self.max_payload_chunk) {
-            let off = offset
-                .checked_add(accepted_total as u64)
-                .ok_or(ErrorCode::BadRequest)?;
-            let accepted = self.timed(server.write(fid, off, chunk)).await? as usize;
-            if accepted > chunk.len() {
-                return Err(ErrorCode::BadRequest);
-            }
-            accepted_total = accepted_total
-                .checked_add(accepted)
-                .ok_or(ErrorCode::BadRequest)?;
-            if accepted < chunk.len() {
-                break;
-            }
-        }
-        u32::try_from(accepted_total).map_err(|_| ErrorCode::BadRequest)
-    }
-
-    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
-        self.timed(self.server().await?.stat(fid)).await
-    }
-
-    async fn create(
-        &self,
-        fid: Fid,
-        newfid: Fid,
-        name: &str,
-        kind: FileKind,
-    ) -> Result<Qid, ErrorCode> {
-        let qid = self
-            .timed(self.server().await?.create(fid, newfid, name, kind))
-            .await?;
-        self.track_stream_fid(newfid, qid).await;
-        Ok(qid)
-    }
-
-    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
-        self.stream_fids.lock().await.remove(&fid);
-        self.timed(self.server().await?.remove(fid)).await
-    }
-
-    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
-        self.stream_fids.lock().await.remove(&fid);
-        self.timed(self.server().await?.clunk(fid)).await
-    }
-}
-
-/// Enforces `max_message_bytes` per newline-delimited wire response frame.
-struct BoundedLineReader<R> {
-    inner: R,
-    max_bytes: usize,
-    line_bytes: usize,
-    last_nl_offset: Option<usize>,
-}
-
-impl<R> BoundedLineReader<R> {
-    fn new(inner: R, max_bytes: usize) -> Self {
-        Self {
-            inner,
-            max_bytes,
-            line_bytes: 0,
-            last_nl_offset: None,
-        }
-    }
-}
-
-impl<R: AsyncRead + Unpin> AsyncRead for BoundedLineReader<R> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-impl<R: AsyncBufRead + Unpin> AsyncBufRead for BoundedLineReader<R> {
-    fn poll_fill_buf(
-        self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-    ) -> Poll<std::io::Result<&[u8]>> {
-        let me = self.get_mut();
-        let buf = std::task::ready!(Pin::new(&mut me.inner).poll_fill_buf(cx))?;
-        let (frame_len, slice, nl_offset) = match buf.iter().position(|b| *b == b'\n') {
-            Some(nl) => (nl + 1, &buf[..=nl], Some(nl)),
-            None => (buf.len(), buf, None),
-        };
-        if me.line_bytes.saturating_add(frame_len) > me.max_bytes {
-            let msg = format!("response frame exceeded {} bytes", me.max_bytes);
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                msg,
-            )));
-        }
-        me.last_nl_offset = nl_offset;
-        Poll::Ready(Ok(slice))
-    }
-
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        let me = self.get_mut();
-        let done = me.last_nl_offset.is_some_and(|nl| amt > nl);
-        me.line_bytes = if done {
-            0
-        } else {
-            me.line_bytes.saturating_add(amt)
-        };
-        me.last_nl_offset = None;
-        Pin::new(&mut me.inner).consume(amt);
-    }
-}
-
 async fn drain_stderr(stderr: ChildStderr, sink: Arc<Mutex<VecDeque<String>>>) {
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -885,105 +810,5 @@ async fn read_stderr_lines(sink: &Arc<Mutex<VecDeque<String>>>) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Mutex as StdMutex;
-
-    struct MockTarget(StdMutex<Vec<usize>>);
-
-    fn qid(kind: FileKind, path: u64) -> Qid {
-        Qid {
-            kind,
-            version: 0,
-            path,
-        }
-    }
-
-    #[async_trait]
-    impl FileServer for MockTarget {
-        async fn walk(&self, _: Fid, nf: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
-            let k = match names.first().map(String::as_str) {
-                Some("events") => FileKind::Stream,
-                Some(_) => FileKind::File,
-                None => FileKind::Dir,
-            };
-            Ok(qid(k, nf.0))
-        }
-        async fn open(&self, fid: Fid, _: OpenMode) -> Result<Qid, ErrorCode> {
-            let k = if fid.0 == 2 {
-                FileKind::Stream
-            } else {
-                FileKind::File
-            };
-            Ok(qid(k, fid.0))
-        }
-        async fn read(&self, fid: Fid, _: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-            if fid.0 == 2 || fid.0 == 3 {
-                tokio::time::sleep(Duration::from_millis(85)).await;
-                return Ok(if fid.0 == 2 { b"ev".to_vec() } else { vec![] });
-            }
-            Ok(vec![b'x'; count as usize])
-        }
-        async fn write(&self, _: Fid, _: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-            self.0.lock().unwrap().push(data.len());
-            Ok(data.len() as u32)
-        }
-        async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
-            Ok(Stat {
-                name: "m".into(),
-                qid: qid(FileKind::File, fid.0),
-                length: 0,
-                executable: false,
-                writable: false,
-            })
-        }
-        async fn create(&self, _: Fid, _: Fid, _: &str, _: FileKind) -> Result<Qid, ErrorCode> {
-            Err(ErrorCode::Unsupported)
-        }
-        async fn remove(&self, _: Fid) -> Result<(), ErrorCode> {
-            Err(ErrorCode::Unsupported)
-        }
-        async fn clunk(&self, _: Fid) -> Result<(), ErrorCode> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn runtime_env_and_seatbelt_rules_validate_boundaries() {
-        for &bad in BAD_ENV {
-            assert!(validate_runtime_env(&BTreeMap::from([(bad.into(), "x".into())])).is_err());
-        }
-        assert!(validate_runtime_env(&BTreeMap::from([("T".into(), "a\0b".into())])).is_err());
-        assert!(validate_runtime_env(&BTreeMap::from([("T".into(), "ok".into())])).is_ok());
-
-        let d = tempfile::tempdir().unwrap();
-        let rw_dir = d.path().join("rw");
-        std::fs::create_dir(&rw_dir).unwrap();
-        let ro = host_mount("/ro", d.path(), ReifiedMountAccess::ReadOnly);
-        let rw = host_mount("/rw", &rw_dir, ReifiedMountAccess::ReadWrite);
-        let rules = seatbelt_read_only_rules(&SandboxSpec::from_host_mounts(&[ro, rw]));
-        assert!(rules.contains("deny file-write*") && rules.contains("require-not (subpath"));
-    }
-
-    #[tokio::test]
-    async fn bounded_line_reader_and_supervised_proxy_enforce_limits() {
-        let mut ok_r = BoundedLineReader::new(BufReader::new(&b"a\nb\n"[..]), 8);
-        assert_eq!(ok_r.read_line(&mut String::new()).await.unwrap(), 2);
-        let bad = format!("{}\n", "a".repeat(200));
-        let mut err_r = BoundedLineReader::new(BufReader::new(bad.as_bytes()), 128);
-        let err = err_r.read_line(&mut String::new()).await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-
-        let mock = Arc::new(MockTarget(StdMutex::new(Vec::new())));
-        let p = SupervisedFileserver::new(mock.clone(), Duration::from_millis(50), 1024);
-        let ev_q = p.walk(Fid::ROOT, Fid(2), &["events".into()]).await.unwrap();
-        let sl_q = p.walk(Fid::ROOT, Fid(3), &["slow".into()]).await.unwrap();
-        assert_eq!((ev_q.kind, sl_q.kind), (FileKind::Stream, FileKind::File));
-        assert_eq!(p.read(Fid(2), 0, 64).await.unwrap(), b"ev");
-        assert_eq!(p.read(Fid(3), 0, 64).await, Err(ErrorCode::Io));
-        assert_eq!(p.write(Fid(1), 0, &[b'a'; 500]).await.unwrap(), 500);
-        assert!(*mock.0.lock().unwrap().iter().max().unwrap() <= p.max_payload_chunk);
-        let n = p.read(Fid(1), 0, 500).await.unwrap().len();
-        assert_eq!(n, p.max_payload_chunk);
-    }
-}
+#[path = "fileserver_service_tests.rs"]
+mod tests;

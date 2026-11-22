@@ -40,8 +40,8 @@ pub use dispatch::{
     new_routefs_transport,
 };
 use tree::{
-    FsState, GithubFid, Node, encode_pretty_json, join_lines, parse_positive_u64,
-    parse_single_line_ctl, slice_bytes,
+    CachedIssue, CachedPull, FsState, GithubFid, Node, encode_pretty_json, join_lines,
+    parse_positive_u64, parse_single_line_ctl, slice_bytes,
 };
 
 /// Canonical `/srv` handle name for `githubfs`.
@@ -147,7 +147,7 @@ impl<B: GithubBackend> GithubFs<B> {
         if number == 0 {
             return Ok(false);
         }
-        match self.read_issue_record(slug, number).await {
+        match self.read_issue_record(slug, number, false).await {
             Ok(_) => Ok(true),
             Err(ErrorCode::NotFound) => Ok(false),
             Err(code) => Err(code),
@@ -158,7 +158,7 @@ impl<B: GithubBackend> GithubFs<B> {
         if number == 0 {
             return Ok(false);
         }
-        match self.read_pull_record(slug, number).await {
+        match self.read_pull_record(slug, number, false).await {
             Ok(_) => Ok(true),
             Err(ErrorCode::NotFound) => Ok(false),
             Err(code) => Err(code),
@@ -223,17 +223,23 @@ impl<B: GithubBackend> GithubFs<B> {
         }
     }
 
-    async fn read_issue_record(&self, slug: &RepoSlug, n: u64) -> Result<IssueRecord, ErrorCode> {
-        if let Some(issue) = self
+    async fn read_issue_record(
+        &self,
+        slug: &RepoSlug,
+        n: u64,
+        require_details: bool,
+    ) -> Result<IssueRecord, ErrorCode> {
+        if let Some(cached) = self
             .state
             .lock()
             .await
             .repos
             .get(slug)
             .and_then(|r| r.issues.get(&n))
+            .filter(|entry| !require_details || entry.hydrated)
             .cloned()
         {
-            return Ok(issue);
+            return Ok(cached.record);
         }
         let issue = self.backend.get_issue(slug, n).await.map_err(|e| e.code)?;
         self.state
@@ -243,21 +249,33 @@ impl<B: GithubBackend> GithubFs<B> {
             .entry(slug.clone())
             .or_default()
             .issues
-            .insert(n, issue.clone());
+            .insert(
+                n,
+                CachedIssue {
+                    record: issue.clone(),
+                    hydrated: true,
+                },
+            );
         Ok(issue)
     }
 
-    async fn read_pull_record(&self, slug: &RepoSlug, n: u64) -> Result<PullRecord, ErrorCode> {
-        if let Some(pull) = self
+    async fn read_pull_record(
+        &self,
+        slug: &RepoSlug,
+        n: u64,
+        require_details: bool,
+    ) -> Result<PullRecord, ErrorCode> {
+        if let Some(cached) = self
             .state
             .lock()
             .await
             .repos
             .get(slug)
             .and_then(|r| r.pulls.get(&n))
+            .filter(|entry| !require_details || entry.hydrated)
             .cloned()
         {
-            return Ok(pull);
+            return Ok(cached.record);
         }
         let pull = self.backend.get_pull(slug, n).await.map_err(|e| e.code)?;
         self.state
@@ -267,7 +285,13 @@ impl<B: GithubBackend> GithubFs<B> {
             .entry(slug.clone())
             .or_default()
             .pulls
-            .insert(n, pull.clone());
+            .insert(
+                n,
+                CachedPull {
+                    record: pull.clone(),
+                    hydrated: true,
+                },
+            );
         Ok(pull)
     }
 
@@ -320,13 +344,15 @@ impl<B: GithubBackend> GithubFs<B> {
                 created.map_or_else(|| Ok(Vec::new()), |c| encode_pretty_json(&c))
             }
             Node::IssueMeta(slug, n) => {
-                encode_pretty_json(&self.read_issue_record(slug, *n).await?.meta)
+                encode_pretty_json(&self.read_issue_record(slug, *n, false).await?.meta)
             }
-            Node::IssueBody(slug, n) => {
-                Ok(self.read_issue_record(slug, *n).await?.body.into_bytes())
-            }
+            Node::IssueBody(slug, n) => Ok(self
+                .read_issue_record(slug, *n, false)
+                .await?
+                .body
+                .into_bytes()),
             Node::IssueComments(slug, n) => {
-                encode_pretty_json(&self.read_issue_record(slug, *n).await?.comments)
+                encode_pretty_json(&self.read_issue_record(slug, *n, true).await?.comments)
             }
             Node::PullsDir(slug) => {
                 let mut nums: BTreeSet<u64> = self
@@ -343,13 +369,13 @@ impl<B: GithubBackend> GithubFs<B> {
                 Ok(join_lines(nums.into_iter().map(|n| n.to_string())))
             }
             Node::PullMeta(slug, n) => {
-                encode_pretty_json(&self.read_pull_record(slug, *n).await?.meta)
+                encode_pretty_json(&self.read_pull_record(slug, *n, false).await?.meta)
             }
             Node::PullChecks(slug, n) => {
-                encode_pretty_json(&self.read_pull_record(slug, *n).await?.checks)
+                encode_pretty_json(&self.read_pull_record(slug, *n, true).await?.checks)
             }
             Node::PullReviews(slug, n) => {
-                encode_pretty_json(&self.read_pull_record(slug, *n).await?.reviews)
+                encode_pretty_json(&self.read_pull_record(slug, *n, true).await?.reviews)
             }
             _ => unreachable!("handled by static_bytes"),
         }
@@ -410,7 +436,13 @@ impl<B: GithubBackend> GithubFs<B> {
         };
         let mut state = self.state.lock().await;
         let cache = state.repos.entry(slug.clone()).or_default();
-        cache.issues.insert(record.meta.number, record);
+        cache.issues.insert(
+            record.meta.number,
+            CachedIssue {
+                record,
+                hydrated: true,
+            },
+        );
         cache.last_created_issue = Some(created);
         state.bump(&Node::IssuesDir(slug.clone()));
         state.bump(&Node::IssuesNew(slug.clone()));
@@ -437,13 +469,15 @@ impl<B: GithubBackend> GithubFs<B> {
             .await
             .map_err(|err| err.code)?;
         let mut state = self.state.lock().await;
-        if let Some(issue) = state
+        if let Some(entry) = state
             .repos
             .get_mut(slug)
             .and_then(|repo| repo.issues.get_mut(&number))
         {
-            issue.comments.push(comment.clone());
-            issue.meta.updated_at = comment.created_at;
+            if entry.hydrated {
+                entry.record.comments.push(comment.clone());
+            }
+            entry.record.meta.updated_at = comment.created_at;
         }
         state.bump(&Node::IssueComments(slug.clone(), number));
         state.bump(&Node::IssueMeta(slug.clone(), number));
@@ -478,12 +512,12 @@ impl<B: GithubBackend> GithubFs<B> {
             return Err(ErrorCode::BadRequest);
         };
         let mut state = self.state.lock().await;
-        if let Some(issue) = state
+        if let Some(entry) = state
             .repos
             .get_mut(slug)
             .and_then(|repo| repo.issues.get_mut(&number))
         {
-            issue.meta = updated_meta;
+            entry.record.meta = updated_meta;
         }
         state.bump(&Node::IssueMeta(slug.clone(), number));
         Ok(())
@@ -518,13 +552,15 @@ impl<B: GithubBackend> GithubFs<B> {
             .await
             .map_err(|err| err.code)?;
         let mut state = self.state.lock().await;
-        if let Some(pull) = state
+        if let Some(entry) = state
             .repos
             .get_mut(slug)
             .and_then(|repo| repo.pulls.get_mut(&number))
         {
-            pull.comments.push(comment.clone());
-            pull.meta.updated_at = comment.created_at;
+            if entry.hydrated {
+                entry.record.comments.push(comment.clone());
+            }
+            entry.record.meta.updated_at = comment.created_at;
         }
         state.bump(&Node::PullMeta(slug.clone(), number));
         Ok(())

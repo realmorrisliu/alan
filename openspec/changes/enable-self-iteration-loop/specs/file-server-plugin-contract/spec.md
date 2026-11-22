@@ -64,12 +64,11 @@ leave hidden standing watchers behind bare `alan`.
 - **THEN** no GitHub polling process or background service remains alive unless explicitly started through `alan workflow` or an OS scheduler
 
 ### Requirement: Self-iteration release preparation remains human-gated
-A bounded release-preparation workflow MAY gather changes since the previous
-release tag, update crate versions and changelog entries, run `just quality` and
-release verification in an isolated worktree, and open a release pull request.
-Merging the release PR, pushing git tags, and publishing release artifacts SHALL
-require explicit human confirmation, after which `alan update` MAY install the
-published release locally.
+Merging release pull requests and publishing tags or artifacts SHALL require
+explicit human confirmation. A bounded release-preparation workflow MAY gather
+changes since the previous tag, update versions and changelog entries, verify
+`just quality` in an isolated worktree, and open a release pull request, after
+which `alan update` MAY install the published release locally.
 
 #### Scenario: Release workflow prepares a verified PR without autonomous publication
 - **WHEN** an operator triggers the release-preparation workflow

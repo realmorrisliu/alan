@@ -87,10 +87,13 @@ pub(super) async fn submit_via_gh_binary(
         .context("spawn `gh issue create`")?;
 
     if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(body.as_bytes())
-            .await
-            .context("write issue body to `gh issue create` stdin")?;
+        match stdin.write_all(body.as_bytes()).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(err) => {
+                return Err(err).context("write issue body to `gh issue create` stdin");
+            }
+        }
         drop(stdin);
     }
 
@@ -258,9 +261,11 @@ mod tests {
             "gh-fail",
             "#!/bin/sh\nif [ \"$1\" = \"auth\" ]; then exit 0; fi\necho 'network unreachable' >&2\nexit 1\n",
         );
-        let err = submit_via_gh_binary(gh.as_os_str(), "realmorrisliu/alan", "t", "b")
+        // Include a large body too so EPIPE on fast-exiting child does not mask stderr.
+        let large_body = "x".repeat(256 * 1024);
+        let err = submit_via_gh_binary(gh.as_os_str(), "realmorrisliu/alan", "t", &large_body)
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("network unreachable"));
+        assert!(err.to_string().contains("network unreachable"), "{err:#}");
     }
 }

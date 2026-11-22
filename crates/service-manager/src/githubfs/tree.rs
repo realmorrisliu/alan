@@ -115,11 +115,23 @@ impl GithubFid {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct CachedIssue {
+    pub(super) record: IssueRecord,
+    pub(super) hydrated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct CachedPull {
+    pub(super) record: PullRecord,
+    pub(super) hydrated: bool,
+}
+
 #[derive(Default)]
 pub(super) struct RepoCache {
     pub(super) etag: Option<String>,
-    pub(super) issues: BTreeMap<u64, IssueRecord>,
-    pub(super) pulls: BTreeMap<u64, PullRecord>,
+    pub(super) issues: BTreeMap<u64, CachedIssue>,
+    pub(super) pulls: BTreeMap<u64, CachedPull>,
     pub(super) last_created_issue: Option<CreatedIssue>,
 }
 
@@ -227,10 +239,60 @@ impl FsState {
             cache.etag = Some(new_etag);
         }
         for issue in data.issues {
-            cache.issues.insert(issue.meta.number, issue);
+            let num = issue.meta.number;
+            let entry = if data.details_hydrated {
+                CachedIssue {
+                    record: issue,
+                    hydrated: true,
+                }
+            } else if let Some(prev) = cache.issues.get(&num)
+                && prev.hydrated
+                && prev.record.meta.updated_at == issue.meta.updated_at
+            {
+                CachedIssue {
+                    record: IssueRecord {
+                        meta: issue.meta,
+                        body: issue.body,
+                        comments: prev.record.comments.clone(),
+                    },
+                    hydrated: true,
+                }
+            } else {
+                CachedIssue {
+                    record: issue,
+                    hydrated: false,
+                }
+            };
+            cache.issues.insert(num, entry);
         }
         for pull in data.pulls {
-            cache.pulls.insert(pull.meta.number, pull);
+            let num = pull.meta.number;
+            let entry = if data.details_hydrated {
+                CachedPull {
+                    record: pull,
+                    hydrated: true,
+                }
+            } else if let Some(prev) = cache.pulls.get(&num)
+                && prev.hydrated
+                && prev.record.meta.head_sha == pull.meta.head_sha
+                && prev.record.meta.updated_at == pull.meta.updated_at
+            {
+                CachedPull {
+                    record: PullRecord {
+                        meta: pull.meta,
+                        checks: prev.record.checks.clone(),
+                        reviews: prev.record.reviews.clone(),
+                        comments: prev.record.comments.clone(),
+                    },
+                    hydrated: true,
+                }
+            } else {
+                CachedPull {
+                    record: pull,
+                    hydrated: false,
+                }
+            };
+            cache.pulls.insert(num, entry);
         }
 
         let mut lines = Vec::new();

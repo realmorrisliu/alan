@@ -378,3 +378,242 @@ async fn dispatcher_live_tail_processes_events_and_stops_cleanly_on_shutdown() {
         }
     ));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn list_only_sync_hydrates_details_on_read_preserves_unchanged_and_revalidates_on_change() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sync_phase = dir.path().join("phase.txt");
+    std::fs::write(&sync_phase, "1").unwrap();
+    let gh_script = dir.path().join("gh");
+
+    let script = format!(
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${{1:-}}" == "auth" && "${{2:-}}" == "token" ]]; then
+  echo "ghp_sync_hydration_token"
+  exit 0
+fi
+phase="$(cat "{phase_file}")"
+if [[ "${{1:-}}" == "api" ]]; then
+  all_args="$*"
+  case "$all_args" in
+    *"repos/acme/alan/events"*)
+      printf 'HTTP/1.1 200 OK\r\nETag: W/"sync-%s"\r\n\r\n[]' "$phase"
+      ;;
+    *"repos/acme/alan/issues/10/comments"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n[{{"id":101,"user":{{"login":"morris"}},"body":"issue-comment-%s","created_at":"2026-11-22T01:00:00Z"}}]' "$phase"
+      ;;
+    *"repos/acme/alan/issues/20/comments"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n[]'
+      ;;
+    *"repos/acme/alan/issues/10"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n{{"number":10,"title":"Bug","user":{{"login":"morris"}},"state":"open","labels":[],"updated_at":"2026-11-22T01:00:00Z","body":"b","html_url":"https://github.com/acme/alan/issues/10"}}'
+      ;;
+    *"repos/acme/alan/issues"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n[{{"number":10,"title":"Bug","user":{{"login":"morris"}},"state":"open","labels":[],"updated_at":"2026-11-22T01:00:00Z","body":"b","html_url":"https://github.com/acme/alan/issues/10"}}]'
+      ;;
+    *"repos/acme/alan/pulls/20/reviews"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n[{{"id":201,"user":{{"login":"codex"}},"state":"COMMENTED","body":"review-%s","submitted_at":"2026-11-22T01:05:00Z"}}]' "$phase"
+      ;;
+    *"repos/acme/alan/pulls/20"*)
+      sha="sha-1"; updated="2026-11-22T01:00:00Z"
+      if [[ "$phase" == "3" ]]; then sha="sha-2"; updated="2026-11-22T02:00:00Z"; fi
+      printf 'HTTP/1.1 200 OK\r\n\r\n{{"number":20,"title":"PR","user":{{"login":"morris"}},"state":"open","draft":false,"mergeable":true,"head":{{"ref":"fix","sha":"%s"}},"base":{{"ref":"main"}},"updated_at":"%s","html_url":"https://github.com/acme/alan/pull/20"}}' "$sha" "$updated"
+      ;;
+    *"repos/acme/alan/pulls"*)
+      sha="sha-1"; updated="2026-11-22T01:00:00Z"
+      if [[ "$phase" == "3" ]]; then sha="sha-2"; updated="2026-11-22T02:00:00Z"; fi
+      printf 'HTTP/1.1 200 OK\r\n\r\n[{{"number":20,"title":"PR","user":{{"login":"morris"}},"state":"open","draft":false,"mergeable":true,"head":{{"ref":"fix","sha":"%s"}},"base":{{"ref":"main"}},"updated_at":"%s","html_url":"https://github.com/acme/alan/pull/20"}}]' "$sha" "$updated"
+      ;;
+    *"repos/acme/alan/commits/sha-1/check-runs"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n{{"check_runs":[{{"name":"ci-1","status":"completed","conclusion":"failure","details_url":"https://ci/1"}}]}}'
+      ;;
+    *"repos/acme/alan/commits/sha-2/check-runs"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n{{"check_runs":[{{"name":"ci-2","status":"completed","conclusion":"success","details_url":"https://ci/2"}}]}}'
+      ;;
+    *)
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+exit 1
+"#,
+        phase_file = sync_phase.display()
+    );
+    std::fs::write(&gh_script, script).unwrap();
+    let mut perms = std::fs::metadata(&gh_script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gh_script, perms).unwrap();
+
+    let backend = Arc::new(GhCliGithubBackend::with_binary(&gh_script));
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+    let githubfs = Arc::new(
+        GithubFs::with_watched_repos(backend, [slug.clone()])
+            .await
+            .unwrap(),
+    );
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/mnt/github",
+        InProcessTransport::new(githubfs),
+        Access::ReadWrite,
+    );
+    let shell = alan_shell::Shell::new(InProcessTransport::new(Arc::new(MountFs::new(ns))));
+
+    // Phase 1: list-only sync must still hydrate checks.json, reviews.json, and issue comments.
+    shell.write("/mnt/github/ctl", b"sync").await.unwrap();
+    let checks_1 = String::from_utf8(
+        shell
+            .cat("/mnt/github/repos/acme/alan/pulls/20/checks.json")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(checks_1.contains("ci-1"), "{checks_1}");
+    let reviews_1 = String::from_utf8(
+        shell
+            .cat("/mnt/github/repos/acme/alan/pulls/20/reviews.json")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(reviews_1.contains("review-1"), "{reviews_1}");
+    let comments_1 = String::from_utf8(
+        shell
+            .cat("/mnt/github/repos/acme/alan/issues/10/comments")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(comments_1.contains("issue-comment-1"), "{comments_1}");
+
+    // Phase 2: unchanged head_sha/updated_at preserves previously hydrated details across sync.
+    std::fs::write(&sync_phase, "2").unwrap();
+    shell.write("/mnt/github/ctl", b"sync").await.unwrap();
+    let checks_2 = String::from_utf8(
+        shell
+            .cat("/mnt/github/repos/acme/alan/pulls/20/checks.json")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(checks_2.contains("ci-1"), "{checks_2}");
+    let reviews_2 = String::from_utf8(
+        shell
+            .cat("/mnt/github/repos/acme/alan/pulls/20/reviews.json")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(reviews_2.contains("review-1"), "{reviews_2}");
+
+    // Phase 3: new head_sha/updated_at invalidates hydration so fresh details are fetched.
+    std::fs::write(&sync_phase, "3").unwrap();
+    shell.write("/mnt/github/ctl", b"sync").await.unwrap();
+    let checks_3 = String::from_utf8(
+        shell
+            .cat("/mnt/github/repos/acme/alan/pulls/20/checks.json")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(checks_3.contains("ci-2"), "{checks_3}");
+    let reviews_3 = String::from_utf8(
+        shell
+            .cat("/mnt/github/repos/acme/alan/pulls/20/reviews.json")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(reviews_3.contains("review-3"), "{reviews_3}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gh_cli_sync_defers_event_dedup_on_failure_and_ignores_fast_fail_stdin_epipe() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let fail_pulls = dir.path().join("fail_pulls.txt");
+    std::fs::write(&fail_pulls, "1").unwrap();
+    let gh_script = dir.path().join("gh");
+
+    let script = format!(
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${{1:-}}" == "auth" && "${{2:-}}" == "token" ]]; then
+  echo "ghp_transient_token"
+  exit 0
+fi
+if [[ "${{1:-}}" == "api" ]]; then
+  all_args="$*"
+  if [[ "$all_args" == *"-X POST"* && "$all_args" == *"repos/acme/alan/issues"* ]]; then
+    # Exit immediately without reading stdin to force EPIPE on large request bodies.
+    printf 'HTTP/1.1 422 Unprocessable Entity\r\n\r\n{{"message":"validation failed"}}'
+    echo "validation failed" >&2
+    exit 1
+  fi
+  if [[ "$all_args" == *"repos/acme/alan/events"* ]]; then
+    printf 'HTTP/1.1 200 OK\r\nETag: W/"e-1"\r\n\r\n[{{"id":"ev-transient-1","type":"IssuesEvent","actor":{{"login":"morris"}},"created_at":"2026-11-22T01:00:00Z","payload":{{"action":"labeled","issue":{{"number":42,"labels":[{{"name":"alan:auto"}}]}}}}}}]'
+    exit 0
+  fi
+  if [[ "$all_args" == *"repos/acme/alan/issues"* ]]; then
+    printf 'HTTP/1.1 200 OK\r\n\r\n[]'
+    exit 0
+  fi
+  if [[ "$all_args" == *"repos/acme/alan/pulls"* ]]; then
+    if [[ "$(cat "{fail_flag}")" == "1" ]]; then
+      echo "transient upstream 500" >&2
+      exit 1
+    fi
+    printf 'HTTP/1.1 200 OK\r\n\r\n[]'
+    exit 0
+  fi
+fi
+exit 1
+"#,
+        fail_flag = fail_pulls.display()
+    );
+    std::fs::write(&gh_script, script).unwrap();
+    let mut perms = std::fs::metadata(&gh_script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gh_script, perms).unwrap();
+
+    let backend = GhCliGithubBackend::with_binary(&gh_script);
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+
+    // First sync fails on pulls: must return Err and MUST NOT lose ev-transient-1.
+    assert!(backend.sync_repo(&slug, None).await.is_err());
+
+    // Second sync recovers: ev-transient-1 must still be delivered.
+    std::fs::write(&fail_pulls, "0").unwrap();
+    let SyncRepoOutcome::Updated(second) = backend.sync_repo(&slug, None).await.unwrap() else {
+        panic!("expected Updated on retry");
+    };
+    assert_eq!(second.events.len(), 1);
+    assert_eq!(second.events[0].event_id, "ev-transient-1");
+
+    // Third sync deduplicates already-committed ev-transient-1.
+    let SyncRepoOutcome::Updated(third) = backend.sync_repo(&slug, None).await.unwrap() else {
+        panic!("expected Updated without ETag");
+    };
+    assert!(third.events.is_empty(), "{:?}", third.events);
+
+    // Large payload POST to a fast-exiting gh script surfaces API error instead of BrokenPipe.
+    let err = backend
+        .create_issue(
+            &slug,
+            NewIssueRequest {
+                title: "Big".to_string(),
+                body: "y".repeat(256 * 1024),
+                labels: vec![],
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("HTTP 422"), "{err}");
+}
