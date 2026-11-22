@@ -834,18 +834,16 @@ fn pty_e2e_m6_help_no_ghost_esc_dismiss_completion_shift_tab_and_login() -> Resu
             !s.contains("Shortcuts & Modals:") && !s.contains("Commands:")
         })?;
 
-        // Shift+Tab cycles trust posture confined/trusted <-> governed.
+        // Shift+Tab cycles trust posture auto-approve <-> governed.
         write_master(&master_write, b"\x1b[Z")?;
-        screen.wait_for(
-            "Shift+Tab confined/trusted",
-            Duration::from_secs(3),
-            |s, _| s.contains("confined/trusted"),
-        )?;
+        screen.wait_for("Shift+Tab auto-approve", Duration::from_secs(3), |s, _| {
+            s.contains("auto-approve")
+        })?;
         write_master(&master_write, b"\x1b[Z")?;
         screen.wait_for(
             "Shift+Tab back to governed",
             Duration::from_secs(3),
-            |s, _| s.contains("Trust posture: governed"),
+            |s, _| s.contains("Permissions: governed"),
         )?;
 
         // Unconfigured prompt submission settles cleanly, shows guidance, and clears composer so /login runs right after.

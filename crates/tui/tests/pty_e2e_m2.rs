@@ -753,22 +753,23 @@ fn pty_e2e_m2_ergonomics_multiline_editor_modals_status_and_yield() -> Result<()
     let reader_handle = spawn_master_reader(master_read, master_write.clone(), screen.clone());
 
     let res = (|| -> Result<()> {
-        // Wait for rendered markdown table + ctx usage + sandbox.
-        screen.wait_for("initial M2 UI frame", Duration::from_secs(6), |s, _| {
-            s.contains("ctx 10%")
-                && s.contains("seatbelt")
-                && s.contains("Col")
-                && s.contains("two")
+        // Wait for rendered markdown table + ctx usage without raw sandbox backend jargon.
+        let initial = screen.wait_for("initial M2 UI frame", Duration::from_secs(6), |s, _| {
+            s.contains("ctx 10%") && s.contains("Col") && s.contains("two")
         })?;
+        assert!(!initial.contains("seatbelt"), "{initial}");
 
-        // Mount /project so git branch appears cleanly in status bar.
+        // Mount /project so git branch + read-write posture appear cleanly in status bar.
         write_master(&master_write, b"/project\r")?;
         screen.wait_for("project picker open", Duration::from_secs(3), |s, _| {
             s.contains("project path")
         })?;
         write_master(&master_write, b"\r")?;
         screen.wait_for("git branch mounted", Duration::from_secs(4), |s, _| {
-            s.contains("m2-repo") && s.contains("git:feat/m2")
+            s.contains("m2-repo")
+                && s.contains("git:feat/m2")
+                && s.contains("read-write")
+                && !s.contains("seatbelt")
         })?;
 
         // ActionModal hides raw JSON by default, switches items with `[`, and toggles with `d`.

@@ -520,7 +520,8 @@ fn context_line_shows_git_usage_sandbox_and_respects_narrow_widths() {
     assert!(wide.contains("git:feat/tui*"), "{wide}");
     assert!(wide.contains("gpt-5.4"), "{wide}");
     assert!(wide.contains("ctx 10% (12.8k/128.0k)"), "{wide}");
-    assert!(wide.contains("seatbelt/read-write"), "{wide}");
+    assert!(wide.contains("read-write"), "{wide}");
+    assert!(!wide.contains("seatbelt"), "{wide}");
 
     for width in [18usize, 32, 48, 72] {
         let narrow = app.context_line(width).to_string();
@@ -529,6 +530,11 @@ fn context_line_shows_git_usage_sandbox_and_respects_narrow_widths() {
             "width {width} exceeded: {narrow:?}"
         );
     }
+
+    app.project = None;
+    let unmounted = app.context_line(140).to_string();
+    assert!(!unmounted.contains("seatbelt"), "{unmounted}");
+    assert!(!unmounted.contains("read-write"), "{unmounted}");
 }
 
 #[test]

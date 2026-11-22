@@ -265,9 +265,8 @@ impl FileBackedApp {
         }
         let trust = self.project.as_ref().map(|p| p.access.label());
         match (self.sandbox_backend.as_deref(), trust) {
-            (Some(sb), Some(tr)) => Some((format!("{sb}/{tr}"), self.theme.muted_style(), false)),
-            (Some(sb), None) => Some((sb.to_string(), self.theme.muted_style(), false)),
-            (None, _) => None,
+            (Some(_), Some(tr)) => Some((tr.to_string(), self.theme.muted_style(), false)),
+            (Some(_), None) | (None, _) => None,
         }
     }
 

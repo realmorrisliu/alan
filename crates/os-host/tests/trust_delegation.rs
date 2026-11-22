@@ -197,7 +197,7 @@ fn host_boot_config_records_explicit_invocation_trust_postures_without_mutating_
     assert!(confined.trust_posture().offers_tamperproof_confinement());
     assert_eq!(
         confined.trust_posture().tui_badge_label(),
-        Some("confined/trusted")
+        Some("auto-approve")
     );
 
     let host_account = HostBootConfig::ephemeral(

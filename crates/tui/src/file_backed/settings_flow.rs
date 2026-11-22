@@ -21,7 +21,7 @@ const SETTINGS_MENU_ITEMS: [(&str, &str); 5] = [
     ),
     (
         "Trust Posture",
-        "cycle governed vs confined/trusted (/permissions)",
+        "cycle governed vs auto-approve (/permissions)",
     ),
     (
         "Reset connections & settings",

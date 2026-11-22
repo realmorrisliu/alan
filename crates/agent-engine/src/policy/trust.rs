@@ -151,8 +151,8 @@ impl TrustPosture {
     pub const fn tui_badge_label(self) -> Option<&'static str> {
         match self {
             Self::Governed => None,
-            Self::ConfinedTrusted => Some("confined/trusted"),
-            Self::HostAccountTrusted => Some("UNSANDBOXED host-account"),
+            Self::ConfinedTrusted => Some("auto-approve"),
+            Self::HostAccountTrusted => Some("unsandboxed"),
         }
     }
 
@@ -264,11 +264,11 @@ mod tests {
         assert_eq!(TrustPosture::Governed.tui_badge_label(), None);
         assert_eq!(
             TrustPosture::ConfinedTrusted.tui_badge_label(),
-            Some("confined/trusted")
+            Some("auto-approve")
         );
         assert_eq!(
             TrustPosture::HostAccountTrusted.tui_badge_label(),
-            Some("UNSANDBOXED host-account")
+            Some("unsandboxed")
         );
 
         assert!(TrustPosture::ConfinedTrusted.uses_os_sandbox());

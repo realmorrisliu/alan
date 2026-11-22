@@ -144,11 +144,11 @@ impl FileBackedApp {
         match arg.as_str() {
             "" => self.toggle_trust_posture(),
             "governed" => self.set_trust_posture(false),
-            "trusted" | "confined" | "confined-trusted" | "confined/trusted"
-            | "confined_trusted" => self.set_trust_posture(true),
+            "auto-approve" | "auto_approve" | "trusted" | "confined" | "confined-trusted"
+            | "confined/trusted" | "confined_trusted" => self.set_trust_posture(true),
             _ => {
                 self.notice = Some(Notice::warning(
-                    "usage: /permissions [governed|trusted] (or press Shift+Tab to cycle)",
+                    "usage: /permissions [governed|auto-approve] (or press Shift+Tab to cycle)",
                 ));
                 None
             }
@@ -158,7 +158,9 @@ impl FileBackedApp {
     pub(in crate::file_backed) fn toggle_trust_posture(&mut self) -> Option<FileBackedAction> {
         let currently_confined_trusted = self.trust_posture_label.as_deref().is_some_and(|l| {
             let trimmed = l.trim();
-            trimmed.eq_ignore_ascii_case("confined/trusted")
+            trimmed.eq_ignore_ascii_case("auto-approve")
+                || trimmed.eq_ignore_ascii_case("auto_approve")
+                || trimmed.eq_ignore_ascii_case("confined/trusted")
                 || trimmed.eq_ignore_ascii_case("confined-trusted")
                 || trimmed.eq_ignore_ascii_case("confined_trusted")
         });
@@ -183,18 +185,18 @@ impl FileBackedApp {
             return None;
         }
         if confined_trusted {
-            self.trust_posture_label = Some("confined/trusted".to_string());
+            self.trust_posture_label = Some("auto-approve".to_string());
             self.refresh_welcome_header();
-            let msg = "Trust posture: confined/trusted (OS sandbox active; Shift+Tab cycles).";
+            let msg = "Permissions: auto-approve (OS sandbox active; Shift+Tab cycles).";
             self.notice = Some(msg.into());
             Some(FileBackedAction::MachineCtl {
                 command: "trust-posture confined-trusted".to_string(),
                 success_notice: msg.to_string(),
             })
         } else {
-            self.trust_posture_label = Some("governed".to_string());
+            self.trust_posture_label = None;
             self.refresh_welcome_header();
-            let msg = "Trust posture: governed (OS sandbox + approvals; Shift+Tab cycles).";
+            let msg = "Permissions: governed (OS sandbox + approvals; Shift+Tab cycles).";
             self.notice = Some(msg.into());
             Some(FileBackedAction::MachineCtl {
                 command: "trust-posture governed".to_string(),

@@ -309,8 +309,8 @@ async fn run_m3_session() -> Result<()> {
 
     let mut cfg = FileBackedRunConfig::new(InProcessTransport::new(mount_fs), "/agent/root");
     cfg.effective_model = Some("gpt-5.4".into());
-    cfg.sandbox_backend = Some("unsandboxed host-account".into());
-    cfg.trust_posture_label = Some("UNSANDBOXED host-account".into());
+    cfg.sandbox_backend = None;
+    cfg.trust_posture_label = Some("unsandboxed".into());
     run_file_backed(cfg).await
 }
 
@@ -339,9 +339,10 @@ fn pty_e2e_m3_trust_badge_resume_picker_and_summary() -> Result<()> {
     let reader = spawn_reader(master_read, master_write.clone(), screen.clone());
 
     // 1. Trust posture warning badge renders clearly on startup banner + context line.
-    screen.wait_for("unsandboxed badge startup", Duration::from_secs(6), |s| {
-        s.contains("UNSANDBOXED host-account") && s.contains("ALAN(1) · alan9")
+    let startup = screen.wait_for("unsandboxed badge startup", Duration::from_secs(6), |s| {
+        s.contains("unsandboxed") && s.contains("ALAN(1) · alan9")
     })?;
+    assert!(!startup.contains("host-account"), "{startup}");
 
     // 2. `/resume` renders catalog entries + Start fresh option, and Esc cancels cleanly.
     {
