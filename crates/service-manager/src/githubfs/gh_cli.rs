@@ -4,7 +4,9 @@
 //! passed only via `GH_TOKEN` env to child `gh` processes. Tokens are never serialized
 //! into any namespace file, error message, or debug formatter.
 
-use std::collections::HashSet;
+mod parse;
+
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -19,11 +21,24 @@ use tokio::process::Command;
 
 use super::{
     GithubBackend, GithubBackendError, GithubCheckRun, GithubComment, GithubEvent, GithubIssueMeta,
-    GithubPullChecks, GithubPullMeta, GithubPullReviews, GithubReview, IssueRecord,
-    NewIssueRequest, PullRecord, RateLimitUpdate, RepoSlug, SyncRepoData, SyncRepoOutcome,
+    GithubPullChecks, GithubPullMeta, GithubPullReviews, GithubReview, GithubReviewThread,
+    IssueRecord, NewIssueRequest, PullRecord, RateLimitUpdate, RepoSlug, SyncRepoData,
+    SyncRepoOutcome,
+};
+use parse::{
+    apply_pull_meta_to_event, parse_gh_comment, parse_gh_events, parse_gh_issue_meta,
+    parse_gh_pull_meta, parse_graphql_review_threads_page,
 };
 
 const ACCEPT_JSON_HEADER: &str = "Accept: application/vnd.github+json";
+const PR_REVIEW_THREADS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!,$after:String){\
+repository(owner:$owner,name:$repo){\
+pullRequest(number:$number){\
+reviewThreads(first:100,after:$after){\
+pageInfo{hasNextPage endCursor}\
+nodes{id isResolved path line originalLine comments(first:1){nodes{author{login} body}}}\
+}}}}";
+const MAX_REVIEW_THREAD_PAGES: usize = 10;
 
 /// Non-leaking wrapper holding an ephemeral Host token resolved via `gh auth token`.
 #[derive(Clone)]
@@ -197,6 +212,153 @@ impl GhCliGithubBackend {
         let (items, _) = self.gh_get_json::<Vec<Value>>(&path).await?;
         Ok(items.iter().map(parse_gh_comment).collect())
     }
+
+    async fn fetch_pull_checks(
+        &self,
+        repo: &RepoSlug,
+        head_sha: &str,
+    ) -> Result<GithubPullChecks, GithubBackendError> {
+        if head_sha.trim().is_empty() {
+            return Ok(GithubPullChecks {
+                head_sha: String::new(),
+                checks: Vec::new(),
+            });
+        }
+        let (checks_json, _) = self
+            .gh_get_json::<Value>(&format!("repos/{repo}/commits/{head_sha}/check-runs"))
+            .await?;
+        let runs = checks_json["check_runs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|c| GithubCheckRun {
+                name: c["name"].as_str().unwrap_or_default().to_string(),
+                status: c["status"].as_str().unwrap_or_default().to_string(),
+                conclusion: c["conclusion"].as_str().map(ToString::to_string),
+                details_url: c["details_url"].as_str().map(ToString::to_string),
+            })
+            .collect();
+        Ok(GithubPullChecks {
+            head_sha: head_sha.to_string(),
+            checks: runs,
+        })
+    }
+
+    async fn fetch_unresolved_review_threads(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+    ) -> Result<Vec<GithubReviewThread>, GithubBackendError> {
+        let mut threads = Vec::new();
+        let mut after: Option<String> = None;
+        for _ in 0..MAX_REVIEW_THREAD_PAGES {
+            let payload = serde_json::json!({
+                "query": PR_REVIEW_THREADS_QUERY,
+                "variables": {
+                    "owner": repo.owner,
+                    "repo": repo.repo,
+                    "number": number,
+                    "after": after,
+                },
+            });
+            let body: Value = self.gh_send_json("POST", "graphql", Some(&payload)).await?;
+            let (page_threads, next_cursor) = parse_graphql_review_threads_page(&body)?;
+            threads.extend(page_threads);
+            if let Some(cursor) = next_cursor {
+                after = Some(cursor);
+            } else {
+                break;
+            }
+        }
+        Ok(threads)
+    }
+
+    async fn fetch_optional_meta<T>(
+        &self,
+        path: &str,
+        parse: fn(&Value) -> T,
+    ) -> Result<Option<T>, GithubBackendError> {
+        match self.gh_get_json::<Value>(path).await {
+            Ok((v, _)) => Ok(Some(parse(&v))),
+            Err(err) if err.code == ErrorCode::NotFound => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn hydrate_event_metadata(
+        &self,
+        repo: &RepoSlug,
+        events: &mut [GithubEvent],
+        issues: &[IssueRecord],
+        pulls: &[PullRecord],
+    ) -> Result<(), GithubBackendError> {
+        use std::collections::hash_map::Entry;
+
+        let issues_by_num: HashMap<u64, &GithubIssueMeta> =
+            issues.iter().map(|i| (i.meta.number, &i.meta)).collect();
+        let pulls_by_num: HashMap<u64, &GithubPullMeta> =
+            pulls.iter().map(|p| (p.meta.number, &p.meta)).collect();
+        let mut fetched_pulls: HashMap<u64, Option<GithubPullMeta>> = HashMap::new();
+        let mut fetched_issues: HashMap<u64, Option<GithubIssueMeta>> = HashMap::new();
+
+        for event in events {
+            let Some(num) = event.number else {
+                continue;
+            };
+            match event.target_kind.as_deref() {
+                Some("pull") => {
+                    let needs_fill = event.labels.is_empty()
+                        || event.head_sha.is_none()
+                        || event.branch.is_none();
+                    if !needs_fill {
+                        continue;
+                    }
+                    if let Some(meta) = pulls_by_num.get(&num).copied() {
+                        apply_pull_meta_to_event(event, meta);
+                        continue;
+                    }
+                    let meta = match fetched_pulls.entry(num) {
+                        Entry::Occupied(entry) => entry.into_mut().as_ref(),
+                        Entry::Vacant(entry) => {
+                            let fetched = self
+                                .fetch_optional_meta(
+                                    &format!("repos/{repo}/pulls/{num}"),
+                                    parse_gh_pull_meta,
+                                )
+                                .await?;
+                            entry.insert(fetched).as_ref()
+                        }
+                    };
+                    if let Some(meta) = meta {
+                        apply_pull_meta_to_event(event, meta);
+                    }
+                }
+                Some("issue") if event.labels.is_empty() => {
+                    if let Some(meta) = issues_by_num.get(&num).copied() {
+                        event.labels = meta.labels.clone();
+                        continue;
+                    }
+                    let meta = match fetched_issues.entry(num) {
+                        Entry::Occupied(entry) => entry.into_mut().as_ref(),
+                        Entry::Vacant(entry) => {
+                            let fetched = self
+                                .fetch_optional_meta(
+                                    &format!("repos/{repo}/issues/{num}"),
+                                    parse_gh_issue_meta,
+                                )
+                                .await?;
+                            entry.insert(fetched).as_ref()
+                        }
+                    };
+                    if let Some(meta) = meta {
+                        event.labels = meta.labels.clone();
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -313,140 +475,6 @@ fn parse_http_response(raw: &str) -> Option<GhHttpResponse> {
     })
 }
 
-fn parse_label_names(v: &Value) -> Vec<String> {
-    v["labels"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|l| l["name"].as_str().map(ToString::to_string))
-        .collect()
-}
-
-fn parse_gh_issue_meta(v: &Value) -> GithubIssueMeta {
-    GithubIssueMeta {
-        number: v["number"].as_u64().unwrap_or(0),
-        title: v["title"].as_str().unwrap_or_default().to_string(),
-        author: v["user"]["login"].as_str().unwrap_or_default().to_string(),
-        state: v["state"].as_str().unwrap_or("open").to_string(),
-        labels: parse_label_names(v),
-        updated_at: v["updated_at"].as_str().unwrap_or_default().to_string(),
-        url: v["html_url"].as_str().unwrap_or_default().to_string(),
-    }
-}
-
-fn parse_gh_comment(v: &Value) -> GithubComment {
-    GithubComment {
-        id: v["id"].as_u64().unwrap_or(0),
-        author: v["user"]["login"].as_str().unwrap_or_default().to_string(),
-        body: v["body"].as_str().unwrap_or_default().to_string(),
-        created_at: v["created_at"].as_str().unwrap_or_default().to_string(),
-    }
-}
-
-fn parse_gh_pull_meta(v: &Value) -> GithubPullMeta {
-    GithubPullMeta {
-        number: v["number"].as_u64().unwrap_or(0),
-        title: v["title"].as_str().unwrap_or_default().to_string(),
-        author: v["user"]["login"].as_str().unwrap_or_default().to_string(),
-        head_ref: v["head"]["ref"].as_str().unwrap_or_default().to_string(),
-        head_sha: v["head"]["sha"].as_str().unwrap_or_default().to_string(),
-        base_ref: v["base"]["ref"].as_str().unwrap_or_default().to_string(),
-        state: v["state"].as_str().unwrap_or("open").to_string(),
-        mergeable: v["mergeable"].as_bool(),
-        labels: parse_label_names(v),
-        updated_at: v["updated_at"].as_str().unwrap_or_default().to_string(),
-        url: v["html_url"].as_str().unwrap_or_default().to_string(),
-    }
-}
-
-fn parse_gh_events(repo: &RepoSlug, items: &[Value]) -> Vec<GithubEvent> {
-    items
-        .iter()
-        .rev()
-        .filter_map(|item| {
-            let event_id = item["id"].as_str()?.to_string();
-            let raw_type = item["type"].as_str().unwrap_or("unknown");
-            let actor = item["actor"]["login"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            let payload = &item["payload"];
-            let action = payload["action"].as_str().unwrap_or_default();
-            let (kind, target_kind, number, labels, head_sha, branch) = match raw_type {
-                "IssuesEvent" => (
-                    format!("issue_{action}"),
-                    Some("issue".to_string()),
-                    payload["issue"]["number"].as_u64(),
-                    parse_label_names(&payload["issue"]),
-                    None,
-                    None,
-                ),
-                "IssueCommentEvent" => (
-                    "issue_commented".to_string(),
-                    Some(if payload["issue"]["pull_request"].is_object() {
-                        "pull".to_string()
-                    } else {
-                        "issue".to_string()
-                    }),
-                    payload["issue"]["number"].as_u64(),
-                    parse_label_names(&payload["issue"]),
-                    None,
-                    None,
-                ),
-                "PullRequestEvent" => (
-                    format!("pull_{action}"),
-                    Some("pull".to_string()),
-                    payload["pull_request"]["number"]
-                        .as_u64()
-                        .or_else(|| payload["number"].as_u64()),
-                    parse_label_names(&payload["pull_request"]),
-                    payload["pull_request"]["head"]["sha"]
-                        .as_str()
-                        .map(ToString::to_string),
-                    payload["pull_request"]["head"]["ref"]
-                        .as_str()
-                        .map(ToString::to_string),
-                ),
-                "PullRequestReviewEvent" => (
-                    "pull_review".to_string(),
-                    Some("pull".to_string()),
-                    payload["pull_request"]["number"].as_u64(),
-                    Vec::new(),
-                    payload["pull_request"]["head"]["sha"]
-                        .as_str()
-                        .map(ToString::to_string),
-                    payload["pull_request"]["head"]["ref"]
-                        .as_str()
-                        .map(ToString::to_string),
-                ),
-                _ => (
-                    raw_type.to_ascii_lowercase(),
-                    None,
-                    None,
-                    Vec::new(),
-                    payload["head"].as_str().map(ToString::to_string),
-                    payload["ref"]
-                        .as_str()
-                        .map(|r| r.strip_prefix("refs/heads/").unwrap_or(r).to_string()),
-                ),
-            };
-            Some(GithubEvent {
-                cursor: 0,
-                event_id,
-                kind,
-                actor,
-                repo: repo.as_slug(),
-                number,
-                labels,
-                head_sha,
-                target_kind,
-                branch,
-                timestamp: item["created_at"].as_str().map(ToString::to_string),
-            })
-        })
-        .collect()
-}
-
 #[async_trait]
 impl GithubBackend for GhCliGithubBackend {
     async fn list_repos(&self) -> Result<Vec<RepoSlug>, GithubBackendError> {
@@ -487,7 +515,7 @@ impl GithubBackend for GhCliGithubBackend {
 
         let raw_events: Vec<Value> = serde_json::from_str(&resp.body)
             .map_err(|err| GithubBackendError::new(ErrorCode::Io, err.to_string()))?;
-        let candidate_events: Vec<GithubEvent> = {
+        let mut candidate_events: Vec<GithubEvent> = {
             let seen = self
                 .seen_event_ids
                 .lock()
@@ -504,7 +532,7 @@ impl GithubBackend for GhCliGithubBackend {
         let (raw_issues, _) = self
             .gh_get_json::<Vec<Value>>(&format!("repos/{repo}/issues?state=all&per_page=30"))
             .await?;
-        let issues = raw_issues
+        let issues: Vec<IssueRecord> = raw_issues
             .iter()
             .filter(|item| !item["pull_request"].is_object())
             .map(|item| IssueRecord {
@@ -517,7 +545,7 @@ impl GithubBackend for GhCliGithubBackend {
         let (raw_pulls, pulls_resp) = self
             .gh_get_json::<Vec<Value>>(&format!("repos/{repo}/pulls?state=all&per_page=30"))
             .await?;
-        let pulls = raw_pulls
+        let pulls: Vec<PullRecord> = raw_pulls
             .iter()
             .map(|item| {
                 let meta = parse_gh_pull_meta(item);
@@ -536,6 +564,9 @@ impl GithubBackend for GhCliGithubBackend {
                 }
             })
             .collect();
+
+        self.hydrate_event_metadata(repo, &mut candidate_events, &issues, &pulls)
+            .await?;
 
         // Commit deduplication state only after every fallible API call in sync succeeds.
         let new_events = {
@@ -691,34 +722,7 @@ impl GithubBackend for GhCliGithubBackend {
             .gh_get_json::<Value>(&format!("repos/{repo}/pulls/{number}"))
             .await?;
         let meta = parse_gh_pull_meta(&item);
-        let checks = if meta.head_sha.is_empty() {
-            GithubPullChecks {
-                head_sha: String::new(),
-                checks: Vec::new(),
-            }
-        } else {
-            let (checks_json, _) = self
-                .gh_get_json::<Value>(&format!(
-                    "repos/{repo}/commits/{}/check-runs",
-                    meta.head_sha
-                ))
-                .await?;
-            let runs = checks_json["check_runs"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|c| GithubCheckRun {
-                    name: c["name"].as_str().unwrap_or_default().to_string(),
-                    status: c["status"].as_str().unwrap_or_default().to_string(),
-                    conclusion: c["conclusion"].as_str().map(ToString::to_string),
-                    details_url: c["details_url"].as_str().map(ToString::to_string),
-                })
-                .collect();
-            GithubPullChecks {
-                head_sha: meta.head_sha.clone(),
-                checks: runs,
-            }
-        };
+        let checks = self.fetch_pull_checks(repo, &meta.head_sha).await?;
         let (raw_reviews, _) = self
             .gh_get_json::<Vec<Value>>(&format!("repos/{repo}/pulls/{number}/reviews?per_page=100"))
             .await?;
@@ -732,16 +736,34 @@ impl GithubBackend for GhCliGithubBackend {
                 submitted_at: r["submitted_at"].as_str().unwrap_or_default().to_string(),
             })
             .collect();
+        let unresolved_threads = self.fetch_unresolved_review_threads(repo, number).await?;
         let comments = self.fetch_issue_comments(repo, number).await?;
         Ok(PullRecord {
             meta,
             checks,
             reviews: GithubPullReviews {
                 reviews,
-                unresolved_threads: Vec::new(),
+                unresolved_threads,
             },
             comments,
         })
+    }
+
+    async fn get_pull_checks(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+        head_sha: &str,
+    ) -> Result<GithubPullChecks, GithubBackendError> {
+        let resolved_sha = if head_sha.trim().is_empty() {
+            let (item, _) = self
+                .gh_get_json::<Value>(&format!("repos/{repo}/pulls/{number}"))
+                .await?;
+            parse_gh_pull_meta(&item).head_sha
+        } else {
+            head_sha.to_string()
+        };
+        self.fetch_pull_checks(repo, &resolved_sha).await
     }
 
     async fn add_pull_comment(

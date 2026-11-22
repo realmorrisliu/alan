@@ -295,6 +295,42 @@ impl<B: GithubBackend> GithubFs<B> {
         Ok(pull)
     }
 
+    async fn read_pull_checks(
+        &self,
+        slug: &RepoSlug,
+        n: u64,
+    ) -> Result<GithubPullChecks, ErrorCode> {
+        let cached_head_sha = self
+            .state
+            .lock()
+            .await
+            .repos
+            .get(slug)
+            .and_then(|r| r.pulls.get(&n))
+            .map(|entry| entry.record.meta.head_sha.clone());
+        let Some(head_sha) = cached_head_sha else {
+            // Cache miss: full get_pull fetches meta + fresh checks in one pass.
+            return Ok(self.read_pull_record(slug, n, true).await?.checks);
+        };
+        let checks = self
+            .backend
+            .get_pull_checks(slug, n, &head_sha)
+            .await
+            .map_err(|e| e.code)?;
+        if let Some(entry) = self
+            .state
+            .lock()
+            .await
+            .repos
+            .get_mut(slug)
+            .and_then(|r| r.pulls.get_mut(&n))
+            && entry.record.meta.head_sha == checks.head_sha
+        {
+            entry.record.checks = checks.clone();
+        }
+        Ok(checks)
+    }
+
     async fn computed_bytes(&self, node: &Node) -> Result<Vec<u8>, ErrorCode> {
         if let Some(static_bytes) = node.static_bytes() {
             return Ok(static_bytes.to_vec());
@@ -372,7 +408,7 @@ impl<B: GithubBackend> GithubFs<B> {
                 encode_pretty_json(&self.read_pull_record(slug, *n, false).await?.meta)
             }
             Node::PullChecks(slug, n) => {
-                encode_pretty_json(&self.read_pull_record(slug, *n, true).await?.checks)
+                encode_pretty_json(&self.read_pull_checks(slug, *n).await?)
             }
             Node::PullReviews(slug, n) => {
                 encode_pretty_json(&self.read_pull_record(slug, *n, true).await?.reviews)

@@ -164,6 +164,24 @@ if len(sys.argv) >= 2 and sys.argv[1] == "api":
     if path == "repos/acme/alan/commits/sha-2/check-runs" and method == "GET":
         respond("200 OK", {}, {"check_runs": []})
 
+    if path == "graphql" and method == "POST":
+        respond(
+            "200 OK",
+            {},
+            {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [],
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
     if path == "repos/acme/alan/events" and method == "GET":
         # Newest-first as returned by GitHub REST events API; GhCliGithubBackend reverses.
         sync_round = state.get("sync_round", 0) + 1

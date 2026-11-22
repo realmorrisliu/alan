@@ -446,6 +446,15 @@ pub trait GithubBackend: Send + Sync {
         repo: &RepoSlug,
         number: u64,
     ) -> Result<PullRecord, GithubBackendError>;
+    async fn get_pull_checks(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+        head_sha: &str,
+    ) -> Result<GithubPullChecks, GithubBackendError> {
+        let _ = head_sha;
+        self.get_pull(repo, number).await.map(|pull| pull.checks)
+    }
     async fn add_pull_comment(
         &self,
         repo: &RepoSlug,
@@ -844,6 +853,21 @@ impl GithubBackend for MemoryGithubBackend {
             .get(repo)
             .and_then(|r| r.pulls.get(&number))
             .cloned()
+            .ok_or_else(|| GithubBackendError::new(ErrorCode::NotFound, "pull request not found"))
+    }
+
+    async fn get_pull_checks(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+        _head_sha: &str,
+    ) -> Result<GithubPullChecks, GithubBackendError> {
+        let state = self.state.lock().expect("memory github lock poisoned");
+        state
+            .repos
+            .get(repo)
+            .and_then(|r| r.pulls.get(&number))
+            .map(|pull| pull.checks.clone())
             .ok_or_else(|| GithubBackendError::new(ErrorCode::NotFound, "pull request not found"))
     }
 

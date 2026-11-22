@@ -400,8 +400,15 @@ phase="$(cat "{phase_file}")"
 if [[ "${{1:-}}" == "api" ]]; then
   all_args="$*"
   case "$all_args" in
+    *"graphql"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n{{"data":{{"repository":{{"pullRequest":{{"reviewThreads":{{"pageInfo":{{"hasNextPage":false,"endCursor":null}},"nodes":[{{"id":"PRRT_resolved","isResolved":true,"path":"ignored.rs","line":1,"originalLine":1,"comments":{{"nodes":[{{"author":{{"login":"codex"}},"body":"already resolved"}}]}}}},{{"id":"PRRT_1","isResolved":false,"path":"crates/service-manager/src/githubfs/gh_cli.rs","line":null,"originalLine":42,"comments":{{"nodes":[{{"author":{{"login":"codex"}},"body":"thread-body-%s"}}]}}}}]}}}}}}}}}}' "$phase"
+      ;;
     *"repos/acme/alan/events"*)
-      printf 'HTTP/1.1 200 OK\r\nETag: W/"sync-%s"\r\n\r\n[]' "$phase"
+      if [[ "$phase" == "2b" ]]; then
+        printf 'HTTP/1.1 304 Not Modified\r\n\r\n'
+      else
+        printf 'HTTP/1.1 200 OK\r\nETag: W/"sync-%s"\r\n\r\n[]' "$phase"
+      fi
       ;;
     *"repos/acme/alan/issues/10/comments"*)
       printf 'HTTP/1.1 200 OK\r\n\r\n[{{"id":101,"user":{{"login":"morris"}},"body":"issue-comment-%s","created_at":"2026-11-22T01:00:00Z"}}]' "$phase"
@@ -429,7 +436,13 @@ if [[ "${{1:-}}" == "api" ]]; then
       printf 'HTTP/1.1 200 OK\r\n\r\n[{{"number":20,"title":"PR","user":{{"login":"morris"}},"state":"open","draft":false,"mergeable":true,"head":{{"ref":"fix","sha":"%s"}},"base":{{"ref":"main"}},"updated_at":"%s","html_url":"https://github.com/acme/alan/pull/20"}}]' "$sha" "$updated"
       ;;
     *"repos/acme/alan/commits/sha-1/check-runs"*)
-      printf 'HTTP/1.1 200 OK\r\n\r\n{{"check_runs":[{{"name":"ci-1","status":"completed","conclusion":"failure","details_url":"https://ci/1"}}]}}'
+      if [[ "$phase" == "1" ]]; then
+        printf 'HTTP/1.1 200 OK\r\n\r\n{{"check_runs":[{{"name":"ci-1","status":"in_progress","conclusion":null,"details_url":"https://ci/1"}}]}}'
+      elif [[ "$phase" == "2a" ]]; then
+        printf 'HTTP/1.1 200 OK\r\n\r\n{{"check_runs":[{{"name":"ci-1","status":"completed","conclusion":"failure","details_url":"https://ci/1"}}]}}'
+      else
+        printf 'HTTP/1.1 200 OK\r\n\r\n{{"check_runs":[{{"name":"ci-1","status":"completed","conclusion":"success","details_url":"https://ci/1"}}]}}'
+      fi
       ;;
     *"repos/acme/alan/commits/sha-2/check-runs"*)
       printf 'HTTP/1.1 200 OK\r\n\r\n{{"check_runs":[{{"name":"ci-2","status":"completed","conclusion":"success","details_url":"https://ci/2"}}]}}'
@@ -464,7 +477,7 @@ exit 1
     );
     let shell = alan_shell::Shell::new(InProcessTransport::new(Arc::new(MountFs::new(ns))));
 
-    // Phase 1: list-only sync must still hydrate checks.json, reviews.json, and issue comments.
+    // Phase 1: list-only sync must still hydrate checks.json (pending), reviews.json + unresolved GraphQL threads, and issue comments.
     shell.write("/mnt/github/ctl", b"sync").await.unwrap();
     let checks_1 = String::from_utf8(
         shell
@@ -474,6 +487,7 @@ exit 1
     )
     .unwrap();
     assert!(checks_1.contains("ci-1"), "{checks_1}");
+    assert!(checks_1.contains("in_progress"), "{checks_1}");
     let reviews_1 = String::from_utf8(
         shell
             .cat("/mnt/github/repos/acme/alan/pulls/20/reviews.json")
@@ -482,6 +496,10 @@ exit 1
     )
     .unwrap();
     assert!(reviews_1.contains("review-1"), "{reviews_1}");
+    assert!(reviews_1.contains("PRRT_1"), "{reviews_1}");
+    assert!(reviews_1.contains("thread-body-1"), "{reviews_1}");
+    assert!(reviews_1.contains("\"line\": 42"), "{reviews_1}");
+    assert!(!reviews_1.contains("PRRT_resolved"), "{reviews_1}");
     let comments_1 = String::from_utf8(
         shell
             .cat("/mnt/github/repos/acme/alan/issues/10/comments")
@@ -491,27 +509,63 @@ exit 1
     .unwrap();
     assert!(comments_1.contains("issue-comment-1"), "{comments_1}");
 
-    // Phase 2: unchanged head_sha/updated_at preserves previously hydrated details across sync.
+    // Phase 2: repeated checks.json read WITHOUT sync observes completion for the same sha/updated_at while reviews stay cached.
     std::fs::write(&sync_phase, "2").unwrap();
-    shell.write("/mnt/github/ctl", b"sync").await.unwrap();
-    let checks_2 = String::from_utf8(
+    let checks_2_nosync = String::from_utf8(
         shell
             .cat("/mnt/github/repos/acme/alan/pulls/20/checks.json")
             .await
             .unwrap(),
     )
     .unwrap();
-    assert!(checks_2.contains("ci-1"), "{checks_2}");
-    let reviews_2 = String::from_utf8(
+    assert!(checks_2_nosync.contains("completed"), "{checks_2_nosync}");
+    assert!(checks_2_nosync.contains("success"), "{checks_2_nosync}");
+    let reviews_2_nosync = String::from_utf8(
         shell
             .cat("/mnt/github/repos/acme/alan/pulls/20/reviews.json")
             .await
             .unwrap(),
     )
     .unwrap();
-    assert!(reviews_2.contains("review-1"), "{reviews_2}");
+    assert!(reviews_2_nosync.contains("review-1"), "{reviews_2_nosync}");
+    assert!(
+        reviews_2_nosync.contains("thread-body-1"),
+        "{reviews_2_nosync}"
+    );
 
-    // Phase 3: new head_sha/updated_at invalidates hydration so fresh details are fetched.
+    // Phase 2a: 200 OK list-only sync with unchanged sha/updated_at still lets checks.json observe fresh check state, while preserving reviews cache.
+    std::fs::write(&sync_phase, "2a").unwrap();
+    shell.write("/mnt/github/ctl", b"sync").await.unwrap();
+    let checks_2a = String::from_utf8(
+        shell
+            .cat("/mnt/github/repos/acme/alan/pulls/20/checks.json")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(checks_2a.contains("failure"), "{checks_2a}");
+    let reviews_2a = String::from_utf8(
+        shell
+            .cat("/mnt/github/repos/acme/alan/pulls/20/reviews.json")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(reviews_2a.contains("review-1"), "{reviews_2a}");
+
+    // Phase 2b: 304 Not Modified sync also allows checks.json to observe completed check runs.
+    std::fs::write(&sync_phase, "2b").unwrap();
+    shell.write("/mnt/github/ctl", b"sync").await.unwrap();
+    let checks_2b = String::from_utf8(
+        shell
+            .cat("/mnt/github/repos/acme/alan/pulls/20/checks.json")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(checks_2b.contains("success"), "{checks_2b}");
+
+    // Phase 3: new head_sha/updated_at invalidates full hydration so reviews and threads refresh too.
     std::fs::write(&sync_phase, "3").unwrap();
     shell.write("/mnt/github/ctl", b"sync").await.unwrap();
     let checks_3 = String::from_utf8(
@@ -530,6 +584,7 @@ exit 1
     )
     .unwrap();
     assert!(reviews_3.contains("review-3"), "{reviews_3}");
+    assert!(reviews_3.contains("thread-body-3"), "{reviews_3}");
 }
 
 #[cfg(unix)]
@@ -616,4 +671,132 @@ exit 1
         .await
         .unwrap_err();
     assert!(err.message.contains("HTTP 422"), "{err}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gh_cli_hydrates_review_event_labels_and_fails_closed_on_graphql_errors() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let fail_pr99 = dir.path().join("fail_pr99.txt");
+    let pr20_fetched = dir.path().join("pr20_fetched.flag");
+    std::fs::write(&fail_pr99, "1").unwrap();
+    let gh_script = dir.path().join("gh");
+
+    let script = format!(
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${{1:-}}" == "auth" && "${{2:-}}" == "token" ]]; then
+  echo "ghp_review_label_token"
+  exit 0
+fi
+if [[ "${{1:-}}" == "api" ]]; then
+  all_args="$*"
+  case "$all_args" in
+    *"graphql"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n{{"errors":[{{"type":"FORBIDDEN","message":"forbidden"}}]}}'
+      ;;
+    *"repos/acme/alan/events"*)
+      printf 'HTTP/1.1 200 OK\r\nETag: W/"rev-1"\r\n\r\n[{{"id":"ev-review-20","type":"PullRequestReviewEvent","actor":{{"login":"morris"}},"created_at":"2026-11-22T01:05:00Z","payload":{{"action":"created","pull_request":{{"number":20,"head":{{"sha":"sha-20","ref":"feat/pr-20"}}}}}}}},{{"id":"ev-review-comment-99","type":"PullRequestReviewCommentEvent","actor":{{"login":"morris"}},"created_at":"2026-11-22T01:04:00Z","payload":{{"action":"created","pull_request":{{"number":99,"head":{{"sha":"sha-99","ref":"feat/pr-99"}}}}}}}}]'
+      ;;
+    *"repos/acme/alan/issues/20/comments"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n[]'
+      ;;
+    *"repos/acme/alan/issues"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n[]'
+      ;;
+    *"repos/acme/alan/pulls/99"*)
+      if [[ "$(cat "{fail_flag}")" == "1" ]]; then
+        echo "upstream 500 fetching PR 99" >&2
+        exit 1
+      fi
+      printf 'HTTP/1.1 200 OK\r\n\r\n{{"number":99,"title":"Older PR","user":{{"login":"morris"}},"state":"open","draft":false,"mergeable":true,"labels":[{{"name":"alan:auto"}}],"head":{{"ref":"feat/pr-99","sha":"sha-99"}},"base":{{"ref":"main"}},"updated_at":"2026-11-22T01:00:00Z","html_url":"https://github.com/acme/alan/pull/99"}}'
+      ;;
+    *"repos/acme/alan/pulls/20/reviews"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n[]'
+      ;;
+    *"repos/acme/alan/pulls/20"*)
+      touch "{pr20_flag}"
+      printf 'HTTP/1.1 200 OK\r\n\r\n{{"number":20,"title":"Synced PR","user":{{"login":"morris"}},"state":"open","draft":false,"mergeable":true,"labels":[{{"name":"alan:auto"}}],"head":{{"ref":"feat/pr-20","sha":"sha-20"}},"base":{{"ref":"main"}},"updated_at":"2026-11-22T01:00:00Z","html_url":"https://github.com/acme/alan/pull/20"}}'
+      ;;
+    *"repos/acme/alan/commits/sha-20/check-runs"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n{{"check_runs":[]}}'
+      ;;
+    *"repos/acme/alan/pulls"*)
+      printf 'HTTP/1.1 200 OK\r\n\r\n[{{"number":20,"title":"Synced PR","user":{{"login":"morris"}},"state":"open","draft":false,"mergeable":true,"labels":[{{"name":"alan:auto"}}],"head":{{"ref":"feat/pr-20","sha":"sha-20"}},"base":{{"ref":"main"}},"updated_at":"2026-11-22T01:00:00Z","html_url":"https://github.com/acme/alan/pull/20"}}]'
+      ;;
+    *)
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+exit 1
+"#,
+        fail_flag = fail_pr99.display(),
+        pr20_flag = pr20_fetched.display(),
+    );
+    std::fs::write(&gh_script, script).unwrap();
+    let mut perms = std::fs::metadata(&gh_script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gh_script, perms).unwrap();
+
+    let backend = Arc::new(GhCliGithubBackend::with_binary(&gh_script));
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+
+    // If metadata fallback fails transiently during sync_repo, event dedup state must not be committed.
+    assert!(backend.sync_repo(&slug, None).await.is_err());
+
+    std::fs::write(&fail_pr99, "0").unwrap();
+    let githubfs = Arc::new(
+        GithubFs::with_watched_repos(backend.clone(), [slug.clone()])
+            .await
+            .unwrap(),
+    );
+    let routefs = Arc::new(RouteFs::new());
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/mnt/github",
+        InProcessTransport::new(githubfs),
+        Access::ReadWrite,
+    );
+    ns.mount(
+        "/mnt/route",
+        InProcessTransport::new(routefs),
+        Access::ReadWrite,
+    );
+    let transport = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+    let shell = alan_shell::Shell::new(transport.clone());
+
+    shell.write("/mnt/github/ctl", b"sync").await.unwrap();
+    // PR #20 is in synced pulls, so label hydration must NOT issue a redundant GET /pulls/20 call.
+    assert!(!pr20_fetched.exists());
+
+    let allowlist = TriggerAllowlist {
+        allowed_repos: vec!["acme/alan".to_string()],
+        allowed_actors: vec!["morris".to_string()],
+        required_labels: vec!["alan:auto".to_string()],
+        ignored_actors: vec![],
+        ignored_branch_prefixes: vec![],
+        max_concurrent: 4,
+        max_retries: 3,
+    };
+    let mut dispatcher = GithubEventDispatcher::new(transport, allowlist).unwrap();
+    let outcomes = dispatcher.process_available_events().await.unwrap();
+    assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+    assert!(matches!(
+        &outcomes[0],
+        super::dispatch::DispatchOutcome::DispatchedWorker { event_id, .. }
+            if event_id == "ev-review-comment-99"
+    ));
+    assert!(matches!(
+        &outcomes[1],
+        super::dispatch::DispatchOutcome::DispatchedWorker { event_id, .. }
+            if event_id == "ev-review-20"
+    ));
+
+    // GraphQL errors must fail closed rather than returning unresolved_threads: [].
+    let err = backend.get_pull(&slug, 20).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::NoAccess, "{err}");
 }
