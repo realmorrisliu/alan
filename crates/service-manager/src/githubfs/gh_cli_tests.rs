@@ -540,3 +540,92 @@ esac
     let pull_nums: Vec<u64> = synced.pulls.iter().map(|p| p.meta.number).collect();
     assert_eq!(pull_nums, vec![30, 32]);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gh_cli_sync_repo_paginates_events_preserves_page1_etag_and_stops_at_seen() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let gh_script = dir.path().join("gh");
+    let state_file = dir.path().join("mode");
+    std::fs::write(&state_file, "sync1").unwrap();
+
+    let script = format!(
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${{1:-}}" == "auth" && "${{2:-}}" == "token" ]]; then
+  echo "ghp_events_pagination"
+  exit 0
+fi
+mode="$(cat "{}")"
+all_args="$*"
+case "$all_args" in
+  *"repos/acme/alan/issues?"*|*"repos/acme/alan/pulls?"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n[]'
+    ;;
+  *"repos/acme/alan/events?per_page=100&page=3"*)
+    echo "unexpected fetch of page 3 after seen event on page 2" >&2
+    exit 1
+    ;;
+  *"repos/acme/alan/events?per_page=100&page=2&fail=1"*)
+    printf 'HTTP/1.1 500 Internal Server Error\r\n\r\n{{"message":"boom"}}'
+    ;;
+  *"repos/acme/alan/events?per_page=100&page=2"*)
+    if [[ "$all_args" == *"If-None-Match:"* ]]; then
+      echo "unexpected If-None-Match header on events page 2" >&2
+      exit 1
+    fi
+    if [[ "$mode" == "sync1" ]]; then
+      printf 'HTTP/1.1 200 OK\r\nETag: "etag-page-2"\r\n\r\n[{{"id":"ev-1","type":"PushEvent","actor":{{"login":"m"}},"payload":{{"ref":"refs/heads/main","head":"sha-1"}},"created_at":"2026-11-22T01:01:00Z"}}]'
+    else
+      printf 'HTTP/1.1 200 OK\r\nETag: "etag-v2-p2"\r\nLink: <repos/acme/alan/events?per_page=100&page=3>; rel="next"\r\n\r\n[{{"id":"ev-4","type":"PushEvent","actor":{{"login":"m"}},"payload":{{"ref":"refs/heads/main","head":"sha-4"}},"created_at":"2026-11-22T01:04:00Z"}},{{"id":"ev-3","type":"PushEvent","actor":{{"login":"m"}},"payload":{{"ref":"refs/heads/main","head":"sha-3"}},"created_at":"2026-11-22T01:03:00Z"}}]'
+    fi
+    ;;
+  *"repos/acme/alan/events?per_page=100"*)
+    if [[ "$mode" == "sync1" ]]; then
+      printf 'HTTP/1.1 200 OK\r\nETag: "etag-page-1"\r\nLink: <repos/acme/alan/events?per_page=100&page=2>; rel="next"\r\n\r\n[{{"id":"ev-3","type":"PushEvent","actor":{{"login":"m"}},"payload":{{"ref":"refs/heads/main","head":"sha-3"}},"created_at":"2026-11-22T01:03:00Z"}},{{"id":"ev-2","type":"PushEvent","actor":{{"login":"m"}},"payload":{{"ref":"refs/heads/main","head":"sha-2"}},"created_at":"2026-11-22T01:02:00Z"}}]'
+    elif [[ "$mode" == "sync2_fail" ]]; then
+      printf 'HTTP/1.1 200 OK\r\nETag: "etag-v2"\r\nLink: <repos/acme/alan/events?per_page=100&page=2&fail=1>; rel="next"\r\n\r\n[{{"id":"ev-5","type":"PushEvent","actor":{{"login":"m"}},"payload":{{"ref":"refs/heads/main","head":"sha-5"}},"created_at":"2026-11-22T01:05:00Z"}}]'
+    else
+      printf 'HTTP/1.1 200 OK\r\nETag: "etag-v2"\r\nLink: <repos/acme/alan/events?per_page=100&page=2>; rel="next"\r\n\r\n[{{"id":"ev-5","type":"PushEvent","actor":{{"login":"m"}},"payload":{{"ref":"refs/heads/main","head":"sha-5"}},"created_at":"2026-11-22T01:05:00Z"}}]'
+    fi
+    ;;
+  *)
+    echo "unexpected args: $all_args" >&2
+    exit 1
+    ;;
+esac
+"#,
+        state_file.display()
+    );
+    std::fs::write(&gh_script, script).unwrap();
+    let mut perms = std::fs::metadata(&gh_script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gh_script, perms).unwrap();
+
+    let backend = GhCliGithubBackend::with_binary(&gh_script);
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+
+    // Sync 1 spans two pages, preserves page 1's ETag, and publishes chronological order.
+    let SyncRepoOutcome::Updated(s1) = backend.sync_repo(&slug, None).await.unwrap() else {
+        panic!("expected Updated on sync1");
+    };
+    assert_eq!(s1.etag.as_deref(), Some("\"etag-page-1\""));
+    let ids_1: Vec<&str> = s1.events.iter().map(|e| e.event_id.as_str()).collect();
+    assert_eq!(ids_1, vec!["ev-1", "ev-2", "ev-3"]);
+
+    // Page 2 error aborts sync before committing page 1's ev-5 to seen_event_ids.
+    std::fs::write(&state_file, "sync2_fail").unwrap();
+    assert!(backend.sync_repo(&slug, s1.etag.as_deref()).await.is_err());
+
+    // Subsequent sync recovers ev-5 and ev-4 across pages 1..=2 and stops on seen ev-3 before page 3.
+    std::fs::write(&state_file, "sync3").unwrap();
+    let SyncRepoOutcome::Updated(s3) = backend.sync_repo(&slug, s1.etag.as_deref()).await.unwrap()
+    else {
+        panic!("expected Updated on sync3");
+    };
+    assert_eq!(s3.etag.as_deref(), Some("\"etag-v2\""));
+    let ids_3: Vec<&str> = s3.events.iter().map(|e| e.event_id.as_str()).collect();
+    assert_eq!(ids_3, vec!["ev-4", "ev-5"]);
+}

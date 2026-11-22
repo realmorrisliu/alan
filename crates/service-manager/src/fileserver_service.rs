@@ -499,38 +499,55 @@ impl RunningFileserver {
         )?;
 
         let sid = &export.service_id;
-        let mut child = command.spawn().with_context(|| format!("spawn `{sid}`"))?;
+        let child = command.spawn().with_context(|| format!("spawn `{sid}`"))?;
         let pid = child.id();
-        let stderr = child.stderr.take().context("fileserver missing stderr")?;
+        let guard = FileserverProcessGuard::new(child);
         let stderr_lines = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_STDERR_LINES)));
-        let mut drain_tasks = vec![tokio::spawn(drain_stderr(stderr, stderr_lines.clone()))];
 
-        let imported: Arc<dyn FileServer> = if let Some(sock) = socket_path.as_ref() {
-            let mut stdout = child.stdout.take().context("unix_socket missing stdout")?;
-            drain_tasks.push(tokio::spawn(async move {
-                let _ = tokio::io::copy(&mut stdout, &mut tokio::io::sink()).await;
-            }));
-            let stream = connect_unix_until_ready(sock, &mut child, timeout, &stderr_lines).await?;
-            let (r, w) = stream.into_split();
-            Arc::new(ImportedFileServer::new(
-                BoundedLineReader::new(BufReader::new(r), export.max_message_bytes),
-                w,
-            ))
-        } else {
-            let stdin = child
-                .stdin
-                .take()
-                .context("stdio fileserver missing stdin")?;
-            let stdout = child.stdout.take().context("stdio missing stdout")?;
-            Arc::new(ImportedFileServer::new(
-                BoundedLineReader::new(BufReader::new(stdout), export.max_message_bytes),
-                stdin,
-            ))
-        };
+        let imported: Arc<dyn FileServer> = match async {
+            let stderr = guard
+                .take_stdio("fileserver missing stderr", |c| c.stderr.take())
+                .await?;
+            guard
+                .push_task(tokio::spawn(drain_stderr(stderr, stderr_lines.clone())))
+                .await;
 
-        let guard = FileserverProcessGuard {
-            child: Arc::new(Mutex::new(Some(child))),
-            tasks: Mutex::new(drain_tasks),
+            if let Some(sock) = socket_path.as_ref() {
+                let mut stdout = guard
+                    .take_stdio("unix_socket missing stdout", |c| c.stdout.take())
+                    .await?;
+                guard
+                    .push_task(tokio::spawn(async move {
+                        let _ = tokio::io::copy(&mut stdout, &mut tokio::io::sink()).await;
+                    }))
+                    .await;
+                let stream =
+                    connect_unix_until_ready(sock, &guard.child, timeout, &stderr_lines).await?;
+                let (r, w) = stream.into_split();
+                Ok::<Arc<dyn FileServer>, anyhow::Error>(Arc::new(ImportedFileServer::new(
+                    BoundedLineReader::new(BufReader::new(r), export.max_message_bytes),
+                    w,
+                )))
+            } else {
+                let stdin = guard
+                    .take_stdio("stdio fileserver missing stdin", |c| c.stdin.take())
+                    .await?;
+                let stdout = guard
+                    .take_stdio("stdio missing stdout", |c| c.stdout.take())
+                    .await?;
+                Ok(Arc::new(ImportedFileServer::new(
+                    BoundedLineReader::new(BufReader::new(stdout), export.max_message_bytes),
+                    stdin,
+                )) as Arc<dyn FileServer>)
+            }
+        }
+        .await
+        {
+            Ok(imported) => imported,
+            Err(err) => {
+                guard.shutdown().await;
+                return Err(err);
+            }
         };
         let proxy = Arc::new(SupervisedFileserver::new(
             imported,
@@ -723,13 +740,20 @@ fn validate_runtime_env(env: &BTreeMap<String, String>) -> Result<()> {
 
 async fn connect_unix_until_ready(
     socket_path: &Path,
-    child: &mut Child,
+    child: &Mutex<Option<Child>>,
     timeout: Duration,
     stderr_lines: &Arc<Mutex<VecDeque<String>>>,
 ) -> Result<UnixStream> {
     let deadline = Instant::now() + timeout;
     loop {
-        if let Some(status) = child.try_wait()? {
+        let exited = {
+            let mut guard = child.lock().await;
+            match guard.as_mut() {
+                Some(child) => child.try_wait()?,
+                None => None,
+            }
+        };
+        if let Some(status) = exited {
             let stderr = read_stderr_lines(stderr_lines).await;
             bail!("unix_socket exited before listening ({status}; stderr: {stderr})");
         }
@@ -749,24 +773,55 @@ async fn connect_unix_until_ready(
     }
 }
 
-fn kill_child_process_group(child: &mut Child) {
+fn kill_child_process_group(child: &mut Child, process_group_id: Option<i32>) {
+    let _ = process_group_id;
     #[cfg(unix)]
-    if let Some(pid) = child.id().and_then(|id| i32::try_from(id).ok()) {
-        // SAFETY: `pid` is the positive process group leader initialized with `process_group(0)`.
-        unsafe { libc::kill(-pid, libc::SIGKILL) };
+    if let Some(pgid) = child
+        .id()
+        .and_then(|id| i32::try_from(id).ok())
+        .or(process_group_id)
+    {
+        // SAFETY: `pgid` is the positive process group leader initialized with `process_group(0)`.
+        unsafe { libc::kill(-pgid, libc::SIGKILL) };
     }
     let _ = child.start_kill();
 }
 
 struct FileserverProcessGuard {
     child: Arc<Mutex<Option<Child>>>,
+    process_group_id: Option<i32>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl FileserverProcessGuard {
+    fn new(child: Child) -> Self {
+        let process_group_id = child.id().and_then(|id| i32::try_from(id).ok());
+        Self {
+            child: Arc::new(Mutex::new(Some(child))),
+            process_group_id,
+            tasks: Mutex::new(Vec::new()),
+        }
+    }
+
+    async fn push_task(&self, handle: JoinHandle<()>) {
+        self.tasks.lock().await.push(handle);
+    }
+
+    async fn take_stdio<T>(
+        &self,
+        label: &str,
+        take: impl FnOnce(&mut Child) -> Option<T>,
+    ) -> Result<T> {
+        let mut guard = self.child.lock().await;
+        guard
+            .as_mut()
+            .and_then(take)
+            .with_context(|| label.to_string())
+    }
+
     async fn shutdown(&self) {
         if let Some(mut child) = self.child.lock().await.take() {
-            kill_child_process_group(&mut child);
+            kill_child_process_group(&mut child, self.process_group_id);
             let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
         }
         for handle in self.tasks.lock().await.drain(..) {
@@ -780,7 +835,7 @@ impl Drop for FileserverProcessGuard {
         if let Ok(mut guard) = self.child.try_lock()
             && let Some(mut child) = guard.take()
         {
-            kill_child_process_group(&mut child);
+            kill_child_process_group(&mut child, self.process_group_id);
         }
         if let Ok(mut tasks) = self.tasks.try_lock() {
             for handle in tasks.drain(..) {

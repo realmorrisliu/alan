@@ -434,6 +434,72 @@ impl GhCliGithubBackend {
         }
         Ok(())
     }
+
+    fn page_hits_seen_event(&self, page: &[Value]) -> bool {
+        let seen = self
+            .seen_event_ids
+            .lock()
+            .expect("seen events lock poisoned");
+        page.iter()
+            .any(|item| item["id"].as_str().is_some_and(|id| seen.contains(id)))
+    }
+
+    async fn fetch_sync_events(
+        &self,
+        repo: &RepoSlug,
+        if_none_match: Option<&str>,
+    ) -> Result<SyncEventsFetch, GithubBackendError> {
+        let events_path = format!("repos/{repo}/events?per_page={REST_PAGE_SIZE}");
+        let mut args = vec!["api", "-i", "-H", ACCEPT_JSON_HEADER];
+        let header;
+        if let Some(etag) = if_none_match {
+            header = format!("If-None-Match: {etag}");
+            args.extend(["-H", &header]);
+        }
+        args.push(&events_path);
+        let first_resp = self.run_gh_api(&args, None).await?;
+        if first_resp.status == 304 {
+            return Ok(SyncEventsFetch::NotModified(first_resp.rate_limit));
+        }
+
+        // Preserve page 1's ETag so conditional polling tracks the newest page rather than page N.
+        let first_page_etag = first_resp.etag;
+        let mut rate_limit = first_resp.rate_limit;
+        let first_page: Vec<Value> = serde_json::from_str(&first_resp.body)
+            .map_err(|err| GithubBackendError::new(ErrorCode::Io, err.to_string()))?;
+        let mut hit_seen = first_page.is_empty() || self.page_hits_seen_event(&first_page);
+        let mut raw_events = first_page;
+        let mut next_link = first_resp.next_link;
+
+        for _ in 1..MAX_REST_PAGES {
+            if hit_seen {
+                break;
+            }
+            let Some(next_url) = next_link.take() else {
+                break;
+            };
+            let (page_items, page_resp) = self.gh_get_json::<Vec<Value>>(&next_url).await?;
+            rate_limit = page_resp.rate_limit.or(rate_limit);
+            hit_seen = page_items.is_empty() || self.page_hits_seen_event(&page_items);
+            raw_events.extend(page_items);
+            next_link = page_resp.next_link;
+        }
+
+        Ok(SyncEventsFetch::Modified {
+            etag: first_page_etag,
+            rate_limit,
+            raw_events,
+        })
+    }
+}
+
+enum SyncEventsFetch {
+    NotModified(Option<RateLimitUpdate>),
+    Modified {
+        etag: Option<String>,
+        rate_limit: Option<RateLimitUpdate>,
+        raw_events: Vec<Value>,
+    },
 }
 
 #[derive(Debug)]
@@ -577,23 +643,18 @@ impl GithubBackend for GhCliGithubBackend {
         repo: &RepoSlug,
         if_none_match: Option<&str>,
     ) -> Result<SyncRepoOutcome, GithubBackendError> {
-        let events_path = format!("repos/{repo}/events?per_page={REST_PAGE_SIZE}");
-        let mut args = vec!["api", "-i", "-H", ACCEPT_JSON_HEADER];
-        let header;
-        if let Some(etag) = if_none_match {
-            header = format!("If-None-Match: {etag}");
-            args.extend(["-H", &header]);
-        }
-        args.push(&events_path);
-        let resp = self.run_gh_api(&args, None).await?;
-        if resp.status == 304 {
-            return Ok(SyncRepoOutcome::NotModified {
-                rate_limit: resp.rate_limit,
-            });
-        }
+        let (events_etag, events_rate_limit, raw_events) =
+            match self.fetch_sync_events(repo, if_none_match).await? {
+                SyncEventsFetch::NotModified(rate_limit) => {
+                    return Ok(SyncRepoOutcome::NotModified { rate_limit });
+                }
+                SyncEventsFetch::Modified {
+                    etag,
+                    rate_limit,
+                    raw_events,
+                } => (etag, rate_limit, raw_events),
+            };
 
-        let raw_events: Vec<Value> = serde_json::from_str(&resp.body)
-            .map_err(|err| GithubBackendError::new(ErrorCode::Io, err.to_string()))?;
         let mut candidate_events: Vec<GithubEvent> = {
             let seen = self
                 .seen_event_ids
@@ -664,8 +725,8 @@ impl GithubBackend for GhCliGithubBackend {
         };
 
         Ok(SyncRepoOutcome::Updated(SyncRepoData {
-            etag: resp.etag,
-            rate_limit: pulls_rate_limit.or(resp.rate_limit),
+            etag: events_etag,
+            rate_limit: pulls_rate_limit.or(events_rate_limit),
             issues,
             pulls,
             events: new_events,
