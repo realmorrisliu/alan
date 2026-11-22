@@ -1,0 +1,19 @@
+schema_version = 1
+kind = "fileserver"
+version = "0.1.0"
+description = "Reference GitHub aP file-server package exposing issues, pulls, control verbs, and NDJSON events."
+
+[fileserver]
+id = "github"
+description = "Mounts GitHub repositories, issues, pull requests, and event streams under /mnt/github over aP."
+entrypoint = "bin/githubfs"
+allow_network = true
+network_domains = ["api.github.com", "github.com"]
+timeout_secs = 30
+max_message_bytes = 1048576
+
+[fileserver.transport]
+type = "stdio"
+command = "bin/githubfs"
+args = []
+env = {}

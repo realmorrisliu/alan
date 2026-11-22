@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Quartermaster `fileserver` entrypoint for the reference `githubfs` package.
+#
+# Integration contract:
+# - Installed atomically via `alan q install crates/service-manager/packages/github-fileserver`
+#   with `kind = "fileserver"` (zero ambient authority: no process spawn, mount, or Host token
+#   granted at install time).
+# - When explicitly started by Alan Service Manager inside OS confinement, this wrapper execs
+#   `alan __fileserver-github` speaking framed aP wire requests/responses over stdin/stdout
+#   (`alan_ap::export_file_server` via `alan_service_manager::githubfs::serve_stdio`).
+# - Service Manager publishes the imported tree at `/srv/github` and enforces explicit
+#   `ReadOnly` vs `ReadWrite` mount access at `/mnt/github`.
+# - GitHub auth stays behind the Host `gh` CLI adapter (`GhCliGithubBackend`); tokens are
+#   never written to disk or surfaced in any namespace file.
+
+exec "${ALAN_BIN:-alan}" __fileserver-github "$@"
