@@ -19,6 +19,8 @@ pub(super) fn default_commands() -> Vec<CompletionCandidate> {
         ("summary", "inspect, edit, or delete project summary"),
         ("status", "inspect project, model and queue"),
         ("doctor", "inspect local session diagnostics"),
+        ("issue", "draft and submit a redacted GitHub issue"),
+        ("bug", "alias for /issue"),
         ("compact", "summarize context"),
         ("rollback", "undo the last turn"),
         ("clear", "clear the transcript"),

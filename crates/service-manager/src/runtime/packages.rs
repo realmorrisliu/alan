@@ -213,7 +213,7 @@ fn project_package_sync_inner(
                 mcp_exports: record.mcp_exports,
             });
         }
-        PackageExportKind::Provider => (Vec::new(), Vec::new()),
+        PackageExportKind::Provider | PackageExportKind::Fileserver => (Vec::new(), Vec::new()),
     };
 
     launch_context.add_package_reference(ProcessPackageReference::new(

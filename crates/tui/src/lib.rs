@@ -12,12 +12,13 @@ mod transcript_ui;
 
 use crate::completion::CompletionCandidate;
 pub use file_backed::{
-    FileBackedRunConfig, LoginControl, LoginControlFuture, LoginControlHandler, LoginInputField,
-    LoginMethod, LoginProgress, LoginProgressSender, LoginProviderChoice, LoginResult,
-    LoginSelectOption, LoginSubmission, ProjectAccess, ProjectControl, ProjectControlFuture,
-    ProjectControlHandler, ProjectControlResult, ProjectMountReceipt, SettingsControl,
-    SettingsControlFuture, SettingsControlHandler, SettingsResetScope, SettingsResult,
-    StdioTaskOptions, run as run_file_backed, run_stdio_task, run_stdio_task_with_options,
+    FileBackedRunConfig, IssueControl, IssueControlFuture, IssueControlHandler, IssueSubmitResult,
+    LoginControl, LoginControlFuture, LoginControlHandler, LoginInputField, LoginMethod,
+    LoginProgress, LoginProgressSender, LoginProviderChoice, LoginResult, LoginSelectOption,
+    LoginSubmission, ProjectAccess, ProjectControl, ProjectControlFuture, ProjectControlHandler,
+    ProjectControlResult, ProjectMountReceipt, SettingsControl, SettingsControlFuture,
+    SettingsControlHandler, SettingsResetScope, SettingsResult, StdioTaskOptions,
+    run as run_file_backed, run_stdio_task, run_stdio_task_with_options,
 };
 
 /// Maximum number of composer history entries kept in memory.

@@ -1,5 +1,5 @@
 //! Package Service (Quartermaster): installed package ownership and lifecycle across
-//! `skill`, `mcp`, `tool`, and `provider` packages.
+//! `skill`, `mcp`, `tool`, `provider`, and `fileserver` packages.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -28,10 +28,11 @@ mod sync;
 mod types;
 
 pub use types::{
-    McpPackageExport, McpTransportSpec, PackageCatalog, PackageCommand, PackageCommandResult,
-    PackageExport, PackageExportKind, PackageKind, PackageRecord, PackageSnapshot,
-    PackageSnapshotEntry, PackageState, PackageSyncEntry, ProviderAuthMode, ProviderPackageExport,
-    ToolPackageExport, validate_package_id,
+    FileserverPackageExport, FileserverTransportSpec, McpPackageExport, McpTransportSpec,
+    PackageCatalog, PackageCommand, PackageCommandResult, PackageExport, PackageExportKind,
+    PackageKind, PackageRecord, PackageSnapshot, PackageSnapshotEntry, PackageState,
+    PackageSyncEntry, ProviderAuthMode, ProviderPackageExport, ToolPackageExport,
+    validate_package_id,
 };
 
 use backend::{PackageLeaseContent, PackageStoreBackend};
@@ -113,15 +114,20 @@ impl PackageReferenceLease {
         }
     }
 
-    /// Resolves a content-relative file path strictly inside this immutable disk-backed revision.
-    pub(crate) fn content_file_path(&self, relative_path: &str) -> Result<PathBuf> {
+    /// Returns the canonical immutable disk `content/` directory for this package lease.
+    pub(crate) fn disk_content_root(&self) -> Result<PathBuf> {
         let content_root = match &self.content {
             PackageLeaseContent::Disk(content_root) => content_root,
             PackageLeaseContent::InMemory(_) => {
                 bail!("this package export requires a disk-backed Package Store revision");
             }
         };
-        let canonical_content = fs::canonicalize(content_root)?;
+        Ok(fs::canonicalize(content_root)?)
+    }
+
+    /// Resolves a content-relative file path strictly inside this immutable disk-backed revision.
+    pub(crate) fn content_file_path(&self, relative_path: &str) -> Result<PathBuf> {
+        let canonical_content = self.disk_content_root()?;
         let candidate = canonical_content.join(relative_path);
         let canonical_file = fs::canonicalize(&candidate).with_context(|| {
             format!(

@@ -11,7 +11,9 @@ mod boot_unit;
 mod connection;
 mod connection_profile;
 mod control_fs;
+mod fileserver_service;
 mod flat_fs;
+pub mod githubfs;
 mod host_mount;
 mod local_entry;
 pub mod manpages;
@@ -39,6 +41,7 @@ pub use connection_profile::{
 pub use control_fs::{
     ManagerState, RestartDecision, ServiceManagerFs, SystemStatus, UnitSnapshot, UnitStatus,
 };
+pub use fileserver_service::{FileserverLaunchGrant, FileserverManager, FileserverStatus};
 pub use host_mount::{
     HostMountAccess, HostMountExport, HostMountExportAdapter, HostMountGrantRecord,
     HostMountRequest, HostMountService, HostMountStatus, HostMountToolProjection,
@@ -46,11 +49,11 @@ pub use host_mount::{
 };
 pub use local_entry::LocalEntryService;
 pub use package::{
-    McpPackageExport, McpTransportSpec, PackageCatalog, PackageCommand, PackageCommandResult,
-    PackageExport, PackageExportKind, PackageKind, PackageRecord, PackageReferenceLease,
-    PackageService, PackageSnapshot, PackageSnapshotEntry, PackageState, PackageSyncEntry,
-    ProviderAuthMode, ProviderPackageExport, ToolPackageExport, validate_package_id,
-    validate_package_store_for_migration,
+    FileserverPackageExport, FileserverTransportSpec, McpPackageExport, McpTransportSpec,
+    PackageCatalog, PackageCommand, PackageCommandResult, PackageExport, PackageExportKind,
+    PackageKind, PackageRecord, PackageReferenceLease, PackageService, PackageSnapshot,
+    PackageSnapshotEntry, PackageState, PackageSyncEntry, ProviderAuthMode, ProviderPackageExport,
+    ToolPackageExport, validate_package_id, validate_package_store_for_migration,
 };
 pub use process_launch::ProcessLaunchContext;
 pub use quartermaster::{

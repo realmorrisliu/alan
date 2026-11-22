@@ -1,5 +1,6 @@
 use super::*;
 
+mod issue_submit;
 mod login;
 
 #[cfg_attr(
@@ -176,6 +177,7 @@ pub(super) async fn run_bare_in_foreground_instance(
                     config.update_notice =
                         cli::update::prepare_passive_tui_update_notice(&store, ephemeral);
                     config.login_control = Some(login::build_login_control_handler(paths.clone()));
+                    config.issue_control = Some(issue_submit::build_issue_control_handler());
                     config.auto_setup_on_unconfigured =
                         is_unconfigured && std::env::var_os("ALAN_NO_SETUP").is_none();
                     let settings_paths = paths.clone();

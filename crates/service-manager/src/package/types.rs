@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Materializer schema tag written on pre-existing skill packages.
 pub(crate) const LEGACY_SKILL_MATERIALIZER_VERSION: &str = "alan-skill-v1";
-/// Materializer schema tag written on four-kind Quartermaster hub packages.
+/// Materializer schema tag written on five-kind Quartermaster hub packages.
 pub(crate) const MATERIALIZER_VERSION: &str = "alan-package-v2";
 
 /// Package ownership classification between product-preinstalled and operator-installed packages.
@@ -37,6 +37,8 @@ pub enum PackageExportKind {
     Tool,
     /// Protocol-adapter extension provider package bound by Connection profiles.
     Provider,
+    /// Confined external `aP` wire-protocol file-server plugin package.
+    Fileserver,
 }
 
 impl PackageExportKind {
@@ -47,6 +49,7 @@ impl PackageExportKind {
             Self::Mcp => "mcp",
             Self::Tool => "tool",
             Self::Provider => "provider",
+            Self::Fileserver => "fileserver",
         }
     }
 }
@@ -189,6 +192,55 @@ pub struct ProviderPackageExport {
     pub descriptor_path: String,
 }
 
+/// Wire transport definition for one exported `fileserver` package.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FileserverTransportSpec {
+    /// Confined subprocess speaking newline-delimited aP wire frames over stdin/stdout.
+    Stdio {
+        /// Content-relative executable path inside `content/`.
+        command: String,
+        /// Fixed argument list passed to the server binary.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+        /// Non-secret static environment variables injected after env sanitization.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        env: BTreeMap<String, String>,
+    },
+    /// Confined subprocess speaking newline-delimited aP wire frames over a Unix domain socket.
+    UnixSocket {
+        /// Socket filename created inside the confined runtime socket directory.
+        socket_name: String,
+    },
+}
+
+/// Exported external `aP` file-server descriptor inside an installed package revision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileserverPackageExport {
+    /// Canonical `/srv/<service_id>` and `/mnt/<service_id>` identifier (`1..=64` `[a-z0-9][a-z0-9_-]*`).
+    pub service_id: String,
+    /// Optional server description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Content-relative path inside `content/` to the immutable executable (`fileservers/<id>/bin`).
+    pub entrypoint: String,
+    /// Wire transport specification (`stdio` or `unix_socket`).
+    pub transport: FileserverTransportSpec,
+    /// Whether outbound network is expected inside the confined sandbox when explicitly granted.
+    #[serde(default)]
+    pub allow_network: bool,
+    /// Declared outbound network domain expectations (must be empty when `allow_network == false`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network_domains: Vec<String>,
+    /// Per-RPC and startup timeout bound in seconds (`1..=300`).
+    pub timeout_secs: usize,
+    /// Maximum aP wire frame size in bytes (`1024..=alan_ap::MAX_WIRE_FRAME_BYTES`).
+    pub max_message_bytes: usize,
+    /// Content-relative normalized JSON descriptor path (`fileservers/<service_id>/server.json`).
+    pub descriptor_path: String,
+}
+
 /// Durable catalog entry describing one installed or preinstalled Quartermaster package.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -213,7 +265,7 @@ pub struct PackageRecord {
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// UTC last update timestamp.
     pub updated_at: chrono::DateTime<chrono::Utc>,
-    /// Single functional export kind (`Skill`, `Mcp`, `Tool`, or `Provider`).
+    /// Single functional export kind (`Skill`, `Mcp`, `Tool`, `Provider`, or `Fileserver`).
     #[serde(default)]
     pub export_kind: PackageExportKind,
     /// Optional semantic package version declared in `alan-package.toml` / `package.toml`.
@@ -231,6 +283,9 @@ pub struct PackageRecord {
     /// Exported provider adapter descriptor (`export_kind == PackageExportKind::Provider`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_export: Option<ProviderPackageExport>,
+    /// Exported external file-server plugin descriptor (`export_kind == PackageExportKind::Fileserver`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fileserver_export: Option<FileserverPackageExport>,
 }
 
 /// Complete serialized Package Service catalog (`catalog.json`).

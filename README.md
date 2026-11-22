@@ -179,6 +179,7 @@ for Agent input or `! ` for an explicit command. Ordinary project working
 directories auto-mount `ReadWrite` on launch (excluding `/`, `$HOME`, and
 `/tmp`; pass `--no-auto-mount` to opt out). Use `/login` to connect a provider,
 `/project` to manage Host Mounts, `/model` to switch models or reasoning effort,
+`/issue` (or `/bug`) to draft and confirm a redacted GitHub issue,
 `/new` or `/fork` to start fresh or edit an earlier prompt, `/permissions` or
 `Shift+Tab` to toggle trust posture (`governed` ↔ `confined/trusted`),
 `Ctrl+Z` to suspend, and `/status` to inspect current state.
@@ -197,6 +198,8 @@ alan login [provider]
 alan update [--check]
 alan host ...
 alan connection ...
+alan q ...
+alan workflow ...
 alan skills ...
 ```
 

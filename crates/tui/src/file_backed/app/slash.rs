@@ -12,6 +12,8 @@ impl FileBackedApp {
             "settings" => self.settings_command(command.strip_prefix("settings").unwrap_or("")),
             "status" => self.model_status_command(),
             "doctor" => self.doctor_command(),
+            "issue" => self.issue_command(command.strip_prefix("issue").unwrap_or("")),
+            "bug" => self.issue_command(command.strip_prefix("bug").unwrap_or("")),
             "model" => self.model_command(command.strip_prefix("model").unwrap_or("").trim()),
             "resume" => self.resume_command(command.strip_prefix("resume").unwrap_or("")),
             "fork" => self.fork_command(command.strip_prefix("fork").unwrap_or("")),
@@ -228,6 +230,7 @@ impl FileBackedApp {
         self.clear_late_thinking_latch();
         self.scrollback_front_is_partial = false;
         self.last_input_failed = false;
+        self.last_diagnostic_notice = None;
         self.auto_continue_on_empty_cancel = false;
         self.input_intent = InputIntent::Agent;
         self.history_draft_intent = None;

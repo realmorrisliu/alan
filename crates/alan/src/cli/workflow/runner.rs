@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::io::AsyncReadExt;
 
 use super::logs::{WorkflowRunLogEntry, WorkflowRunUsage, append_run_log, scrub_and_bound_text};
-use super::manifest::{WorkflowManifest, WorkflowStore};
+use super::manifest::{ReleaseGatePolicy, TriggerAllowlist, WorkflowManifest, WorkflowStore};
 
 /// Environment variable overriding the `alan` executable invoked by `workflow run` / `render-schedule`.
 pub const ALAN_WORKFLOW_BIN_ENV: &str = "ALAN_WORKFLOW_ALAN_BIN";
@@ -32,6 +32,10 @@ pub struct WorkflowDryRunPlan {
     pub timeout_secs: u64,
     pub ephemeral: bool,
     pub json_stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_allowlist: Option<TriggerAllowlist>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_gate: Option<ReleaseGatePolicy>,
 }
 
 /// Structured outcome produced by `alan workflow run <id>`.
@@ -78,6 +82,12 @@ pub fn build_dry_run_plan(
     alan_bin: &Path,
 ) -> Result<WorkflowDryRunPlan> {
     manifest.validate()?;
+    if let Some(gate) = &manifest.release_gate {
+        super::release_prep::ensure_release_operation_allowed(
+            gate,
+            super::release_prep::ReleaseOperation::OpenReleasePr,
+        )?;
+    }
     Ok(WorkflowDryRunPlan {
         workflow_id: manifest.id.clone(),
         binary: alan_bin.to_path_buf(),
@@ -88,6 +98,8 @@ pub fn build_dry_run_plan(
         timeout_secs: manifest.effective_timeout_secs(),
         ephemeral: true,
         json_stream: manifest.json,
+        trigger_allowlist: manifest.trigger_allowlist.clone(),
+        release_gate: manifest.release_gate.clone(),
     })
 }
 
@@ -98,6 +110,12 @@ pub async fn execute_workflow_run(
     alan_bin: &Path,
 ) -> Result<WorkflowRunOutcome> {
     manifest.validate()?;
+    if let Some(gate) = &manifest.release_gate {
+        super::release_prep::ensure_release_operation_allowed(
+            gate,
+            super::release_prep::ReleaseOperation::OpenReleasePr,
+        )?;
+    }
     let run_id = format!("wf-{}", uuid::Uuid::new_v4().simple());
     let started_at = Utc::now().to_rfc3339();
     let timer = Instant::now();

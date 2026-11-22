@@ -1,4 +1,4 @@
-//! Export-kind materialization and verification helpers across Skill, Tool, MCP, and Provider packages.
+//! Export-kind materialization and verification helpers across Skill, Tool, MCP, Provider, and Fileserver packages.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -12,8 +12,9 @@ use anyhow::{Context, Result, bail, ensure};
 
 use super::manifest::ParsedPackageManifest;
 use super::types::{
-    McpPackageExport, McpTransportSpec, PackageExport, PackageExportKind, PackageSnapshot,
-    ProviderPackageExport, ToolPackageExport, validate_package_id,
+    FileserverPackageExport, FileserverTransportSpec, McpPackageExport, McpTransportSpec,
+    PackageExport, PackageExportKind, PackageSnapshot, ProviderPackageExport, ToolPackageExport,
+    validate_package_id,
 };
 
 pub(super) struct ComputedExports {
@@ -24,6 +25,7 @@ pub(super) struct ComputedExports {
     pub(super) tool_exports: Vec<ToolPackageExport>,
     pub(super) mcp_exports: Vec<McpPackageExport>,
     pub(super) provider_export: Option<ProviderPackageExport>,
+    pub(super) fileserver_export: Option<FileserverPackageExport>,
 }
 
 /// Computes exports and generated/executable `content/` entries in memory for one validated package.
@@ -59,6 +61,7 @@ pub(super) fn build_content_exports(
                 tool_exports: Vec::new(),
                 mcp_exports: Vec::new(),
                 provider_export: None,
+                fileserver_export: None,
             })
         }
         PackageExportKind::Tool => {
@@ -111,6 +114,7 @@ pub(super) fn build_content_exports(
                 tool_exports: tools,
                 mcp_exports: Vec::new(),
                 provider_export: None,
+                fileserver_export: None,
             })
         }
         PackageExportKind::Mcp => {
@@ -149,6 +153,7 @@ pub(super) fn build_content_exports(
                 tool_exports: Vec::new(),
                 mcp_exports: mcps,
                 provider_export: None,
+                fileserver_export: None,
             })
         }
         PackageExportKind::Provider => {
@@ -171,6 +176,48 @@ pub(super) fn build_content_exports(
                 tool_exports: Vec::new(),
                 mcp_exports: Vec::new(),
                 provider_export: Some(provider),
+                fileserver_export: None,
+            })
+        }
+        PackageExportKind::Fileserver => {
+            let mut fileserver = parsed_manifest
+                .expect("fileserver kind requires parsed manifest")
+                .fileserver
+                .context("fileserver manifest missing `[fileserver]` export")?;
+            let source_rel = fileserver
+                .entrypoint
+                .strip_prefix("source/")
+                .context("internal error: invalid fileserver entrypoint prefix")?
+                .to_string();
+            let bytes = snapshot
+                .entries
+                .iter()
+                .find(|entry| entry.path == source_rel)
+                .map(|entry| entry.bytes.clone())
+                .with_context(|| format!("missing snapshot fileserver binary `{source_rel}`"))?;
+            let bin_rel = format!("fileservers/{}/bin", fileserver.service_id);
+            content_files.insert(bin_rel.clone(), (bytes, true));
+            generated_files.insert(bin_rel.clone());
+            fileserver.entrypoint = bin_rel.clone();
+            if let FileserverTransportSpec::Stdio { command, .. } = &mut fileserver.transport {
+                *command = bin_rel;
+            }
+            let encoded = serde_json::to_vec_pretty(&fileserver)?;
+            ensure!(
+                encoded.len() <= max_source_file_bytes,
+                "generated fileserver descriptor exceeds file size limit"
+            );
+            content_files.insert(fileserver.descriptor_path.clone(), (encoded, false));
+            generated_files.insert(fileserver.descriptor_path.clone());
+            Ok(ComputedExports {
+                export_kind: PackageExportKind::Fileserver,
+                manifest_version,
+                description,
+                exports: Vec::new(),
+                tool_exports: Vec::new(),
+                mcp_exports: Vec::new(),
+                provider_export: None,
+                fileserver_export: Some(fileserver),
             })
         }
     }
@@ -184,11 +231,15 @@ pub(super) fn verify_materialized_exports(
     tool_exports: &[ToolPackageExport],
     mcp_exports: &[McpPackageExport],
     provider_export: Option<&ProviderPackageExport>,
+    fileserver_export: Option<&FileserverPackageExport>,
 ) -> Result<()> {
     match export_kind {
         PackageExportKind::Skill => {
             ensure!(
-                tool_exports.is_empty() && mcp_exports.is_empty() && provider_export.is_none(),
+                tool_exports.is_empty()
+                    && mcp_exports.is_empty()
+                    && provider_export.is_none()
+                    && fileserver_export.is_none(),
                 "skill materialization contains non-skill exports"
             );
             for export in exports {
@@ -206,7 +257,8 @@ pub(super) fn verify_materialized_exports(
                 exports.is_empty()
                     && !tool_exports.is_empty()
                     && mcp_exports.is_empty()
-                    && provider_export.is_none(),
+                    && provider_export.is_none()
+                    && fileserver_export.is_none(),
                 "tool materialization has inconsistent export set"
             );
             for tool in tool_exports {
@@ -232,7 +284,8 @@ pub(super) fn verify_materialized_exports(
                 exports.is_empty()
                     && tool_exports.is_empty()
                     && !mcp_exports.is_empty()
-                    && provider_export.is_none(),
+                    && provider_export.is_none()
+                    && fileserver_export.is_none(),
                 "mcp materialization has inconsistent export set"
             );
             for mcp in mcp_exports {
@@ -257,7 +310,10 @@ pub(super) fn verify_materialized_exports(
         }
         PackageExportKind::Provider => {
             ensure!(
-                exports.is_empty() && tool_exports.is_empty() && mcp_exports.is_empty(),
+                exports.is_empty()
+                    && tool_exports.is_empty()
+                    && mcp_exports.is_empty()
+                    && fileserver_export.is_none(),
                 "provider materialization contains non-provider exports"
             );
             let provider =
@@ -273,6 +329,43 @@ pub(super) fn verify_materialized_exports(
                 &decoded == provider,
                 "materialized provider descriptor mismatch"
             );
+        }
+        PackageExportKind::Fileserver => {
+            ensure!(
+                exports.is_empty()
+                    && tool_exports.is_empty()
+                    && mcp_exports.is_empty()
+                    && provider_export.is_none(),
+                "fileserver materialization contains non-fileserver exports"
+            );
+            let fileserver = fileserver_export
+                .context("fileserver materialization missing fileserver export")?;
+            ensure!(
+                fileserver.descriptor_path
+                    == format!("fileservers/{}/server.json", fileserver.service_id)
+                    && content_root.join(&fileserver.descriptor_path).is_file(),
+                "materialized fileserver `{}` descriptor is missing",
+                fileserver.service_id
+            );
+            let decoded: FileserverPackageExport =
+                serde_json::from_slice(&fs::read(content_root.join(&fileserver.descriptor_path))?)?;
+            ensure!(
+                &decoded == fileserver,
+                "materialized fileserver descriptor mismatch"
+            );
+            ensure!(
+                fileserver.entrypoint == format!("fileservers/{}/bin", fileserver.service_id)
+                    && content_root.join(&fileserver.entrypoint).is_file(),
+                "materialized fileserver `{}` binary is missing",
+                fileserver.service_id
+            );
+            if let FileserverTransportSpec::Stdio { command, .. } = &fileserver.transport {
+                ensure!(
+                    command == &fileserver.entrypoint,
+                    "materialized fileserver `{}` stdio command mismatch",
+                    fileserver.service_id
+                );
+            }
         }
     }
     Ok(())

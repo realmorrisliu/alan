@@ -554,6 +554,7 @@ fn verify_revision(root: &Path, record: &PackageRecord) -> Result<()> {
             && manifest.tool_exports == record.tool_exports
             && manifest.mcp_exports == record.mcp_exports
             && manifest.provider_export == record.provider_export
+            && manifest.fileserver_export == record.fileserver_export
             && manifest.tree_fingerprint == record.materialized_fingerprint,
         "catalog and materialization manifest disagree"
     );
@@ -563,24 +564,35 @@ fn verify_revision(root: &Path, record: &PackageRecord) -> Result<()> {
                 record.tool_exports.is_empty()
                     && record.mcp_exports.is_empty()
                     && record.provider_export.is_none()
+                    && record.fileserver_export.is_none()
             }
             PackageExportKind::Tool => {
                 record.exports.is_empty()
                     && !record.tool_exports.is_empty()
                     && record.mcp_exports.is_empty()
                     && record.provider_export.is_none()
+                    && record.fileserver_export.is_none()
             }
             PackageExportKind::Mcp => {
                 record.exports.is_empty()
                     && record.tool_exports.is_empty()
                     && !record.mcp_exports.is_empty()
                     && record.provider_export.is_none()
+                    && record.fileserver_export.is_none()
             }
             PackageExportKind::Provider => {
                 record.exports.is_empty()
                     && record.tool_exports.is_empty()
                     && record.mcp_exports.is_empty()
                     && record.provider_export.is_some()
+                    && record.fileserver_export.is_none()
+            }
+            PackageExportKind::Fileserver => {
+                record.exports.is_empty()
+                    && record.tool_exports.is_empty()
+                    && record.mcp_exports.is_empty()
+                    && record.provider_export.is_none()
+                    && record.fileserver_export.is_some()
             }
         },
         "catalog record mixes multiple package export kinds"

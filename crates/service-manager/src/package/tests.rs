@@ -11,6 +11,7 @@ mod bootstrap_wait_budget;
 mod concurrency;
 mod embedded;
 mod file_surface;
+mod fileserver;
 mod four_kinds;
 mod inspection;
 #[cfg(unix)]
