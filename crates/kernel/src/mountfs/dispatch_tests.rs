@@ -177,3 +177,127 @@ async fn ready_walk_cancellation_never_sends_a_late_backing_walk() {
     );
     assert!(backing.live.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn read_only_prefixes_clamp_system_mounts_while_tracking_live_data_mounts() {
+    let ctl_tree = Arc::new(alan_ap::reference::MemFs::writable());
+    ctl_tree
+        .create(Fid::ROOT, Fid(1), "ctl", FileKind::File)
+        .await
+        .unwrap();
+    ctl_tree.clunk(Fid(1)).await.unwrap();
+
+    let sibling_tree = Arc::new(alan_ap::reference::MemFs::writable());
+    let live = LiveNamespace::new(Namespace::new());
+    live.mount(
+        "/mnt/connections",
+        InProcessTransport::new(ctl_tree),
+        crate::Access::ReadWrite,
+    );
+    live.mount(
+        "/mnt/connections-app",
+        InProcessTransport::new(sibling_tree),
+        crate::Access::ReadWrite,
+    );
+
+    let view = MountFs::from_live_namespace(live.clone())
+        .with_read_only_prefixes(["/proc", "/mnt/connections"]);
+
+    // Clamped mount is readable, reports writable=false, and refuses write/create/remove.
+    view.walk(
+        Fid::ROOT,
+        Fid(10),
+        &["mnt".into(), "connections".into(), "ctl".into()],
+    )
+    .await
+    .unwrap();
+    assert!(!view.stat(Fid(10)).await.unwrap().writable);
+    assert_eq!(
+        view.open(Fid(10), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        view.open(Fid(10), OpenMode::ReadWrite).await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(view.remove(Fid(10)).await, Err(ErrorCode::NoAccess));
+
+    // Non-canonical Walk segments (leading empty segment or slash-joined segment) must stay clamped.
+    for (fid_num, names) in [
+        (
+            15,
+            vec![
+                "".to_string(),
+                "mnt".into(),
+                "connections".into(),
+                "ctl".into(),
+            ],
+        ),
+        (16, vec!["mnt/connections/ctl".to_string()]),
+    ] {
+        let fid = Fid(fid_num);
+        view.walk(Fid::ROOT, fid, &names).await.unwrap();
+        assert!(!view.stat(fid).await.unwrap().writable, "{names:?}");
+        assert_eq!(
+            view.open(fid, OpenMode::Write).await,
+            Err(ErrorCode::NoAccess),
+            "{names:?}"
+        );
+        view.clunk(fid).await.unwrap();
+    }
+
+    view.walk(Fid::ROOT, Fid(11), &["mnt".into(), "connections".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        view.create(Fid(11), Fid(12), "new", FileKind::File).await,
+        Err(ErrorCode::NoAccess)
+    );
+    view.clunk(Fid(11)).await.unwrap();
+
+    // Sibling prefix sharing only a string prefix (not component boundary) remains writable.
+    view.walk(
+        Fid::ROOT,
+        Fid(13),
+        &["mnt".into(), "connections-app".into()],
+    )
+    .await
+    .unwrap();
+    view.create(Fid(13), Fid(14), "note.md", FileKind::File)
+        .await
+        .unwrap();
+    assert!(view.stat(Fid(14)).await.unwrap().writable);
+    view.open(Fid(14), OpenMode::Write).await.unwrap();
+    view.write(Fid(14), 0, b"ok").await.unwrap();
+    view.clunk(Fid(14)).await.unwrap();
+    view.clunk(Fid(13)).await.unwrap();
+
+    // Live mount/unmount updates are visible immediately through the same view.
+    let dynamic_tree = Arc::new(alan_ap::reference::MemFs::writable());
+    live.mount(
+        "/mnt/project-live",
+        InProcessTransport::new(dynamic_tree),
+        crate::Access::ReadWrite,
+    );
+    view.walk(Fid::ROOT, Fid(20), &["mnt".into(), "project-live".into()])
+        .await
+        .unwrap();
+    view.create(Fid(20), Fid(21), "hello.txt", FileKind::File)
+        .await
+        .unwrap();
+    view.open(Fid(21), OpenMode::Write).await.unwrap();
+    view.write(Fid(21), 0, b"live").await.unwrap();
+    view.clunk(Fid(21)).await.unwrap();
+    view.clunk(Fid(20)).await.unwrap();
+
+    live.unmount("/mnt/project-live");
+    assert_eq!(
+        view.walk(
+            Fid::ROOT,
+            Fid(22),
+            &["mnt".into(), "project-live".into(), "hello.txt".into()]
+        )
+        .await,
+        Err(ErrorCode::NotFound)
+    );
+}

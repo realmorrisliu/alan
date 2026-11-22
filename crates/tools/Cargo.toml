@@ -17,5 +17,8 @@ dunce.workspace = true
 
 [dev-dependencies]
 alan-ap = { path = "../ap" }
+alan-hostfs = { path = "../hostfs" }
 alan-kernel = { path = "../kernel" }
+alan-memfs = { path = "../memfs" }
+async-trait.workspace = true
 tempfile.workspace = true

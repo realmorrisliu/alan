@@ -525,3 +525,263 @@ async fn rejects_parent_traversal_components() {
         ErrorCode::BadRequest
     );
 }
+
+#[tokio::test]
+async fn failed_multi_chunk_write_never_commits_partial_bytes_on_clunk() {
+    let temp = tempfile::tempdir().unwrap();
+    let target = temp.path().join("notes.txt");
+    std::fs::write(&target, "original").unwrap();
+    let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+    fs.walk(Fid::ROOT, Fid(1), &["notes.txt".to_string()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::Write).await.unwrap();
+    fs.write(Fid(1), 0, b"partial").await.unwrap();
+    assert_eq!(
+        fs.write(Fid(1), MAX_BUFFERED_FILE_BYTES as u64, b"overflow")
+            .await,
+        Err(ErrorCode::BadRequest)
+    );
+    fs.clunk(Fid(1)).await.unwrap();
+
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original");
+}
+
+#[tokio::test]
+async fn host_dir_policy_hides_and_blocks_read_denied_subpaths() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path();
+    std::fs::create_dir_all(home.join(".ssh/keys")).unwrap();
+    std::fs::write(home.join(".ssh/id_rsa"), "PRIVATE KEY").unwrap();
+    std::fs::create_dir_all(home.join(".config/gh")).unwrap();
+    std::fs::write(home.join(".config/gh/hosts.yml"), "oauth_token: secret").unwrap();
+    std::fs::create_dir_all(home.join(".config/app")).unwrap();
+    std::fs::write(home.join(".config/app/config.toml"), "ok = true").unwrap();
+    std::fs::write(home.join("notes.txt"), "public").unwrap();
+
+    // Include an uncanonicalized non-existent path (.aws) alongside existing ones.
+    let denylist = vec![
+        home.join(".ssh"),
+        home.join(".config/gh"),
+        home.join(".aws"),
+    ];
+    let policy = HostDirPolicy::for_host_mount(home, &denylist, &[".git", ".alan", ".agents"]);
+    let fs = HostDirFs::new(home, HostDirAccess::ReadWrite)
+        .unwrap()
+        .with_policy(policy);
+
+    let root_listing = String::from_utf8(fs.read(Fid::ROOT, 0, 4096).await.unwrap()).unwrap();
+    let root_names: Vec<&str> = root_listing.lines().collect();
+    assert!(root_names.contains(&".config"));
+    assert!(root_names.contains(&"notes.txt"));
+    assert!(!root_names.contains(&".ssh"));
+    assert_eq!(
+        fs.stat(Fid::ROOT).await.unwrap().length,
+        root_listing.len() as u64
+    );
+
+    fs.walk(Fid::ROOT, Fid(1), &[".config".to_string()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::Read).await.unwrap();
+    let cfg_listing = String::from_utf8(fs.read(Fid(1), 0, 4096).await.unwrap()).unwrap();
+    assert_eq!(cfg_listing, "app");
+    assert_eq!(
+        fs.stat(Fid(1)).await.unwrap().length,
+        cfg_listing.len() as u64
+    );
+    fs.clunk(Fid(1)).await.unwrap();
+
+    for denied in [
+        vec![".ssh".to_string()],
+        vec![".ssh".to_string(), "id_rsa".to_string()],
+        vec![".config".to_string(), "gh".to_string()],
+        vec![
+            ".config".to_string(),
+            "gh".to_string(),
+            "hosts.yml".to_string(),
+        ],
+    ] {
+        assert_eq!(
+            fs.walk(Fid::ROOT, Fid(2), &denied).await.unwrap_err(),
+            ErrorCode::NoAccess,
+            "expected NoAccess for {denied:?}"
+        );
+    }
+
+    // Creating a non-existent read-denied directory (.aws) must also fail.
+    assert_eq!(
+        fs.create(Fid::ROOT, Fid(3), ".aws", FileKind::Dir)
+            .await
+            .unwrap_err(),
+        ErrorCode::NoAccess
+    );
+    assert!(!home.join(".aws").exists());
+
+    // Non-denied sibling under .config stays readable.
+    fs.walk(
+        Fid::ROOT,
+        Fid(4),
+        &[
+            ".config".to_string(),
+            "app".to_string(),
+            "config.toml".to_string(),
+        ],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(4), OpenMode::Read).await.unwrap();
+    assert_eq!(fs.read(Fid(4), 0, 64).await.unwrap(), b"ok = true");
+    fs.clunk(Fid(4)).await.unwrap();
+
+    // Mounting a root inside a denied subtree denies the whole export.
+    let sub_root = home.join(".ssh/keys");
+    let denied_root_policy = HostDirPolicy::for_host_mount(&sub_root, &denylist, &[]);
+    let denied_fs = HostDirFs::new(&sub_root, HostDirAccess::ReadOnly)
+        .unwrap()
+        .with_policy(denied_root_policy);
+    assert_eq!(
+        denied_fs.read(Fid::ROOT, 0, 64).await.unwrap_err(),
+        ErrorCode::NoAccess
+    );
+    assert_eq!(
+        denied_fs.stat(Fid::ROOT).await.unwrap_err(),
+        ErrorCode::NoAccess
+    );
+    assert_eq!(
+        denied_fs.walk(Fid::ROOT, Fid(1), &[]).await.unwrap_err(),
+        ErrorCode::NoAccess
+    );
+}
+
+#[tokio::test]
+async fn host_dir_policy_blocks_protected_subpath_writes_while_allowing_reads() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path();
+    std::fs::create_dir_all(project.join(".git/hooks")).unwrap();
+    std::fs::write(project.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::write(project.join(".git/config"), "[core]\n").unwrap();
+    std::fs::write(project.join(".git/hooks/pre-commit"), "#!/bin/sh\n").unwrap();
+    std::fs::create_dir_all(project.join(".alan")).unwrap();
+    std::fs::write(project.join(".alan/settings.toml"), "k = 1\n").unwrap();
+    std::fs::create_dir_all(project.join(".agents")).unwrap();
+    std::fs::write(project.join(".agents/skill.md"), "# skill\n").unwrap();
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(project.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+    let policy = HostDirPolicy::for_host_mount(project, &[], &[".git", ".alan", ".agents"]);
+    let fs = HostDirFs::new(project, HostDirAccess::ReadWrite)
+        .unwrap()
+        .with_policy(policy);
+
+    // Reads under .git stay permitted, while stat marks protected files non-writable.
+    fs.walk(Fid::ROOT, Fid(1), &[".git".to_string(), "HEAD".to_string()])
+        .await
+        .unwrap();
+    assert!(!fs.stat(Fid(1)).await.unwrap().writable);
+    fs.open(Fid(1), OpenMode::Read).await.unwrap();
+    assert_eq!(
+        fs.read(Fid(1), 0, 64).await.unwrap(),
+        b"ref: refs/heads/main\n"
+    );
+    fs.clunk(Fid(1)).await.unwrap();
+
+    for (idx, path) in [
+        vec![".git".to_string(), "config".to_string()],
+        vec![
+            ".git".to_string(),
+            "hooks".to_string(),
+            "pre-commit".to_string(),
+        ],
+        vec![".alan".to_string(), "settings.toml".to_string()],
+        vec![".agents".to_string(), "skill.md".to_string()],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let fid = Fid(10 + idx as u64);
+        fs.walk(Fid::ROOT, fid, &path).await.unwrap();
+        assert!(!fs.stat(fid).await.unwrap().writable);
+        assert_eq!(
+            fs.open(fid, OpenMode::Write).await,
+            Err(ErrorCode::NoAccess)
+        );
+        assert_eq!(
+            fs.open(fid, OpenMode::ReadWrite).await,
+            Err(ErrorCode::NoAccess)
+        );
+        assert_eq!(fs.remove(fid).await, Err(ErrorCode::NoAccess));
+        fs.clunk(fid).await.unwrap();
+    }
+
+    // Creating new files under protected dirs or creating protected dir names is blocked.
+    fs.walk(
+        Fid::ROOT,
+        Fid(30),
+        &[".git".to_string(), "hooks".to_string()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fs.create(Fid(30), Fid(31), "post-checkout", FileKind::File)
+            .await
+            .unwrap_err(),
+        ErrorCode::NoAccess
+    );
+    fs.clunk(Fid(30)).await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(32), &["src".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.create(Fid(32), Fid(33), ".git", FileKind::Dir)
+            .await
+            .unwrap_err(),
+        ErrorCode::NoAccess
+    );
+    fs.clunk(Fid(32)).await.unwrap();
+
+    // Ordinary project files remain writable.
+    fs.walk(
+        Fid::ROOT,
+        Fid(40),
+        &["src".to_string(), "main.rs".to_string()],
+    )
+    .await
+    .unwrap();
+    assert!(fs.stat(Fid(40)).await.unwrap().writable);
+    fs.open(Fid(40), OpenMode::Write).await.unwrap();
+    fs.write(Fid(40), 0, b"fn main() { println!(\"ok\"); }\n")
+        .await
+        .unwrap();
+    fs.clunk(Fid(40)).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(project.join("src/main.rs")).unwrap(),
+        "fn main() { println!(\"ok\"); }\n"
+    );
+
+    // Export rooted inside a protected component blocks all writes.
+    let git_root = project.join(".git");
+    let git_root_policy =
+        HostDirPolicy::for_host_mount(&git_root, &[], &[".git", ".alan", ".agents"]);
+    let git_fs = HostDirFs::new(&git_root, HostDirAccess::ReadWrite)
+        .unwrap()
+        .with_policy(git_root_policy);
+    git_fs
+        .walk(Fid::ROOT, Fid(50), &["config".to_string()])
+        .await
+        .unwrap();
+    assert!(!git_fs.stat(Fid(50)).await.unwrap().writable);
+    assert_eq!(
+        git_fs.open(Fid(50), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        git_fs
+            .create(Fid::ROOT, Fid(51), "newfile", FileKind::File)
+            .await
+            .unwrap_err(),
+        ErrorCode::NoAccess
+    );
+}

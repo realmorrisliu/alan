@@ -247,3 +247,25 @@ async fn memfs_checkpoint_history_supports_versioned_revert() {
     fs.revert_to_checkpoint("notes.md", &v2_root).await.unwrap();
     assert_eq!(fs.materialize("notes.md").await.unwrap(), b"version two");
 }
+
+#[tokio::test]
+async fn failed_multi_chunk_write_never_commits_partial_bytes_on_clunk() {
+    let fs = MemFs::new();
+    create_file(&fs, "notes.md", Fid(1), b"original content").await;
+
+    fs.walk(Fid::ROOT, Fid(2), &["notes.md".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, b"partial prefix").await.unwrap();
+    assert_eq!(
+        fs.write(Fid(2), 1 << 20, b"overflow").await,
+        Err(ErrorCode::BadRequest)
+    );
+    fs.clunk(Fid(2)).await.unwrap();
+
+    assert_eq!(
+        fs.materialize("notes.md").await.unwrap(),
+        b"original content"
+    );
+}

@@ -23,18 +23,51 @@ struct GitignoreScope {
 /// Scoped stack of `.gitignore` rules accumulated from repo ancestors down to
 /// the directory currently being traversed.
 #[derive(Debug, Clone, Default)]
-pub(super) struct GitignoreMatcher {
+pub(crate) struct GitignoreMatcher {
     scopes: Vec<GitignoreScope>,
     respect_gitignore: bool,
 }
 
 impl GitignoreMatcher {
+    pub(crate) fn empty(respect_gitignore: bool) -> Self {
+        Self {
+            scopes: Vec::new(),
+            respect_gitignore,
+        }
+    }
+
+    pub(crate) fn push_rules(&mut self, base: impl Into<PathBuf>, content: &str) {
+        if !self.respect_gitignore {
+            return;
+        }
+        let rules = parse_gitignore_rules(content);
+        if !rules.is_empty() {
+            self.scopes.push(GitignoreScope {
+                base: base.into(),
+                rules,
+            });
+        }
+    }
+
+    pub(crate) fn with_rules_for_dir(&self, dir: &Path, content: &str) -> Self {
+        if !self.respect_gitignore {
+            return self.clone();
+        }
+        let rules = parse_gitignore_rules(content);
+        if rules.is_empty() {
+            return self.clone();
+        }
+        let mut next = self.clone();
+        next.scopes.push(GitignoreScope {
+            base: dir.to_path_buf(),
+            rules,
+        });
+        next
+    }
+
     pub(super) fn new(root: &Path, sandbox: &Sandbox, respect_gitignore: bool) -> Self {
         if !respect_gitignore {
-            return Self {
-                scopes: Vec::new(),
-                respect_gitignore: false,
-            };
+            return Self::empty(false);
         }
 
         let mut ancestors = Vec::new();
@@ -55,20 +88,14 @@ impl GitignoreMatcher {
         }
         ancestors.reverse();
 
-        let mut scopes = Vec::new();
+        let mut matcher = Self::empty(true);
         for dir in ancestors {
             if dir.join(".git").is_dir() {
                 let exclude_path = dir.join(".git/info/exclude");
                 if sandbox.is_readable(&exclude_path)
                     && let Ok(content) = std::fs::read_to_string(&exclude_path)
                 {
-                    let rules = parse_gitignore_rules(&content);
-                    if !rules.is_empty() {
-                        scopes.push(GitignoreScope {
-                            base: dir.clone(),
-                            rules,
-                        });
-                    }
+                    matcher.push_rules(dir.clone(), &content);
                 }
             }
             let gitignore_path = dir.join(".gitignore");
@@ -76,17 +103,11 @@ impl GitignoreMatcher {
                 && sandbox.is_readable(&gitignore_path)
                 && let Ok(content) = std::fs::read_to_string(&gitignore_path)
             {
-                let rules = parse_gitignore_rules(&content);
-                if !rules.is_empty() {
-                    scopes.push(GitignoreScope { base: dir, rules });
-                }
+                matcher.push_rules(dir, &content);
             }
         }
 
-        Self {
-            scopes,
-            respect_gitignore: true,
-        }
+        matcher
     }
 
     pub(super) fn child_for_dir(&self, dir: &Path, root: &Path, sandbox: &Sandbox) -> Self {
@@ -98,20 +119,12 @@ impl GitignoreMatcher {
             && sandbox.is_readable(&gitignore_path)
             && let Ok(content) = std::fs::read_to_string(&gitignore_path)
         {
-            let rules = parse_gitignore_rules(&content);
-            if !rules.is_empty() {
-                let mut next = self.clone();
-                next.scopes.push(GitignoreScope {
-                    base: dir.to_path_buf(),
-                    rules,
-                });
-                return next;
-            }
+            return self.with_rules_for_dir(dir, &content);
         }
         self.clone()
     }
 
-    pub(super) fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
+    pub(crate) fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
         if !self.respect_gitignore {
             return false;
         }

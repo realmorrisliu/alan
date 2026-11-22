@@ -39,6 +39,8 @@ struct FidState {
     mode: Option<OpenMode>,
     /// Buffered document for a commit-on-clunk write, committed at `clunk`.
     write_buf: Vec<u8>,
+    /// Whether any write on this fid failed; failed writes must never commit on clunk.
+    write_failed: bool,
     /// For an opened clone fid: the resource name allocated at `open`, returned
     /// when the caller `read`s the clone fid.
     clone_name: Option<String>,
@@ -50,6 +52,7 @@ impl FidState {
             node,
             mode: None,
             write_buf: Vec::new(),
+            write_failed: false,
             clone_name: None,
         }
     }
@@ -368,7 +371,11 @@ impl FileServer for MemFs {
                 }
                 if matches!(mode, Some(OpenMode::Write)) {
                     let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
-                    return write_to_buf(&mut f.write_buf, offset, data);
+                    let res = write_to_buf(&mut f.write_buf, offset, data);
+                    if res.is_err() {
+                        f.write_failed = true;
+                    }
+                    return res;
                 }
                 let written = match &mut state.nodes[node] {
                     Node::WritableBytes(bytes) => write_to_buf(bytes, offset, data)?,
@@ -387,7 +394,11 @@ impl FileServer for MemFs {
                 if !matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
                     return Err(ErrorCode::NoAccess);
                 }
-                write_to_buf(&mut f.write_buf, offset, data)
+                let res = write_to_buf(&mut f.write_buf, offset, data);
+                if res.is_err() {
+                    f.write_failed = true;
+                }
+                res
             }
             _ => Err(ErrorCode::Unsupported),
         }
@@ -489,6 +500,7 @@ impl FileServer for MemFs {
                 root.mode = None;
                 root.clone_name = None;
                 root.write_buf.clear();
+                root.write_failed = false;
             }
             return Ok(());
         }
@@ -498,10 +510,12 @@ impl FileServer for MemFs {
         // document at commit, else a commit-time error (§5.5).
         if matches!(state.nodes[f.node], Node::Doc)
             && matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite))
+            && !f.write_failed
         {
             serde_json::from_slice::<serde_json::Value>(&f.write_buf)
                 .map_err(|_| ErrorCode::BadRequest)?;
         } else if matches!(f.mode, Some(OpenMode::Write))
+            && !f.write_failed
             && let Node::WritableBytes(bytes) = &mut state.nodes[f.node]
         {
             *bytes = f.write_buf;

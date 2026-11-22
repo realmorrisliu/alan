@@ -1,7 +1,8 @@
 use anyhow::{Result, anyhow};
 use std::path::{Component, Path};
 
-pub(crate) const PROTECTED_SUBPATHS: [&str; 3] = [".git", ".alan", ".agents"];
+/// Project-relative path components protected against direct Tool writes.
+pub const PROTECTED_SUBPATHS: &[&str] = &[".git", ".alan", ".agents"];
 
 pub(crate) fn protected_path_component(path: &Path) -> Option<&'static str> {
     path.components().find_map(protected_component)

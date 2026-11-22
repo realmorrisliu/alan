@@ -1,6 +1,8 @@
+use crate::namespace_fs::{MAX_NAMESPACE_READ_BYTES, NamespaceFs, resolve_namespace_path};
+use alan_agent_engine::tools::alan_ap::FileKind;
 use alan_agent_engine::tools::{Tool, ToolContext, ToolResult};
 use alan_agent_protocol::{ContentPart, DiffHunk, DiffLine, ToolResultPresentation};
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -93,78 +95,52 @@ impl Tool for ReadFileTool {
                 ))
             });
         }
+        let offset = args["offset"].as_u64().unwrap_or(1) as usize;
+        let limit = args["limit"].as_u64().unwrap_or(1000) as usize;
+
+        if let Some(transport) = ctx.namespace().cloned() {
+            let path = match resolve_namespace_path(&ctx.namespace_cwd, Some(requested)) {
+                Ok(path) => path,
+                Err(err) => return Box::pin(async move { Err(err) }),
+            };
+            if path == "/agent" || path.starts_with("/agent/") {
+                return Box::pin(async {
+                    Err(anyhow!(
+                        "Only the receiving Agent's concrete Action output path can be read"
+                    ))
+                });
+            }
+            let ns = NamespaceFs::new(transport);
+            return Box::pin(async move {
+                let ns_path = Path::new(&path);
+                let bytes = ns.read_file_bytes(&path, MAX_NAMESPACE_READ_BYTES).await?;
+                if is_image(ns_path) {
+                    return format_image_read(ns_path, &bytes, &path);
+                }
+                let content = String::from_utf8(bytes)
+                    .map_err(|_| anyhow!("File '{path}' is not valid UTF-8"))?;
+                Ok(format_text_read(&content, &path, offset, limit))
+            });
+        }
+
         let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
-        let path = match ctx.resolve_path(args["path"].as_str().unwrap_or("")) {
+        let path = match ctx.resolve_path(requested) {
             Ok(path) => path,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
         let visible_path = ctx.visible_path(&path).to_string_lossy().to_string();
-        let offset = args["offset"].as_u64().unwrap_or(1) as usize;
-        let limit = args["limit"].as_u64().unwrap_or(1000) as usize;
 
         Box::pin(async move {
             if is_image(&path) {
                 let content = sandbox.read(&path).await?;
-                let mime_type = detect_mime(&path);
-                let size_bytes = content.len();
-                let mut result = json!({
-                    "type": "image",
-                    "path": visible_path,
-                    "size_bytes": size_bytes,
-                    "mime_type": mime_type
-                });
-                if is_multimodal_image(&path) {
-                    if size_bytes <= MAX_INLINE_IMAGE_BYTES {
-                        let hash = content_hash_hex(&content);
-                        let encoded = encode_base64(&content);
-                        let attachment = ContentPart::Attachment {
-                            hash,
-                            mime_type: mime_type.to_string(),
-                            metadata: json!({
-                                "path": visible_path,
-                                "size_bytes": size_bytes,
-                                "data": encoded
-                            }),
-                        };
-                        result["content_parts"] = serde_json::to_value(vec![attachment])?;
-                    } else {
-                        result["attachment_omitted_reason"] = json!(format!(
-                            "image exceeds {} byte inline attachment limit",
-                            MAX_INLINE_IMAGE_BYTES
-                        ));
-                    }
-                }
-                return Ok(result);
+                return format_image_read(&path, &content, &visible_path);
             }
 
             let content = sandbox.read_string(&path).await?;
-            let lines: Vec<&str> = content.lines().collect();
-
-            let start = offset.saturating_sub(1);
-            let end = (start + limit).min(lines.len());
-
-            let formatted: Vec<String> = if start < lines.len() {
-                lines[start..end]
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, line)| format!("{}| {}", start + idx + 1, line))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-            Ok(json!({
-                "type": "text",
-                "path": visible_path,
-                "content": formatted.join("\n"),
-                "total_lines": lines.len(),
-                "start_line": start + 1,
-                "end_line": end,
-                "truncated": end < lines.len()
-            }))
+            Ok(format_text_read(&content, &visible_path, offset, limit))
         })
     }
 
@@ -210,16 +186,34 @@ impl Tool for WriteFileTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
+        let requested = args["path"].as_str().unwrap_or("");
+        let content = args["content"].as_str().unwrap_or("").to_string();
+
+        if let Some(transport) = ctx.namespace().cloned() {
+            let path = match resolve_namespace_path(&ctx.namespace_cwd, Some(requested)) {
+                Ok(path) => path,
+                Err(err) => return Box::pin(async move { Err(err) }),
+            };
+            let ns = NamespaceFs::new(transport);
+            return Box::pin(async move {
+                ns.write_file(&path, content.as_bytes()).await?;
+                Ok(json!({
+                    "success": true,
+                    "path": path,
+                    "bytes_written": content.len()
+                }))
+            });
+        }
+
         let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
-        let path = match ctx.resolve_path(args["path"].as_str().unwrap_or("")) {
+        let path = match ctx.resolve_path(requested) {
             Ok(path) => path,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
         let visible_path = ctx.visible_path(&path).to_string_lossy().to_string();
-        let content = args["content"].as_str().unwrap_or("").to_string();
 
         Box::pin(async move {
             sandbox.write(&path, content.as_bytes()).await?;
@@ -282,48 +276,65 @@ impl Tool for EditFileTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
+        let requested = args["path"].as_str().unwrap_or("");
+        let old_string = args["old_string"].as_str().unwrap_or("").to_string();
+        let new_string = args["new_string"].as_str().unwrap_or("").to_string();
+        let replace_all = args["replace_all"].as_bool().unwrap_or(false);
+
+        if let Some(transport) = ctx.namespace().cloned() {
+            let path = match resolve_namespace_path(&ctx.namespace_cwd, Some(requested)) {
+                Ok(path) => path,
+                Err(err) => return Box::pin(async move { Err(err) }),
+            };
+            let ns = NamespaceFs::new(transport);
+            return Box::pin(async move {
+                if old_string.is_empty() {
+                    return Err(anyhow!("old_string must not be empty"));
+                }
+                let stat = ns.stat(&path).await?;
+                if stat.qid.kind != FileKind::File {
+                    return Err(anyhow!("Path '{path}' is not a regular file"));
+                }
+                if !stat.writable {
+                    return Err(anyhow!("Failed to edit '{path}': no access"));
+                }
+                let bytes = ns.read_file_bytes(&path, MAX_NAMESPACE_READ_BYTES).await?;
+                let content = String::from_utf8(bytes)
+                    .map_err(|_| anyhow!("File '{path}' is not valid UTF-8"))?;
+                let (new_content, match_count, presentation) =
+                    apply_edit(&content, &path, &old_string, &new_string, replace_all)?;
+                ns.write_file(&path, new_content.as_bytes()).await?;
+                Ok(json!({
+                    "success": true,
+                    "path": path,
+                    "replacements": match_count,
+                    "presentation": serde_json::to_value(&presentation)?
+                }))
+            });
+        }
+
         let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
-        let path = match ctx.resolve_path(args["path"].as_str().unwrap_or("")) {
+        let path = match ctx.resolve_path(requested) {
             Ok(path) => path,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
         let visible_path = ctx.visible_path(&path).to_string_lossy().to_string();
-        let old_string = args["old_string"].as_str().unwrap_or("").to_string();
-        let new_string = args["new_string"].as_str().unwrap_or("").to_string();
-        let replace_all = args["replace_all"].as_bool().unwrap_or(false);
 
         Box::pin(async move {
             if old_string.is_empty() {
                 return Err(anyhow!("old_string must not be empty"));
             }
             let content = sandbox.read_string(&path).await?;
-            let match_count = content.matches(&old_string).count();
-
-            if match_count == 0 {
-                return Err(anyhow!(
-                    "Search text not found in file: '{}...'",
-                    old_string.chars().take(50).collect::<String>()
-                ));
-            }
-            if match_count > 1 && !replace_all {
-                return Err(anyhow!(
-                    "Search text matches {match_count} occurrences in '{visible_path}'; provide more surrounding context so old_string is unique, or pass `replace_all: true` to replace all occurrences"
-                ));
-            }
-
-            let hunks = build_edit_diff_hunks(&content, &old_string, &new_string, replace_all);
-            let presentation = ToolResultPresentation::Diff {
-                path: visible_path.clone(),
-                hunks,
-            };
-            let new_content = if replace_all {
-                content.replace(&old_string, &new_string)
-            } else {
-                content.replacen(&old_string, &new_string, 1)
-            };
+            let (new_content, match_count, presentation) = apply_edit(
+                &content,
+                &visible_path,
+                &old_string,
+                &new_string,
+                replace_all,
+            )?;
             sandbox.write(&path, new_content.as_bytes()).await?;
 
             Ok(json!({
@@ -338,6 +349,99 @@ impl Tool for EditFileTool {
     fn capability(&self, _args: &Value) -> alan_agent_protocol::ToolCapability {
         alan_agent_protocol::ToolCapability::Write
     }
+}
+
+fn format_image_read(path: &Path, content: &[u8], visible_path: &str) -> Result<Value> {
+    let mime_type = detect_mime(path);
+    let size_bytes = content.len();
+    let mut result = json!({
+        "type": "image",
+        "path": visible_path,
+        "size_bytes": size_bytes,
+        "mime_type": mime_type
+    });
+    if is_multimodal_image(path) {
+        if size_bytes <= MAX_INLINE_IMAGE_BYTES {
+            let hash = content_hash_hex(content);
+            let encoded = encode_base64(content);
+            let attachment = ContentPart::Attachment {
+                hash,
+                mime_type: mime_type.to_string(),
+                metadata: json!({
+                    "path": visible_path,
+                    "size_bytes": size_bytes,
+                    "data": encoded
+                }),
+            };
+            result["content_parts"] = serde_json::to_value(vec![attachment])?;
+        } else {
+            result["attachment_omitted_reason"] = json!(format!(
+                "image exceeds {} byte inline attachment limit",
+                MAX_INLINE_IMAGE_BYTES
+            ));
+        }
+    }
+    Ok(result)
+}
+
+fn format_text_read(content: &str, visible_path: &str, offset: usize, limit: usize) -> Value {
+    let lines: Vec<&str> = content.lines().collect();
+    let start = offset.saturating_sub(1);
+    let end = (start + limit).min(lines.len());
+
+    let formatted: Vec<String> = if start < lines.len() {
+        lines[start..end]
+            .iter()
+            .enumerate()
+            .map(|(idx, line)| format!("{}| {}", start + idx + 1, line))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    json!({
+        "type": "text",
+        "path": visible_path,
+        "content": formatted.join("\n"),
+        "total_lines": lines.len(),
+        "start_line": start + 1,
+        "end_line": end,
+        "truncated": end < lines.len()
+    })
+}
+
+fn apply_edit(
+    content: &str,
+    visible_path: &str,
+    old_string: &str,
+    new_string: &str,
+    replace_all: bool,
+) -> Result<(String, usize, ToolResultPresentation)> {
+    let match_count = content.matches(old_string).count();
+
+    if match_count == 0 {
+        return Err(anyhow!(
+            "Search text not found in file: '{}...'",
+            old_string.chars().take(50).collect::<String>()
+        ));
+    }
+    if match_count > 1 && !replace_all {
+        return Err(anyhow!(
+            "Search text matches {match_count} occurrences in '{visible_path}'; provide more surrounding context so old_string is unique, or pass `replace_all: true` to replace all occurrences"
+        ));
+    }
+
+    let hunks = build_edit_diff_hunks(content, old_string, new_string, replace_all);
+    let presentation = ToolResultPresentation::Diff {
+        path: visible_path.to_string(),
+        hunks,
+    };
+    let new_content = if replace_all {
+        content.replace(old_string, new_string)
+    } else {
+        content.replacen(old_string, new_string, 1)
+    };
+    Ok((new_content, match_count, presentation))
 }
 
 pub(super) fn is_image(path: &Path) -> bool {

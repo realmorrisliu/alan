@@ -102,6 +102,17 @@ impl SandboxSpec {
             .unwrap_or_default()
     }
 
+    /// Compute the sensitive-read denylist for a single explicit Host Mount,
+    /// removing entries that exactly match the granted mount root itself.
+    pub fn read_denylist_for_mount(host_path: &Path) -> Vec<PathBuf> {
+        let canonical = dunce::canonicalize(host_path)
+            .unwrap_or_else(|_| dunce::simplified(host_path).to_path_buf());
+        super::super::sandbox_backend::read_denylist_excluding_writable_roots(
+            &Self::default_sensitive_read_denylist(),
+            &[canonical],
+        )
+    }
+
     /// Derive sensitive read-deny paths from an explicit home directory.
     pub fn sensitive_read_denylist_for_home(home_dir: &Path) -> Vec<PathBuf> {
         let mut paths = [".alan", ".alan-dev"]

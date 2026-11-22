@@ -90,6 +90,7 @@ struct State {
 /// The namespace-as-`FileServer`.
 pub struct MountFs {
     ns: LiveNamespace,
+    read_only_prefixes: Vec<Vec<String>>,
     state: Arc<Mutex<State>>,
 }
 
@@ -216,8 +217,46 @@ impl MountFs {
         );
         Self {
             ns,
+            read_only_prefixes: Vec::new(),
             state: Arc::new(Mutex::new(State { fids })),
         }
+    }
+
+    /// Clamp every mount at or beneath `prefixes` to [`crate::Access::ReadOnly`] in this view.
+    ///
+    /// Enforcement is live: dynamic mounts, replacements, and unmounts on the underlying
+    /// [`LiveNamespace`] take effect immediately, while any path matching one of `prefixes`
+    /// has mutating requests rejected with [`ErrorCode::NoAccess`] and `Stat.writable` masked
+    /// to `false`.
+    pub fn with_read_only_prefixes<I, S>(mut self, prefixes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.read_only_prefixes = prefixes
+            .into_iter()
+            .map(|prefix| split_path(prefix.as_ref()))
+            .collect();
+        self
+    }
+
+    fn is_clamped_read_only(&self, normalized_path: &[String]) -> bool {
+        self.read_only_prefixes.iter().any(|prefix| {
+            normalized_path.len() >= prefix.len()
+                && prefix.iter().zip(normalized_path).all(|(a, b)| a == b)
+        })
+    }
+
+    fn resolve_candidates(&self, path: &[String]) -> Vec<Resolved> {
+        let joined = join_path(path);
+        let normalized = split_path(&joined);
+        let mut candidates = self.ns.resolve_candidates(&joined);
+        if self.is_clamped_read_only(&normalized) {
+            for candidate in &mut candidates {
+                candidate.access = crate::Access::ReadOnly;
+            }
+        }
+        candidates
     }
 
     /// Return the live namespace handle backing this file server.
@@ -291,7 +330,7 @@ impl MountFs {
                 names.push(name);
             }
         };
-        for cand in self.ns.resolve_candidates(&join_path(path)) {
+        for cand in self.resolve_candidates(path) {
             let backing_fid = Fid(NEXT_BACKING.fetch_add(1, Ordering::Relaxed));
             // A contributor that simply lacks this path (NotFound) is skipped; any
             // other error (Io/RateLimited/NoAccess) is an operational failure and
@@ -380,7 +419,7 @@ impl FileServer for MountFs {
             }
             let mut path = base.path.clone();
             path.extend(names.iter().cloned());
-            let candidates = self.ns.resolve_candidates(&join_path(&path));
+            let candidates = self.resolve_candidates(&path);
             let Some(first) = candidates.first() else {
                 // Synthetic walks have no backing await; publish under this same lock.
                 if !path.is_empty() && !self.is_synthetic_dir(&path) {
@@ -679,6 +718,9 @@ impl FileServer for MountFs {
             let backing_fid = backing.backing_fid;
             let mut path = entry.path.clone();
             path.push(name.to_string());
+            if self.is_clamped_read_only(&split_path(&join_path(&path))) {
+                return Err(ErrorCode::NoAccess);
+            }
             state.fids.insert(
                 newfid,
                 Entry {

@@ -5,14 +5,18 @@
 //! owned by `alan-kernel`, while this crate only maps a declared host root to aP
 //! fid operations and rejects any path that escapes that root.
 
+mod policy;
+
+pub use policy::HostDirPolicy;
+
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io::{Read as _, SeekFrom, Write as _};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -20,6 +24,7 @@ use std::time::Duration;
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
 use async_trait::async_trait;
+use policy::directory_listing;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 const MAX_BUFFERED_FILE_BYTES: usize = 64 * 1024 * 1024;
@@ -42,6 +47,7 @@ pub struct HostDirFs {
     root: PathBuf,
     root_dir: std::fs::File,
     access: HostDirAccess,
+    policy: HostDirPolicy,
     state: Mutex<HostDirState>,
 }
 
@@ -56,6 +62,7 @@ struct HostFid {
     write_identity: Option<HostFileIdentity>,
     write_buf: Vec<u8>,
     wrote: bool,
+    write_failed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,11 +98,18 @@ impl HostDirFs {
             root,
             root_dir,
             access,
+            policy: HostDirPolicy::default(),
             state: Mutex::new(HostDirState {
                 active: true,
                 fids: HashMap::new(),
             }),
         })
+    }
+
+    /// Attach a read-denylist and protected-subpath write policy to this export.
+    pub fn with_policy(mut self, policy: HostDirPolicy) -> Self {
+        self.policy = policy;
+        self
     }
 
     /// Invalidate this export, including existing fids and uncommitted writes.
@@ -224,6 +238,8 @@ impl FileServer for HostDirFs {
             return Err(ErrorCode::NotDirectory);
         }
         rel.extend(names.iter().cloned());
+        validate_rel(&rel)?;
+        self.policy.check_read(&rel)?;
         let qid = match self.existing_handle(&rel) {
             Ok(handle) => self.qid_for_metadata(&handle.metadata)?,
             Err(ErrorCode::NoAccess) => match self.qid_for_rel_no_follow(&rel) {
@@ -241,6 +257,7 @@ impl FileServer for HostDirFs {
                 write_identity: None,
                 write_buf: Vec::new(),
                 wrote: false,
+                write_failed: false,
             },
         );
         Ok(qid)
@@ -253,6 +270,10 @@ impl FileServer for HostDirFs {
         let mut state = self.live_state()?;
         let fids = &mut state.fids;
         let rel = Self::rel_for_fid(fids, fid)?;
+        self.policy.check_read(&rel)?;
+        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+            self.policy.check_write(&rel)?;
+        }
         let mut write_seed = None;
         let mut write_identity = None;
         let qid = match mode {
@@ -300,7 +321,7 @@ impl FileServer for HostDirFs {
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        let handle = {
+        let (rel, handle) = {
             let state = self.live_state()?;
             let fids = &state.fids;
             if fid != Fid::ROOT {
@@ -310,10 +331,12 @@ impl FileServer for HostDirFs {
                 }
             }
             let rel = Self::rel_for_fid(fids, fid)?;
-            self.existing_handle(&rel)?
+            self.policy.check_read(&rel)?;
+            let handle = self.existing_handle(&rel)?;
+            (rel, handle)
         };
         let bytes = if handle.metadata.is_dir() {
-            directory_listing(handle.file)?
+            directory_listing(handle.file, &rel, &self.policy)?
         } else if handle.metadata.is_file() {
             return read_file_range(handle.file, offset, count).await;
         } else {
@@ -332,14 +355,35 @@ impl FileServer for HostDirFs {
         if !matches!(fid_state.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
             return Err(ErrorCode::NoAccess);
         }
-        match self.entry_kind_for_rel(&fid_state.rel)? {
-            HostEntryKind::File => {}
-            HostEntryKind::Dir => return Err(ErrorCode::IsDirectory),
-            HostEntryKind::Symlink => return Err(ErrorCode::NoAccess),
+        if self.policy.check_write(&fid_state.rel).is_err() {
+            fid_state.write_failed = true;
+            return Err(ErrorCode::NoAccess);
         }
-        let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-        let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
+        match self.entry_kind_for_rel(&fid_state.rel) {
+            Ok(HostEntryKind::File) => {}
+            Ok(HostEntryKind::Dir) => {
+                fid_state.write_failed = true;
+                return Err(ErrorCode::IsDirectory);
+            }
+            Ok(HostEntryKind::Symlink) => {
+                fid_state.write_failed = true;
+                return Err(ErrorCode::NoAccess);
+            }
+            Err(err) => {
+                fid_state.write_failed = true;
+                return Err(err);
+            }
+        }
+        let Some(start) = usize::try_from(offset).ok() else {
+            fid_state.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        };
+        let Some(end) = start.checked_add(data.len()) else {
+            fid_state.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        };
         if end > MAX_BUFFERED_FILE_BYTES {
+            fid_state.write_failed = true;
             return Err(ErrorCode::BadRequest);
         }
         if fid_state.write_buf.len() < end {
@@ -353,11 +397,12 @@ impl FileServer for HostDirFs {
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
         let state = self.live_state()?;
         let rel = Self::rel_for_fid(&state.fids, fid)?;
+        self.policy.check_read(&rel)?;
 
         if rel.is_empty() {
             let handle = self.existing_handle(&rel)?;
             let qid = self.qid_for_metadata(&handle.metadata)?;
-            let length = directory_listing(handle.file)?.len() as u64;
+            let length = directory_listing(handle.file, &rel, &self.policy)?.len() as u64;
             return Ok(Stat {
                 name: String::new(),
                 qid,
@@ -374,7 +419,7 @@ impl FileServer for HostDirFs {
             HostEntryKind::File => u64::try_from(stat.st_size).map_err(|_| ErrorCode::Io)?,
             HostEntryKind::Dir => {
                 let handle = self.existing_handle(&rel)?;
-                directory_listing(handle.file)?.len() as u64
+                directory_listing(handle.file, &rel, &self.policy)?.len() as u64
             }
             HostEntryKind::Symlink => return Err(ErrorCode::NoAccess),
         };
@@ -383,7 +428,9 @@ impl FileServer for HostDirFs {
             qid,
             length,
             executable: kind == HostEntryKind::File && stat.st_mode as libc::mode_t & 0o111 != 0,
-            writable: self.access.writable() && qid.kind == FileKind::File,
+            writable: self.access.writable()
+                && qid.kind == FileKind::File
+                && !self.policy.is_write_protected(&rel),
         })
     }
 
@@ -403,6 +450,8 @@ impl FileServer for HostDirFs {
             return Err(ErrorCode::BadRequest);
         }
         let parent_rel = Self::rel_for_fid(fids, fid)?;
+        validate_name(name)?;
+        self.policy.check_create(&parent_rel, name)?;
         let parent = self.parent_handle(&parent_rel, name)?;
         match kind {
             FileKind::Dir => mkdir_child(parent.file.as_raw_fd(), name)?,
@@ -423,6 +472,7 @@ impl FileServer for HostDirFs {
                 write_identity: None,
                 write_buf: Vec::new(),
                 wrote: false,
+                write_failed: false,
             },
         );
         Ok(qid)
@@ -438,6 +488,7 @@ impl FileServer for HostDirFs {
         let mut state = self.live_state()?;
         let fids = &mut state.fids;
         let rel = Self::rel_for_fid(fids, fid)?;
+        self.policy.check_write(&rel)?;
         remove_entry(&self.root_dir, &rel)?;
         fids.remove(&fid);
         Ok(())
@@ -450,7 +501,8 @@ impl FileServer for HostDirFs {
         }
         let fids = &mut state.fids;
         let fid_state = fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
-        if fid_state.wrote {
+        if fid_state.wrote && !fid_state.write_failed {
+            self.policy.check_write(&fid_state.rel)?;
             let identity = fid_state.write_identity.ok_or(ErrorCode::BadRequest)?;
             atomic_replace_file(
                 &self.root_dir,
@@ -779,42 +831,6 @@ fn map_remove_error(error: std::io::Error) -> ErrorCode {
         Some(code) if code == libc::EACCES || code == libc::EPERM => ErrorCode::NoAccess,
         _ => ErrorCode::Io,
     }
-}
-
-fn directory_listing(file: std::fs::File) -> Result<Vec<u8>, ErrorCode> {
-    let fd = file.into_raw_fd();
-    // SAFETY: fd is an owned open directory descriptor. On success fdopendir takes ownership.
-    let dir = unsafe { libc::fdopendir(fd) };
-    if dir.is_null() {
-        // SAFETY: fdopendir failed and therefore did not take ownership of fd;
-        // close it exactly once.
-        unsafe {
-            libc::close(fd);
-        }
-        return Err(ErrorCode::Io);
-    }
-    let mut names = Vec::new();
-    loop {
-        // SAFETY: dir is a non-null DIR pointer owned by this function until closedir below.
-        let entry = unsafe { libc::readdir(dir) };
-        if entry.is_null() {
-            break;
-        }
-        // SAFETY: readdir returned a live dirent whose d_name field is NUL-terminated and remains
-        // valid until the next readdir call.
-        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
-        if name.to_bytes() == b"." || name.to_bytes() == b".." {
-            continue;
-        }
-        names.push(String::from_utf8_lossy(name.to_bytes()).to_string());
-    }
-    // SAFETY: dir is still owned here and has not previously been passed to closedir.
-    let close_result = unsafe { libc::closedir(dir) };
-    if close_result != 0 {
-        return Err(ErrorCode::Io);
-    }
-    names.sort();
-    Ok(names.join("\n").into_bytes())
 }
 
 async fn read_file_range(

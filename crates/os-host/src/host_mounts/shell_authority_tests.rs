@@ -148,3 +148,141 @@ async fn retargeted_backing_root_does_not_move_grant_authority() {
         assert!(service.reconcile(7, current).is_ok());
     }
 }
+
+#[tokio::test]
+async fn native_export_enforces_protected_subpath_writes_and_allows_project_edits() {
+    use alan_ap::{ErrorCode, Fid, FileKind, OpenMode, Request, Response};
+
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(project.path().join(".git/hooks")).unwrap();
+    std::fs::write(project.path().join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::write(project.path().join(".git/config"), "[core]\n").unwrap();
+    std::fs::write(project.path().join(".git/hooks/pre-commit"), "#!/bin/sh\n").unwrap();
+    std::fs::create_dir_all(project.path().join(".alan")).unwrap();
+    std::fs::write(project.path().join(".alan/settings.toml"), "mode = 1\n").unwrap();
+    std::fs::create_dir_all(project.path().join(".agents")).unwrap();
+    std::fs::write(project.path().join(".agents/skill.md"), "# skill\n").unwrap();
+    std::fs::create_dir_all(project.path().join("src")).unwrap();
+    std::fs::write(project.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+
+    let export = native_export("/mnt/project", project.path(), HostMountAccess::ReadWrite).unwrap();
+    let tree = export.file_tree();
+
+    // .git/HEAD stays readable.
+    tree.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(1),
+        names: vec![".git".to_string(), "HEAD".to_string()],
+    })
+    .await
+    .unwrap();
+    tree.call(Request::Open {
+        fid: Fid(1),
+        mode: OpenMode::Read,
+    })
+    .await
+    .unwrap();
+    let Response::Read { data } = tree
+        .call(Request::Read {
+            fid: Fid(1),
+            offset: 0,
+            count: 64,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("expected Read response");
+    };
+    assert_eq!(data, b"ref: refs/heads/main\n");
+    tree.call(Request::Clunk { fid: Fid(1) }).await.unwrap();
+
+    // Protected subpaths are non-writable and reject Open(Write).
+    for (idx, path) in [
+        vec![".git".to_string(), "config".to_string()],
+        vec![
+            ".git".to_string(),
+            "hooks".to_string(),
+            "pre-commit".to_string(),
+        ],
+        vec![".alan".to_string(), "settings.toml".to_string()],
+        vec![".agents".to_string(), "skill.md".to_string()],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let fid = Fid(10 + idx as u64);
+        tree.call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: fid,
+            names: path,
+        })
+        .await
+        .unwrap();
+        let Response::Stat { stat } = tree.call(Request::Stat { fid }).await.unwrap() else {
+            panic!("expected Stat response");
+        };
+        assert!(!stat.writable);
+        assert_eq!(
+            tree.call(Request::Open {
+                fid,
+                mode: OpenMode::Write,
+            })
+            .await
+            .unwrap_err(),
+            ErrorCode::NoAccess
+        );
+        tree.call(Request::Clunk { fid }).await.unwrap();
+    }
+
+    // Creating a new hook inside .git/hooks fails with NoAccess.
+    tree.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(20),
+        names: vec![".git".to_string(), "hooks".to_string()],
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        tree.call(Request::Create {
+            fid: Fid(20),
+            newfid: Fid(21),
+            name: "post-checkout".to_string(),
+            kind: FileKind::File,
+        })
+        .await
+        .unwrap_err(),
+        ErrorCode::NoAccess
+    );
+    tree.call(Request::Clunk { fid: Fid(20) }).await.unwrap();
+
+    // Ordinary project files remain writable.
+    tree.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(30),
+        names: vec!["src".to_string(), "main.rs".to_string()],
+    })
+    .await
+    .unwrap();
+    let Response::Stat { stat } = tree.call(Request::Stat { fid: Fid(30) }).await.unwrap() else {
+        panic!("expected Stat response");
+    };
+    assert!(stat.writable);
+    tree.call(Request::Open {
+        fid: Fid(30),
+        mode: OpenMode::Write,
+    })
+    .await
+    .unwrap();
+    tree.call(Request::Write {
+        fid: Fid(30),
+        offset: 0,
+        data: b"fn main() { println!(\"ok\"); }\n".to_vec(),
+    })
+    .await
+    .unwrap();
+    tree.call(Request::Clunk { fid: Fid(30) }).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/main.rs")).unwrap(),
+        "fn main() { println!(\"ok\"); }\n"
+    );
+}

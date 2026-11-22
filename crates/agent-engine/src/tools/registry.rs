@@ -979,6 +979,8 @@ impl alan_kernel::ProcessRunner for ToolProcessRunner {
         {
             return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
         }
+        let mount_fs = alan_kernel::MountFs::new(invocation.namespace)
+            .with_read_only_prefixes(super::TOOL_READ_ONLY_SYSTEM_PREFIXES);
         let outcome = self
             .run_in_namespace(
                 ToolProcessInvocation {
@@ -987,9 +989,7 @@ impl alan_kernel::ProcessRunner for ToolProcessRunner {
                     executable: invocation.exec.executable,
                     args: invocation.exec.args,
                 },
-                alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
-                    invocation.namespace,
-                ))),
+                alan_ap::InProcessTransport::new(Arc::new(mount_fs)),
             )
             .await;
         alan_kernel::ProcessOutcome::exited(outcome.exit_code, outcome.output)
