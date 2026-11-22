@@ -1,0 +1,380 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use alan_ap::{ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode};
+use alan_kernel::{Access, MountFs, Namespace};
+use alan_routefs::RouteFs;
+use tokio::sync::oneshot;
+
+use super::backend::{
+    GhCliGithubBackend, GithubBackend, GithubEvent, GithubIssueMeta, IssueRecord,
+    MemoryGithubBackend, NewIssueRequest, RepoSlug, SyncRepoOutcome, redact_github_tokens,
+    validate_label,
+};
+use super::dispatch::{GithubEventDispatcher, SkipReason, TriggerAllowlist};
+use super::{GithubFs, MAX_CTL_BYTES};
+
+#[test]
+fn slug_and_payload_validation_fail_closed() {
+    assert!(RepoSlug::parse("realmorrisliu/alan").is_ok());
+    assert!(RepoSlug::parse("org.name/repo_1-2").is_ok());
+    assert!(RepoSlug::parse("../alan").is_err());
+    assert!(RepoSlug::parse("owner/..").is_err());
+    assert!(RepoSlug::parse("owner/repo/extra").is_err());
+    assert!(RepoSlug::parse("owner/").is_err());
+    assert!(RepoSlug::parse("/repo").is_err());
+
+    assert_eq!(validate_label("alan:auto").unwrap(), "alan:auto");
+    assert!(validate_label("   ").is_err());
+    assert!(validate_label("bad\nlabel").is_err());
+    assert!(validate_label("bad\0label").is_err());
+
+    let bad_title = NewIssueRequest {
+        title: "   ".to_string(),
+        body: "details".to_string(),
+        labels: vec![],
+    };
+    assert_eq!(bad_title.validate(), Err(ErrorCode::BadRequest));
+
+    let bad_nul = NewIssueRequest {
+        title: "ok".to_string(),
+        body: "bad\0body".to_string(),
+        labels: vec![],
+    };
+    assert_eq!(bad_nul.validate(), Err(ErrorCode::BadRequest));
+}
+
+#[test]
+fn token_redaction_scrubs_prefixes_and_bearer_headers() {
+    let raw = "auth failed for ghp_secretToken12345 and github_pat_11AA_BBcc with Bearer my.jwt.token and token raw_tok_99";
+    let scrubbed = redact_github_tokens(raw, Some("explicit-secret-xyz"));
+    assert!(!scrubbed.contains("ghp_secretToken12345"), "{scrubbed}");
+    assert!(!scrubbed.contains("github_pat_11AA_BBcc"), "{scrubbed}");
+    assert!(!scrubbed.contains("my.jwt.token"), "{scrubbed}");
+    assert!(!scrubbed.contains("raw_tok_99"), "{scrubbed}");
+    assert!(scrubbed.contains("[REDACTED]"), "{scrubbed}");
+
+    let explicit = redact_github_tokens(
+        "leaked explicit-secret-xyz here",
+        Some("explicit-secret-xyz"),
+    );
+    assert!(!explicit.contains("explicit-secret-xyz"));
+    assert!(explicit.contains("[REDACTED]"));
+}
+
+#[test]
+fn trigger_allowlist_validation_fails_closed() {
+    let valid = TriggerAllowlist {
+        allowed_repos: vec!["acme/alan".to_string()],
+        allowed_actors: vec!["morris".to_string()],
+        required_labels: vec!["alan:auto".to_string()],
+        ignored_actors: vec!["alan-bot".to_string()],
+        ignored_branch_prefixes: vec!["alan/".to_string()],
+        max_concurrent: 2,
+        max_retries: 3,
+    };
+    assert!(valid.validate().is_ok());
+
+    let mut empty_repos = valid.clone();
+    empty_repos.allowed_repos.clear();
+    assert!(empty_repos.validate().is_err());
+
+    let mut empty_actors = valid.clone();
+    empty_actors.allowed_actors.clear();
+    assert!(empty_actors.validate().is_err());
+
+    let mut empty_labels = valid.clone();
+    empty_labels.required_labels.clear();
+    assert!(empty_labels.validate().is_err());
+
+    let mut zero_conc = valid.clone();
+    zero_conc.max_concurrent = 0;
+    assert!(zero_conc.validate().is_err());
+
+    let mut zero_retries = valid;
+    zero_retries.max_retries = 0;
+    assert!(zero_retries.validate().is_err());
+}
+
+#[tokio::test]
+async fn ap_fid_lifecycle_and_write_failed_guard_hold() {
+    let backend = Arc::new(MemoryGithubBackend::new());
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+    backend.seed_issue(
+        &slug,
+        IssueRecord {
+            meta: GithubIssueMeta {
+                number: 1,
+                title: "Initial".to_string(),
+                author: "morris".to_string(),
+                state: "open".to_string(),
+                labels: vec![],
+                updated_at: "2026-11-22T00:00:00Z".to_string(),
+                url: "https://github.com/acme/alan/issues/1".to_string(),
+            },
+            body: "hello".to_string(),
+            comments: vec![],
+        },
+    );
+    let fs = GithubFs::new(backend);
+
+    // Root cannot be opened for write or overwritten by walk.
+    assert_eq!(
+        fs.open(Fid::ROOT, OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        fs.walk(Fid::ROOT, Fid::ROOT, &["ctl".into()]).await,
+        Err(ErrorCode::BadRequest)
+    );
+
+    // Read-only files reject Write/ReadWrite at open.
+    fs.walk(Fid::ROOT, Fid(1), &["status".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.open(Fid(1), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        fs.open(Fid(1), OpenMode::ReadWrite).await,
+        Err(ErrorCode::NoAccess)
+    );
+    fs.clunk(Fid(1)).await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(2), &["events".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.open(Fid(2), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+    fs.clunk(Fid(2)).await.unwrap();
+
+    // Reopening an already-open fid is rejected.
+    fs.walk(Fid::ROOT, Fid(3), &["ctl".into()]).await.unwrap();
+    fs.open(Fid(3), OpenMode::Write).await.unwrap();
+    assert_eq!(
+        fs.open(Fid(3), OpenMode::Read).await,
+        Err(ErrorCode::BadRequest)
+    );
+    // Valid write followed by overflowing write marks `write_failed`; clunk must NOT commit.
+    fs.write(Fid(3), 0, b"watch other/repo").await.unwrap();
+    assert_eq!(
+        fs.write(Fid(3), (MAX_CTL_BYTES + 1) as u64, b"x").await,
+        Err(ErrorCode::BadRequest)
+    );
+    fs.clunk(Fid(3)).await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(4), &["status".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(4), OpenMode::Read).await.unwrap();
+    let status_bytes = fs.read(Fid(4), 0, 4096).await.unwrap();
+    fs.clunk(Fid(4)).await.unwrap();
+    let status_text = String::from_utf8(status_bytes).unwrap();
+    assert!(!status_text.contains("other/repo"), "{status_text}");
+
+    // Zero-write open+clunk does nothing, whereas explicit zero-byte write fails closed.
+    fs.walk(Fid::ROOT, Fid(5), &["ctl".into()]).await.unwrap();
+    fs.open(Fid(5), OpenMode::Write).await.unwrap();
+    fs.clunk(Fid(5)).await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(6), &["ctl".into()]).await.unwrap();
+    fs.open(Fid(6), OpenMode::Write).await.unwrap();
+    fs.write(Fid(6), 0, b"").await.unwrap();
+    assert_eq!(fs.clunk(Fid(6)).await, Err(ErrorCode::BadRequest));
+
+    // Create/remove unsupported.
+    assert_eq!(
+        fs.create(Fid::ROOT, Fid(7), "foo", FileKind::File).await,
+        Err(ErrorCode::Unsupported)
+    );
+    fs.walk(
+        Fid::ROOT,
+        Fid(8),
+        &[
+            "repos".into(),
+            "acme".into(),
+            "alan".into(),
+            "issues".into(),
+            "1".into(),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(fs.remove(Fid(8)).await, Err(ErrorCode::Unsupported));
+    fs.clunk(Fid(8)).await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gh_cli_backend_uses_if_none_match_and_redacts_error_tokens() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let etag_seen_file = dir.path().join("etag_seen.txt");
+    let gh_script = dir.path().join("gh");
+    let secret = "ghp_UNIT_TEST_SECRET_VALUE_98765";
+
+    let script = format!(
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${{1:-}}" == "auth" && "${{2:-}}" == "token" ]]; then
+  echo "{secret}"
+  exit 0
+fi
+if [[ "${{1:-}}" == "api" ]]; then
+  all_args="$*"
+  if [[ "$all_args" == *"repos/acme/leak/events"* ]]; then
+    echo "error authenticating with {secret}" >&2
+    exit 1
+  fi
+  if [[ "$all_args" == *"If-None-Match: W/\"gh-1\""* ]]; then
+    echo "seen-etag" > "{etag_file}"
+    printf 'HTTP/1.1 304 Not Modified\r\nETag: W/"gh-1"\r\nX-RateLimit-Limit: 5000\r\nX-RateLimit-Remaining: 4998\r\n\r\n'
+    exit 0
+  fi
+  if [[ "$all_args" == *"repos/acme/alan/events"* ]]; then
+    printf 'HTTP/1.1 200 OK\r\nETag: W/"gh-1"\r\nX-RateLimit-Limit: 5000\r\nX-RateLimit-Remaining: 4999\r\n\r\n[]'
+    exit 0
+  fi
+  if [[ "$all_args" == *"repos/acme/alan/issues"* || "$all_args" == *"repos/acme/alan/pulls"* ]]; then
+    printf 'HTTP/1.1 200 OK\r\n\r\n[]'
+    exit 0
+  fi
+fi
+exit 1
+"#,
+        secret = secret,
+        etag_file = etag_seen_file.display()
+    );
+    std::fs::write(&gh_script, script).unwrap();
+    let mut perms = std::fs::metadata(&gh_script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gh_script, perms).unwrap();
+
+    let backend = GhCliGithubBackend::with_binary(&gh_script);
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+    let first = backend.sync_repo(&slug, None).await.unwrap();
+    let SyncRepoOutcome::Updated(data) = first else {
+        panic!("expected Updated on first sync");
+    };
+    assert_eq!(data.etag.as_deref(), Some("W/\"gh-1\""));
+
+    let second = backend
+        .sync_repo(&slug, data.etag.as_deref())
+        .await
+        .unwrap();
+    assert!(matches!(second, SyncRepoOutcome::NotModified { .. }));
+    assert!(etag_seen_file.exists());
+
+    let leak_slug = RepoSlug::parse("acme/leak").unwrap();
+    let err = backend.sync_repo(&leak_slug, None).await.unwrap_err();
+    assert!(
+        !err.message.contains(secret),
+        "token leaked: {}",
+        err.message
+    );
+    assert!(err.message.contains("[REDACTED]"));
+}
+
+#[tokio::test]
+async fn dispatcher_live_tail_processes_events_and_stops_cleanly_on_shutdown() {
+    let backend = Arc::new(MemoryGithubBackend::new());
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+    backend.ensure_repo(&slug);
+    let githubfs = Arc::new(
+        GithubFs::with_watched_repos(backend.clone(), [slug.clone()])
+            .await
+            .unwrap(),
+    );
+    let routefs = Arc::new(RouteFs::new());
+
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/mnt/github",
+        InProcessTransport::new(githubfs.clone()),
+        Access::ReadOnly,
+    );
+    ns.mount(
+        "/mnt/route",
+        InProcessTransport::new(routefs.clone()),
+        Access::ReadWrite,
+    );
+    let transport = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+
+    let allowlist = TriggerAllowlist {
+        allowed_repos: vec!["acme/alan".to_string()],
+        allowed_actors: vec!["morris".to_string()],
+        required_labels: vec!["alan:auto".to_string()],
+        ignored_actors: vec!["alan-bot".to_string()],
+        ignored_branch_prefixes: vec!["alan/".to_string()],
+        max_concurrent: 2,
+        max_retries: 2,
+    };
+    let mut dispatcher = GithubEventDispatcher::new(transport.clone(), allowlist).unwrap();
+    dispatcher.ensure_route_rules().await.unwrap();
+
+    let (tx, rx) = oneshot::channel::<()>();
+    let handle = tokio::spawn(async move { dispatcher.tail_events_until(rx).await });
+
+    backend.push_event(
+        &slug,
+        GithubEvent {
+            cursor: 0,
+            event_id: "ev-live-1".to_string(),
+            kind: "issue_labeled".to_string(),
+            actor: "morris".to_string(),
+            repo: "acme/alan".to_string(),
+            number: Some(9),
+            labels: vec!["alan:auto".to_string()],
+            head_sha: None,
+            target_kind: Some("issue".to_string()),
+            branch: None,
+            timestamp: None,
+        },
+    );
+    backend.push_event(
+        &slug,
+        GithubEvent {
+            cursor: 0,
+            event_id: "ev-live-self".to_string(),
+            kind: "issue_labeled".to_string(),
+            actor: "alan-bot".to_string(),
+            repo: "acme/alan".to_string(),
+            number: Some(9),
+            labels: vec!["alan:auto".to_string()],
+            head_sha: None,
+            target_kind: Some("issue".to_string()),
+            branch: None,
+            timestamp: None,
+        },
+    );
+    githubfs.sync_watched_repos().await.unwrap();
+
+    let shell = alan_shell::Shell::new(transport);
+    let worker_msg = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let bytes = shell.cat("/mnt/route/ports/worker").await.unwrap();
+            if !bytes.is_empty() {
+                break String::from_utf8(bytes).unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(worker_msg.contains("\"number\":9"), "{worker_msg}");
+
+    let _ = tx.send(());
+    let outcomes = handle.await.unwrap().unwrap();
+    assert_eq!(outcomes.len(), 2);
+    assert!(matches!(
+        outcomes[1],
+        super::dispatch::DispatchOutcome::Skipped {
+            reason: SkipReason::SelfActor,
+            ..
+        }
+    ));
+}

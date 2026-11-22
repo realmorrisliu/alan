@@ -13,6 +13,7 @@ mod connection_profile;
 mod control_fs;
 mod fileserver_service;
 mod flat_fs;
+pub mod githubfs;
 mod host_mount;
 mod local_entry;
 pub mod manpages;
