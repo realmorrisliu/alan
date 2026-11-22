@@ -7,6 +7,17 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-22
+
+### Added
+
+- Add a kernel least-privilege Tool namespace view (`MountFs::with_read_only_prefixes`) and unify builtin file tools (`read_file`, `write_file`, `edit_file`, `list_dir`, plus namespace-capable `grep`/`glob` with `Stream`/`Clone` safety, `HostDirPolicy`, and abort-safe buffered writes) over aP, enabling seamless access to `/memory`, `/proc`, `/man`, `/mnt`, and EmbeddedAlan `/mnt/<app>` mounts (#1130).
+- Display prompt cache hit rate alongside accurate single-generation `ctx` occupancy in the TUI status bar and `/status` (#1129).
+
+### Fixed
+
+- Fix `Thinking` chronology ordering so thinking blocks render before subsequent tool actions and assistant replies, improve Tool-to-Assistant transcript spacing, and refine `Ctrl+O` Action Detail drawer formatting and collapse hints (#1129).
+
 ## [0.1.3] - 2026-11-21
 
 ### Added
