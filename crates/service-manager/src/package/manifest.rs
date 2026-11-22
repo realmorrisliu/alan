@@ -1,4 +1,4 @@
-//! Four-kind Quartermaster package manifest parsing (`alan-package.toml` / `package.toml`) and validation.
+//! Five-kind Quartermaster package manifest parsing (`alan-package.toml` / `package.toml`) and validation.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
@@ -15,15 +15,32 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 
 use super::types::{
-    McpPackageExport, McpTransportSpec, PackageExportKind, PackageSnapshot, ProviderAuthMode,
-    ProviderPackageExport, ToolPackageExport, validate_package_id,
+    FileserverPackageExport, FileserverTransportSpec, McpPackageExport, McpTransportSpec,
+    PackageExportKind, PackageSnapshot, ProviderAuthMode, ProviderPackageExport, ToolPackageExport,
+    validate_package_id,
 };
 
 const PRIMARY_MANIFEST_FILE: &str = "alan-package.toml";
 const LEGACY_MANIFEST_FILE: &str = "package.toml";
 const SUPPORTED_SCHEMA_VERSION: u16 = 1;
 const DEFAULT_TIMEOUT_SECS: usize = 30;
+const MIN_FILESERVER_MESSAGE_BYTES: usize = 1024;
+const MAX_FILESERVER_MESSAGE_BYTES: usize = alan_ap::MAX_WIRE_FRAME_BYTES;
 const MAX_ARGS_COUNT: usize = 64;
+const RESERVED_FILESERVER_IDS: &[&str] = &[
+    "service-manager",
+    "route",
+    "llm",
+    "agent-runtime",
+    "connection",
+    "connections",
+    "package",
+    "packages",
+    "host-mount",
+    "host-mounts",
+    "local-entry",
+    "mem",
+];
 const FIRST_PARTY_PROVIDER_IDS: &[&str] = &[
     "magpie",
     "openai_responses",
@@ -58,6 +75,8 @@ struct RawPackageManifest {
     mcps: Vec<RawMcpManifest>,
     #[serde(default)]
     provider: Option<RawProviderManifest>,
+    #[serde(default)]
+    fileserver: Option<RawFileserverManifest>,
 }
 
 fn default_schema_version() -> u16 {
@@ -154,6 +173,45 @@ struct RawProviderManifest {
     adapter_descriptor: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFileserverManifest {
+    id: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    entrypoint: Option<String>,
+    transport: RawFileserverTransport,
+    #[serde(default)]
+    allow_network: bool,
+    #[serde(default)]
+    network_domains: Vec<String>,
+    #[serde(default = "default_timeout_secs")]
+    timeout_secs: usize,
+    #[serde(default = "default_max_message_bytes")]
+    max_message_bytes: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum RawFileserverTransport {
+    Stdio {
+        #[serde(default)]
+        command: Option<String>,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        env: BTreeMap<String, String>,
+    },
+    UnixSocket {
+        socket_name: String,
+    },
+}
+
+fn default_max_message_bytes() -> usize {
+    MAX_FILESERVER_MESSAGE_BYTES
+}
+
 /// Validated extension exports derived from `alan-package.toml` or `package.toml`.
 #[derive(Debug, Clone)]
 pub(super) struct ParsedPackageManifest {
@@ -163,6 +221,7 @@ pub(super) struct ParsedPackageManifest {
     pub(super) tools: Vec<ToolPackageExport>,
     pub(super) mcps: Vec<McpPackageExport>,
     pub(super) provider: Option<ProviderPackageExport>,
+    pub(super) fileserver: Option<FileserverPackageExport>,
 }
 
 /// Parses an optional root `alan-package.toml` or `package.toml` inside `snapshot`.
@@ -217,8 +276,9 @@ pub(super) fn parse_package_manifest(
                     && raw.tools.is_empty()
                     && raw.mcp.is_none()
                     && raw.mcps.is_empty()
-                    && raw.provider.is_none(),
-                "skill manifest cannot declare tool, mcp, or provider exports"
+                    && raw.provider.is_none()
+                    && raw.fileserver.is_none(),
+                "skill manifest cannot declare tool, mcp, provider, or fileserver exports"
             );
             Ok(Some(ParsedPackageManifest {
                 export_kind: PackageExportKind::Skill,
@@ -227,12 +287,16 @@ pub(super) fn parse_package_manifest(
                 tools: Vec::new(),
                 mcps: Vec::new(),
                 provider: None,
+                fileserver: None,
             }))
         }
         PackageExportKind::Tool => {
             ensure!(
-                raw.mcp.is_none() && raw.mcps.is_empty() && raw.provider.is_none(),
-                "tool manifest cannot declare mcp or provider exports (single export kind per package)"
+                raw.mcp.is_none()
+                    && raw.mcps.is_empty()
+                    && raw.provider.is_none()
+                    && raw.fileserver.is_none(),
+                "tool manifest cannot declare mcp, provider, or fileserver exports (single export kind per package)"
             );
             ensure_no_skill_exports_in_non_skill_package(snapshot)?;
             let raw_tools = collect_single_or_many(raw.tool, raw.tools, "tool")?;
@@ -244,12 +308,16 @@ pub(super) fn parse_package_manifest(
                 tools,
                 mcps: Vec::new(),
                 provider: None,
+                fileserver: None,
             }))
         }
         PackageExportKind::Mcp => {
             ensure!(
-                raw.tool.is_none() && raw.tools.is_empty() && raw.provider.is_none(),
-                "mcp manifest cannot declare tool or provider exports (single export kind per package)"
+                raw.tool.is_none()
+                    && raw.tools.is_empty()
+                    && raw.provider.is_none()
+                    && raw.fileserver.is_none(),
+                "mcp manifest cannot declare tool, provider, or fileserver exports (single export kind per package)"
             );
             ensure_no_skill_exports_in_non_skill_package(snapshot)?;
             let raw_mcps = collect_single_or_many(raw.mcp, raw.mcps, "mcp")?;
@@ -261,6 +329,7 @@ pub(super) fn parse_package_manifest(
                 tools: Vec::new(),
                 mcps,
                 provider: None,
+                fileserver: None,
             }))
         }
         PackageExportKind::Provider => {
@@ -268,8 +337,9 @@ pub(super) fn parse_package_manifest(
                 raw.tool.is_none()
                     && raw.tools.is_empty()
                     && raw.mcp.is_none()
-                    && raw.mcps.is_empty(),
-                "provider manifest cannot declare tool or mcp exports (single export kind per package)"
+                    && raw.mcps.is_empty()
+                    && raw.fileserver.is_none(),
+                "provider manifest cannot declare tool, mcp, or fileserver exports (single export kind per package)"
             );
             ensure_no_skill_exports_in_non_skill_package(snapshot)?;
             let raw_provider = raw
@@ -283,6 +353,31 @@ pub(super) fn parse_package_manifest(
                 tools: Vec::new(),
                 mcps: Vec::new(),
                 provider: Some(provider),
+                fileserver: None,
+            }))
+        }
+        PackageExportKind::Fileserver => {
+            ensure!(
+                raw.tool.is_none()
+                    && raw.tools.is_empty()
+                    && raw.mcp.is_none()
+                    && raw.mcps.is_empty()
+                    && raw.provider.is_none(),
+                "fileserver manifest cannot declare tool, mcp, or provider exports (single export kind per package)"
+            );
+            ensure_no_skill_exports_in_non_skill_package(snapshot)?;
+            let raw_fileserver = raw
+                .fileserver
+                .context("fileserver manifest must declare a `[fileserver]` section")?;
+            let fileserver = validate_fileserver_export(raw_fileserver, &snapshot_files)?;
+            Ok(Some(ParsedPackageManifest {
+                export_kind: PackageExportKind::Fileserver,
+                version,
+                description,
+                tools: Vec::new(),
+                mcps: Vec::new(),
+                provider: None,
+                fileserver: Some(fileserver),
             }))
         }
     }
@@ -475,7 +570,7 @@ fn validate_provider_export(
     raw: RawProviderManifest,
     snapshot_files: &BTreeSet<&str>,
 ) -> Result<ProviderPackageExport> {
-    validate_provider_id(&raw.id)?;
+    validate_canonical_identifier(&raw.id, "provider")?;
     ensure!(
         !FIRST_PARTY_PROVIDER_IDS.contains(&raw.id.as_str()),
         "provider package id `{}` conflicts with a built-in first-party provider",
@@ -570,22 +665,191 @@ fn validate_provider_export(
     })
 }
 
-fn validate_provider_id(id: &str) -> Result<()> {
+fn validate_fileserver_export(
+    raw: RawFileserverManifest,
+    snapshot_files: &BTreeSet<&str>,
+) -> Result<FileserverPackageExport> {
+    validate_canonical_identifier(&raw.id, "fileserver service")?;
+    ensure!(
+        !RESERVED_FILESERVER_IDS.contains(&raw.id.as_str()),
+        "fileserver service id `{}` collides with a reserved system service",
+        raw.id
+    );
+    let description = normalize_optional_text(raw.description, "fileserver description", 512)?;
+    let timeout_secs = validate_packaged_tool_timeout(raw.timeout_secs)?;
+    ensure!(
+        (MIN_FILESERVER_MESSAGE_BYTES..=MAX_FILESERVER_MESSAGE_BYTES)
+            .contains(&raw.max_message_bytes),
+        "fileserver `{}` max_message_bytes must be between {MIN_FILESERVER_MESSAGE_BYTES} and {MAX_FILESERVER_MESSAGE_BYTES}",
+        raw.id
+    );
+
+    if !raw.allow_network {
+        ensure!(
+            raw.network_domains.is_empty(),
+            "fileserver `{}` declares network_domains while allow_network is false",
+            raw.id
+        );
+    }
+    let mut unique_domains = BTreeSet::new();
+    for domain in raw.network_domains {
+        let normalized = validate_network_domain(&domain, &raw.id)?;
+        unique_domains.insert(normalized);
+    }
+    let network_domains = unique_domains.into_iter().collect();
+
+    let declared_entrypoint = raw
+        .entrypoint
+        .as_deref()
+        .map(|path| normalize_relative_snapshot_path(path, "fileserver entrypoint"))
+        .transpose()?;
+
+    let (rel_entrypoint, transport) = match raw.transport {
+        RawFileserverTransport::Stdio { command, args, env } => {
+            let rel_cmd = command
+                .as_deref()
+                .map(|path| normalize_relative_snapshot_path(path, "fileserver stdio command"))
+                .transpose()?;
+            let effective = match (declared_entrypoint, rel_cmd) {
+                (Some(ep), Some(cmd)) => {
+                    ensure!(
+                        ep == cmd,
+                        "fileserver `{}` entrypoint `{ep}` does not match stdio transport command `{cmd}`",
+                        raw.id
+                    );
+                    ep
+                }
+                (Some(ep), None) => ep,
+                (None, Some(cmd)) => cmd,
+                (None, None) => {
+                    bail!(
+                        "fileserver `{}` must declare `entrypoint` or stdio `transport.command`",
+                        raw.id
+                    );
+                }
+            };
+            validate_stdio_args_and_env(&raw.id, "fileserver", &args, &env)?;
+            let source_path = format!("source/{effective}");
+            (
+                effective,
+                FileserverTransportSpec::Stdio {
+                    command: source_path,
+                    args,
+                    env,
+                },
+            )
+        }
+        RawFileserverTransport::UnixSocket { socket_name } => {
+            let effective = declared_entrypoint.with_context(|| {
+                format!(
+                    "fileserver `{}` with unix_socket transport must declare `entrypoint`",
+                    raw.id
+                )
+            })?;
+            let socket_name = validate_socket_name(&socket_name, &raw.id)?;
+            (
+                effective,
+                FileserverTransportSpec::UnixSocket { socket_name },
+            )
+        }
+    };
+
+    ensure!(
+        snapshot_files.contains(rel_entrypoint.as_str()),
+        "fileserver `{}` entrypoint `{rel_entrypoint}` does not exist in package snapshot",
+        raw.id
+    );
+
+    Ok(FileserverPackageExport {
+        service_id: raw.id.clone(),
+        description,
+        entrypoint: format!("source/{rel_entrypoint}"),
+        transport,
+        allow_network: raw.allow_network,
+        network_domains,
+        timeout_secs,
+        max_message_bytes: raw.max_message_bytes,
+        descriptor_path: format!("fileservers/{}/server.json", raw.id),
+    })
+}
+
+fn validate_stdio_args_and_env(
+    id: &str,
+    kind_label: &str,
+    args: &[String],
+    env: &BTreeMap<String, String>,
+) -> Result<()> {
+    ensure!(
+        args.len() <= MAX_ARGS_COUNT,
+        "{kind_label} `{id}` has too many stdio args (max {MAX_ARGS_COUNT})"
+    );
+    ensure!(
+        args.iter().all(|arg| !arg.contains('\0')),
+        "{kind_label} `{id}` args contain null bytes"
+    );
+    validate_safe_stdio_env(env)
+}
+
+fn validate_socket_name(raw: &str, service_id: &str) -> Result<String> {
+    let trimmed = raw.trim();
+    ensure!(
+        !trimmed.is_empty() && trimmed.len() <= 64,
+        "fileserver `{service_id}` socket_name must be 1..=64 characters"
+    );
+    ensure!(
+        trimmed != "."
+            && trimmed != ".."
+            && !trimmed.contains(['/', '\\', '\0'])
+            && trimmed
+                .bytes()
+                .next()
+                .is_some_and(|b| b.is_ascii_alphanumeric())
+            && trimmed
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')),
+        "fileserver `{service_id}` socket_name `{trimmed}` must be a single safe filename"
+    );
+    Ok(trimmed.to_string())
+}
+
+fn validate_network_domain(raw: &str, service_id: &str) -> Result<String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    ensure!(
+        !normalized.is_empty()
+            && normalized.len() <= 253
+            && !normalized.starts_with('.')
+            && !normalized.ends_with('.')
+            && !normalized.contains("..")
+            && normalized.split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && !label.starts_with('-')
+                    && !label.ends_with('-')
+                    && label
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            }),
+        "fileserver `{service_id}` declares invalid network domain `{raw}`"
+    );
+    Ok(normalized)
+}
+
+fn validate_canonical_identifier(id: &str, label: &str) -> Result<()> {
     ensure!(
         !id.is_empty() && id.len() <= 64,
-        "provider id `{id}` must be 1..=64 characters"
+        "{label} id `{id}` must be 1..=64 characters"
     );
     let mut bytes = id.bytes();
     let Some(first) = bytes.next() else {
-        bail!("provider id must not be empty");
+        bail!("{label} id must not be empty");
     };
     ensure!(
         first.is_ascii_lowercase() || first.is_ascii_digit(),
-        "provider id `{id}` must start with ASCII lowercase letter or digit"
+        "{label} id `{id}` must start with ASCII lowercase letter or digit"
     );
     ensure!(
         bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-')),
-        "provider id `{id}` contains unsupported characters"
+        "{label} id `{id}` contains unsupported characters"
     );
     Ok(())
 }

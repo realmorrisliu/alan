@@ -228,6 +228,7 @@ PACKAGE KINDS (ADR-0061)
   mcp                   Model Context Protocol server packages
   tool                  reusable `/bin` executable Tool packages
   provider              external provider adapters installed as packages
+  fileserver            confined external aP file-server plugin packages
 
 BOUNDARIES
   `q` operates strictly over authorized alan9 namespace paths such as

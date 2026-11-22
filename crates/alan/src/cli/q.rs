@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use alan_os_host::SystemStorePaths;
 use alan_service_manager::{
-    CLI_IMPORT_MOUNT_PATH, PackageService, run_q_command_with_package_service, validate_package_id,
+    CLI_IMPORT_MOUNT_PATH, FileserverTransportSpec, PackageExportKind, PackageKind, PackageRecord,
+    PackageService, PackageState, run_q_command_with_package_service, validate_package_id,
 };
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, Subcommand};
@@ -20,7 +21,7 @@ pub struct QArgs {
 /// Supported Quartermaster hub subcommands.
 #[derive(Debug, Subcommand)]
 pub enum QAction {
-    /// Install a package (`skill`, `mcp`, `tool`, or `provider`) from a local directory.
+    /// Install a package (`skill`, `mcp`, `tool`, `provider`, or `fileserver`) from a local directory.
     Install {
         /// Optional explicit canonical package identifier (`[a-z0-9]+(?:-[a-z0-9]+)*`).
         #[arg(long)]
@@ -30,6 +31,11 @@ pub enum QAction {
     },
     /// List installed and preinstalled Quartermaster packages and their export kinds.
     List,
+    /// Inspect one installed Quartermaster package and its export metadata.
+    Inspect {
+        /// Installed canonical package identifier.
+        package_id: String,
+    },
     /// Upgrade an operator-installed package from an updated local directory.
     Upgrade {
         /// Installed canonical package identifier.
@@ -66,6 +72,12 @@ pub async fn run(args: QArgs) -> Result<()> {
 /// Executes `QArgs` against an explicit `PackageService` using read-only `/mnt/import/source` mounts
 /// and `/bin/q` -> `/mnt/package/ctl` (never bypassing Service Manager).
 pub async fn run_with_service(service: &Arc<PackageService>, args: QArgs) -> Result<String> {
+    if let QAction::Inspect { package_id } = args.action {
+        validate_package_id(&package_id)?;
+        let record = service.resolve(&package_id)?;
+        return Ok(render_package_inspection(&record));
+    }
+
     let (host_source_dir, q_args) = match args.action {
         QAction::Install { name, path } => {
             let canonical = canonical_package_source_dir(&path)?;
@@ -79,6 +91,7 @@ pub async fn run_with_service(service: &Arc<PackageService>, args: QArgs) -> Res
             (Some(canonical), q_args)
         }
         QAction::List => (None, vec!["list".to_string()]),
+        QAction::Inspect { .. } => unreachable!("inspect handled above"),
         QAction::Upgrade { package_id, path } => {
             validate_package_id(&package_id)?;
             let canonical = canonical_package_source_dir(&path)?;
@@ -153,6 +166,99 @@ fn resolve_effective_package_id(explicit: Option<String>, source_dir: &Path) -> 
         format!("directory leaf `{leaf}` is not a canonical package id; choose one with `--name`")
     })?;
     Ok(leaf.to_string())
+}
+
+fn render_package_inspection(record: &PackageRecord) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    let kind = match record.kind {
+        PackageKind::Preinstalled => "preinstalled",
+        PackageKind::Installed => "installed",
+    };
+    let state = match record.state {
+        PackageState::Installed => "installed",
+        PackageState::Retiring => "retiring",
+    };
+    let _ = writeln!(out, "package: {}", record.id);
+    let _ = writeln!(out, "revision: {}", record.revision);
+    let _ = writeln!(out, "ownership: {kind}");
+    let _ = writeln!(out, "state: {state}");
+    let _ = writeln!(out, "export_kind: {}", record.export_kind.as_str());
+    let _ = writeln!(out, "refs: {}", record.reference_count);
+    if let Some(version) = record.manifest_version.as_deref() {
+        let _ = writeln!(out, "version: {version}");
+    }
+    if let Some(description) = record.description.as_deref() {
+        let _ = writeln!(out, "description: {description}");
+    }
+
+    match record.export_kind {
+        PackageExportKind::Skill => {
+            let skills = record
+                .exports
+                .iter()
+                .map(|export| export.skill_id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(out, "skills: {skills}");
+        }
+        PackageExportKind::Tool => {
+            let tools = record
+                .tool_exports
+                .iter()
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(out, "tools: {tools}");
+        }
+        PackageExportKind::Mcp => {
+            let servers = record
+                .mcp_exports
+                .iter()
+                .map(|mcp| mcp.server_id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(out, "mcps: {servers}");
+        }
+        PackageExportKind::Provider => {
+            if let Some(provider) = record.provider_export.as_ref() {
+                let _ = writeln!(
+                    out,
+                    "provider: {} ({})",
+                    provider.provider_id, provider.protocol
+                );
+            }
+        }
+        PackageExportKind::Fileserver => {
+            if let Some(fs) = record.fileserver_export.as_ref() {
+                let _ = writeln!(out, "service_id: {}", fs.service_id);
+                let _ = writeln!(out, "srv_handle: /srv/{}", fs.service_id);
+                let _ = writeln!(out, "mount_path: /mnt/{}", fs.service_id);
+                let _ = writeln!(out, "entrypoint: {}", fs.entrypoint);
+                match &fs.transport {
+                    FileserverTransportSpec::Stdio { command, args, .. } => {
+                        let _ = writeln!(
+                            out,
+                            "transport: stdio (command={}, args={:?})",
+                            command, args
+                        );
+                    }
+                    FileserverTransportSpec::UnixSocket { socket_name } => {
+                        let _ = writeln!(out, "transport: unix_socket (socket={socket_name})");
+                    }
+                }
+                let _ = writeln!(out, "allow_network: {}", fs.allow_network);
+                if !fs.network_domains.is_empty() {
+                    let _ = writeln!(out, "network_domains: {}", fs.network_domains.join(", "));
+                }
+                let _ = writeln!(out, "timeout_secs: {}", fs.timeout_secs);
+                let _ = writeln!(out, "max_message_bytes: {}", fs.max_message_bytes);
+            }
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -240,5 +346,92 @@ parameters = { type = "object" }
         .await
         .unwrap();
         assert!(uninstalled.starts_with("uninstalled"), "{uninstalled}");
+    }
+
+    #[tokio::test]
+    async fn cli_q_install_list_and_inspect_displays_fileserver_package() {
+        let service = PackageService::ephemeral().unwrap();
+        let pkg_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(pkg_dir.path().join("bin")).unwrap();
+        std::fs::write(
+            pkg_dir.path().join("alan-package.toml"),
+            r#"
+schema_version = 1
+kind = "fileserver"
+version = "0.1.0"
+description = "Demo fileserver plugin"
+
+[fileserver]
+id = "demo-fs"
+entrypoint = "bin/demo-fs"
+allow_network = true
+network_domains = ["api.github.com"]
+timeout_secs = 20
+max_message_bytes = 65536
+
+[fileserver.transport]
+type = "stdio"
+args = ["--serve"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(pkg_dir.path().join("bin/demo-fs"), "#!/bin/sh\nexit 0\n").unwrap();
+
+        let installed = run_with_service(
+            &service,
+            QArgs {
+                action: QAction::Install {
+                    name: Some("demo-fileserver".to_string()),
+                    path: pkg_dir.path().to_path_buf(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            installed.starts_with("installed demo-fileserver"),
+            "{installed}"
+        );
+
+        let listing = run_with_service(
+            &service,
+            QArgs {
+                action: QAction::List,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(listing.contains("demo-fileserver"), "{listing}");
+        assert!(listing.contains("export=fileserver"), "{listing}");
+        assert!(
+            listing.contains("fileserver=demo-fs(stdio)"),
+            "expected fileserver summary in listing: {listing}"
+        );
+
+        let inspected = run_with_service(
+            &service,
+            QArgs {
+                action: QAction::Inspect {
+                    package_id: "demo-fileserver".to_string(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert!(inspected.contains("export_kind: fileserver"), "{inspected}");
+        assert!(inspected.contains("service_id: demo-fs"), "{inspected}");
+        assert!(
+            inspected.contains("srv_handle: /srv/demo-fs"),
+            "{inspected}"
+        );
+        assert!(
+            inspected.contains("mount_path: /mnt/demo-fs"),
+            "{inspected}"
+        );
+        assert!(inspected.contains("transport: stdio"), "{inspected}");
+        assert!(
+            inspected.contains("network_domains: api.github.com"),
+            "{inspected}"
+        );
     }
 }

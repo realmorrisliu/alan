@@ -13,9 +13,9 @@ use super::fs_safety::{ensure_owned_directory, ensure_owned_file, sync_tree};
 use super::manifest::parse_package_manifest;
 use super::materializer_exports::{build_content_exports, verify_materialized_exports};
 use super::{
-    LEGACY_SKILL_MATERIALIZER_VERSION, MATERIALIZER_VERSION, McpPackageExport, PackageExport,
-    PackageExportKind, PackageSnapshot, PackageSnapshotEntry, ProviderPackageExport,
-    ToolPackageExport,
+    FileserverPackageExport, LEGACY_SKILL_MATERIALIZER_VERSION, MATERIALIZER_VERSION,
+    McpPackageExport, PackageExport, PackageExportKind, PackageSnapshot, PackageSnapshotEntry,
+    ProviderPackageExport, ToolPackageExport,
 };
 
 const MAX_SOURCE_FILES: usize = 4_096;
@@ -149,6 +149,8 @@ pub(super) struct MaterializationManifest {
     pub(super) mcp_exports: Vec<McpPackageExport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) provider_export: Option<ProviderPackageExport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) fileserver_export: Option<FileserverPackageExport>,
     pub(super) files: Vec<MaterializedFileRecord>,
     pub(super) tree_fingerprint: String,
 }
@@ -224,6 +226,7 @@ pub(super) fn materialize_in_memory(
         tool_exports: computed.tool_exports,
         mcp_exports: computed.mcp_exports,
         provider_export: computed.provider_export,
+        fileserver_export: computed.fileserver_export,
         files,
         tree_fingerprint: hex::encode(digest.finalize()),
     };
@@ -306,6 +309,7 @@ impl<'a> PackageMaterializer<'a> {
                 tool_exports: computed.tool_exports,
                 mcp_exports: computed.mcp_exports,
                 provider_export: computed.provider_export,
+                fileserver_export: computed.fileserver_export,
                 files,
                 tree_fingerprint: fingerprint_directory(&content_root)?,
             };
@@ -513,6 +517,7 @@ pub(super) fn verify_materialized_revision(
         &manifest.tool_exports,
         &manifest.mcp_exports,
         manifest.provider_export.as_ref(),
+        manifest.fileserver_export.as_ref(),
     )?;
     Ok(manifest)
 }
