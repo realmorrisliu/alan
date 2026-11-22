@@ -11,6 +11,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use alan_ap::ErrorCode;
 use async_trait::async_trait;
@@ -41,6 +42,27 @@ nodes{id isResolved path line originalLine comments(first:1){nodes{author{login}
 const MAX_REVIEW_THREAD_PAGES: usize = 10;
 const MAX_REST_PAGES: usize = 10;
 const REST_PAGE_SIZE: usize = 100;
+const ETXTBSY_MAX_ATTEMPTS: usize = 5;
+const ETXTBSY_RETRY_DELAY: Duration = Duration::from_millis(10);
+
+async fn spawn_gh_with_retry(
+    mut build: impl FnMut() -> Command,
+) -> std::io::Result<tokio::process::Child> {
+    let mut attempt = 0;
+    loop {
+        match build().spawn() {
+            Ok(child) => return Ok(child),
+            Err(err)
+                if err.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && attempt + 1 < ETXTBSY_MAX_ATTEMPTS =>
+            {
+                attempt += 1;
+                tokio::time::sleep(ETXTBSY_RETRY_DELAY).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
 
 /// Non-leaking wrapper holding an ephemeral Host token resolved via `gh auth token`.
 #[derive(Clone)]
@@ -80,19 +102,27 @@ impl GhCliGithubBackend {
     }
 
     async fn resolve_host_token(&self) -> Result<Option<SecretToken>, GithubBackendError> {
-        let output = Command::new(&self.gh_binary)
-            .args(["auth", "token"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|err| {
-                GithubBackendError::new(
-                    ErrorCode::NoAccess,
-                    format!("failed executing Host `gh` adapter: {err}"),
-                )
-            })?;
+        let child = spawn_gh_with_retry(|| {
+            let mut cmd = Command::new(&self.gh_binary);
+            cmd.args(["auth", "token"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            cmd
+        })
+        .await
+        .map_err(|err| {
+            GithubBackendError::new(
+                ErrorCode::NoAccess,
+                format!("failed executing Host `gh` adapter: {err}"),
+            )
+        })?;
+        let output = child.wait_with_output().await.map_err(|err| {
+            GithubBackendError::new(
+                ErrorCode::NoAccess,
+                format!("failed executing Host `gh` adapter: {err}"),
+            )
+        })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(GithubBackendError::new(
@@ -117,19 +147,23 @@ impl GhCliGithubBackend {
     ) -> Result<GhHttpResponse, GithubBackendError> {
         let secret = self.resolve_host_token().await?;
         let secret_ref = secret.as_ref().map(|s| s.0.as_str());
-        let mut cmd = Command::new(&self.gh_binary);
-        cmd.args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(if stdin_json.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            });
-        if let Some(ref token) = secret {
-            cmd.env("GH_TOKEN", &token.0);
-        }
-        let mut child = cmd.spawn().map_err(|err| {
+        let mut child = spawn_gh_with_retry(|| {
+            let mut cmd = Command::new(&self.gh_binary);
+            cmd.args(args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .stdin(if stdin_json.is_some() {
+                    Stdio::piped()
+                } else {
+                    Stdio::null()
+                });
+            if let Some(ref token) = secret {
+                cmd.env("GH_TOKEN", &token.0);
+            }
+            cmd
+        })
+        .await
+        .map_err(|err| {
             GithubBackendError::redacted(
                 ErrorCode::Io,
                 format!("failed spawning Host `gh` adapter: {err}"),
@@ -190,11 +224,13 @@ impl GhCliGithubBackend {
     async fn gh_get_paginated_array(
         &self,
         first_path: &str,
-    ) -> Result<Vec<Value>, GithubBackendError> {
+    ) -> Result<(Vec<Value>, Option<RateLimitUpdate>), GithubBackendError> {
         let mut all_items = Vec::new();
+        let mut last_rate_limit = None;
         let mut path = first_path.to_string();
         for _ in 0..MAX_REST_PAGES {
             let (page_items, resp) = self.gh_get_json::<Vec<Value>>(&path).await?;
+            last_rate_limit = resp.rate_limit.or(last_rate_limit);
             all_items.extend(page_items);
             if let Some(next_url) = resp.next_link {
                 path = next_url;
@@ -202,7 +238,7 @@ impl GhCliGithubBackend {
                 break;
             }
         }
-        Ok(all_items)
+        Ok((all_items, last_rate_limit))
     }
 
     async fn gh_send_json<T: DeserializeOwned>(
@@ -230,7 +266,7 @@ impl GhCliGithubBackend {
         number: u64,
     ) -> Result<Vec<GithubComment>, GithubBackendError> {
         let path = format!("repos/{repo}/issues/{number}/comments?per_page={REST_PAGE_SIZE}");
-        let items = self.gh_get_paginated_array(&path).await?;
+        let (items, _) = self.gh_get_paginated_array(&path).await?;
         Ok(items.iter().map(parse_gh_comment).collect())
     }
 
@@ -541,7 +577,7 @@ impl GithubBackend for GhCliGithubBackend {
         repo: &RepoSlug,
         if_none_match: Option<&str>,
     ) -> Result<SyncRepoOutcome, GithubBackendError> {
-        let events_path = format!("repos/{repo}/events?per_page=30");
+        let events_path = format!("repos/{repo}/events?per_page={REST_PAGE_SIZE}");
         let mut args = vec!["api", "-i", "-H", ACCEPT_JSON_HEADER];
         let header;
         if let Some(etag) = if_none_match {
@@ -573,7 +609,9 @@ impl GithubBackend for GhCliGithubBackend {
         };
 
         let (raw_issues, _) = self
-            .gh_get_json::<Vec<Value>>(&format!("repos/{repo}/issues?state=all&per_page=30"))
+            .gh_get_paginated_array(&format!(
+                "repos/{repo}/issues?state=all&per_page={REST_PAGE_SIZE}"
+            ))
             .await?;
         let issues: Vec<IssueRecord> = raw_issues
             .iter()
@@ -585,8 +623,10 @@ impl GithubBackend for GhCliGithubBackend {
             })
             .collect();
 
-        let (raw_pulls, pulls_resp) = self
-            .gh_get_json::<Vec<Value>>(&format!("repos/{repo}/pulls?state=all&per_page=30"))
+        let (raw_pulls, pulls_rate_limit) = self
+            .gh_get_paginated_array(&format!(
+                "repos/{repo}/pulls?state=all&per_page={REST_PAGE_SIZE}"
+            ))
             .await?;
         let pulls: Vec<PullRecord> = raw_pulls
             .iter()
@@ -625,7 +665,7 @@ impl GithubBackend for GhCliGithubBackend {
 
         Ok(SyncRepoOutcome::Updated(SyncRepoData {
             etag: resp.etag,
-            rate_limit: pulls_resp.rate_limit.or(resp.rate_limit),
+            rate_limit: pulls_rate_limit.or(resp.rate_limit),
             issues,
             pulls,
             events: new_events,
@@ -635,7 +675,9 @@ impl GithubBackend for GhCliGithubBackend {
 
     async fn list_issue_numbers(&self, repo: &RepoSlug) -> Result<Vec<u64>, GithubBackendError> {
         let (items, _) = self
-            .gh_get_json::<Vec<Value>>(&format!("repos/{repo}/issues?state=all&per_page=30"))
+            .gh_get_paginated_array(&format!(
+                "repos/{repo}/issues?state=all&per_page={REST_PAGE_SIZE}"
+            ))
             .await?;
         Ok(items
             .iter()
@@ -751,7 +793,9 @@ impl GithubBackend for GhCliGithubBackend {
 
     async fn list_pull_numbers(&self, repo: &RepoSlug) -> Result<Vec<u64>, GithubBackendError> {
         let (items, _) = self
-            .gh_get_json::<Vec<Value>>(&format!("repos/{repo}/pulls?state=all&per_page=30"))
+            .gh_get_paginated_array(&format!(
+                "repos/{repo}/pulls?state=all&per_page={REST_PAGE_SIZE}"
+            ))
             .await?;
         Ok(items.iter().filter_map(|v| v["number"].as_u64()).collect())
     }
@@ -766,7 +810,7 @@ impl GithubBackend for GhCliGithubBackend {
             .await?;
         let meta = parse_gh_pull_meta(&item);
         let checks = self.fetch_pull_checks(repo, &meta.head_sha).await?;
-        let raw_reviews = self
+        let (raw_reviews, _) = self
             .gh_get_paginated_array(&format!(
                 "repos/{repo}/pulls/{number}/reviews?per_page={REST_PAGE_SIZE}"
             ))

@@ -771,10 +771,37 @@ impl GithubEventDispatcher {
     async fn send_worker_envelope(&self, event: &GithubEvent, attempt: u32) -> Result<()> {
         let target_kind = event.target_kind.as_deref().unwrap_or("issue");
         let number = event.number.unwrap_or(0);
-        let subpath = if target_kind == "pull" {
-            format!("pulls/{number}")
+        let github_root = self
+            .github_events_path
+            .strip_suffix("/events")
+            .unwrap_or("/mnt/github");
+        let untrusted_context_paths = if target_kind == "pull" {
+            vec![
+                format!(
+                    "{github_root}/repos/{}/pulls/{number}/meta.json",
+                    event.repo
+                ),
+                format!(
+                    "{github_root}/repos/{}/pulls/{number}/checks.json",
+                    event.repo
+                ),
+                format!(
+                    "{github_root}/repos/{}/pulls/{number}/reviews.json",
+                    event.repo
+                ),
+            ]
         } else {
-            format!("issues/{number}")
+            vec![
+                format!(
+                    "{github_root}/repos/{}/issues/{number}/meta.json",
+                    event.repo
+                ),
+                format!("{github_root}/repos/{}/issues/{number}/body.md", event.repo),
+                format!(
+                    "{github_root}/repos/{}/issues/{number}/comments",
+                    event.repo
+                ),
+            ]
         };
         let envelope = serde_json::json!({
             "version": 1,
@@ -797,10 +824,7 @@ impl GithubEventDispatcher {
             "labels": event.labels,
             "head_sha": event.head_sha,
             "attempt": attempt,
-            "untrusted_context_paths": [
-                format!("/mnt/github/repos/{}/{subpath}/meta.json", event.repo),
-                format!("/mnt/github/repos/{}/{subpath}/body.md", event.repo),
-            ]
+            "untrusted_context_paths": untrusted_context_paths
         });
         let bytes = serde_json::to_vec(&envelope)?;
         self.shell

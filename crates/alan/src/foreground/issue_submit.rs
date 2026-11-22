@@ -13,6 +13,34 @@ use tokio::process::Command;
 
 const GH_AUTH_TIMEOUT: Duration = Duration::from_secs(5);
 const GH_CREATE_TIMEOUT: Duration = Duration::from_secs(30);
+const ETXTBSY_MAX_ATTEMPTS: usize = 5;
+const ETXTBSY_RETRY_DELAY: Duration = Duration::from_millis(10);
+
+async fn spawn_with_etxtbsy_retry(
+    mut build: impl FnMut() -> Command,
+) -> std::io::Result<tokio::process::Child> {
+    let mut attempt = 0;
+    loop {
+        match build().spawn() {
+            Ok(child) => return Ok(child),
+            Err(err)
+                if err.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && attempt + 1 < ETXTBSY_MAX_ATTEMPTS =>
+            {
+                attempt += 1;
+                tokio::time::sleep(ETXTBSY_RETRY_DELAY).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+async fn output_with_etxtbsy_retry(
+    build: impl FnMut() -> Command,
+) -> std::io::Result<std::process::Output> {
+    let child = spawn_with_etxtbsy_retry(build).await?;
+    child.wait_with_output().await
+}
 
 /// Build the TUI `IssueControlHandler` bound to Host `gh` CLI availability.
 pub(super) fn build_issue_control_handler() -> IssueControlHandler {
@@ -43,13 +71,15 @@ pub(super) async fn submit_via_gh_binary(
 
     let auth_status = tokio::time::timeout(
         GH_AUTH_TIMEOUT,
-        Command::new(&resolved_bin)
-            .args(["auth", "status"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .output(),
+        output_with_etxtbsy_retry(|| {
+            let mut cmd = Command::new(&resolved_bin);
+            cmd.args(["auth", "status"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            cmd
+        }),
     )
     .await;
 
@@ -72,19 +102,22 @@ pub(super) async fn submit_via_gh_binary(
         }
     }
 
-    let mut child = Command::new(&resolved_bin)
-        .arg("issue")
-        .arg("create")
-        .arg(format!("--repo={repo}"))
-        .arg(format!("--title={title}"))
-        .arg("--body-file")
-        .arg("-")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .context("spawn `gh issue create`")?;
+    let mut child = spawn_with_etxtbsy_retry(|| {
+        let mut cmd = Command::new(&resolved_bin);
+        cmd.arg("issue")
+            .arg("create")
+            .arg(format!("--repo={repo}"))
+            .arg(format!("--title={title}"))
+            .arg("--body-file")
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        cmd
+    })
+    .await
+    .context("spawn `gh issue create`")?;
 
     if let Some(mut stdin) = child.stdin.take() {
         match stdin.write_all(body.as_bytes()).await {

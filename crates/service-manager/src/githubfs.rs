@@ -12,6 +12,8 @@ pub mod backend;
 pub mod dispatch;
 mod gh_cli;
 #[cfg(test)]
+mod gh_cli_tests;
+#[cfg(test)]
 mod tests;
 mod tree;
 
