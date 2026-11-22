@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode};
-use alan_kernel::{Access, MountFs, Namespace};
+use alan_kernel::{Access, LiveNamespace, MountFs, Namespace};
 use alan_routefs::RouteFs;
 use tokio::sync::oneshot;
 
@@ -11,7 +11,9 @@ use super::backend::{
     MemoryGithubBackend, NewIssueRequest, RepoSlug, SyncRepoOutcome, redact_github_tokens,
     validate_label,
 };
-use super::dispatch::{GithubEventDispatcher, SkipReason, TriggerAllowlist};
+use super::dispatch::{
+    CoalesceKey, DispatchOutcome, GithubEventDispatcher, SkipReason, TriggerAllowlist,
+};
 use super::{GithubFs, MAX_CTL_BYTES};
 
 #[test]
@@ -799,4 +801,184 @@ exit 1
     // GraphQL errors must fail closed rather than returning unresolved_threads: [].
     let err = backend.get_pull(&slug, 20).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::NoAccess, "{err}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gh_cli_paginates_check_runs_and_reviews_across_multiple_pages() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let gh_script = dir.path().join("gh");
+    let script = r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "auth" && "${2:-}" == "token" ]]; then
+  echo "ghp_pagination_token"
+  exit 0
+fi
+all_args="$*"
+case "$all_args" in
+  *"graphql"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
+    ;;
+  *"repos/acme/alan/issues/30/comments"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n[]'
+    ;;
+  *"repos/acme/alan/pulls/30/reviews"*)
+    if [[ "$all_args" == *"page=2"* ]]; then
+      printf 'HTTP/1.1 200 OK\r\n\r\n[{"id":302,"user":{"login":"morris"},"state":"APPROVED","body":"review-page-2","submitted_at":"2026-11-22T01:06:00Z"}]'
+    else
+      printf 'HTTP/1.1 200 OK\r\nLink: <repos/acme/alan/pulls/30/reviews?per_page=100&page=2>; rel="next"\r\n\r\n[{"id":301,"user":{"login":"codex"},"state":"COMMENTED","body":"review-page-1","submitted_at":"2026-11-22T01:05:00Z"}]'
+    fi
+    ;;
+  *"repos/acme/alan/pulls/30"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n{"number":30,"title":"Multi-page","user":{"login":"morris"},"state":"open","draft":false,"mergeable":true,"head":{"ref":"fix","sha":"sha-multi"},"base":{"ref":"main"},"updated_at":"2026-11-22T01:00:00Z","html_url":"https://github.com/acme/alan/pull/30"}'
+    ;;
+  *"repos/acme/alan/commits/sha-multi/check-runs"*)
+    if [[ "$all_args" == *"page=2"* ]]; then
+      printf 'HTTP/1.1 200 OK\r\n\r\n{"total_count":2,"check_runs":[{"name":"test-suite","status":"completed","conclusion":"failure"}]}'
+    else
+      printf 'HTTP/1.1 200 OK\r\nLink: <repos/acme/alan/commits/sha-multi/check-runs?per_page=100&page=2>; rel="next"\r\n\r\n{"total_count":2,"check_runs":[{"name":"lint","status":"completed","conclusion":"success"}]}'
+    fi
+    ;;
+  *"repos/acme/alan/commits/sha-total/check-runs"*)
+    if [[ "$all_args" == *"page=2"* ]]; then
+      printf 'HTTP/1.1 200 OK\r\n\r\n{"total_count":2,"check_runs":[{"name":"total-2","status":"completed","conclusion":"failure"}]}'
+    else
+      printf 'HTTP/1.1 200 OK\r\n\r\n{"total_count":2,"check_runs":[{"name":"total-1","status":"completed","conclusion":"success"}]}'
+    fi
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+"#;
+    std::fs::write(&gh_script, script).unwrap();
+    let mut perms = std::fs::metadata(&gh_script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gh_script, perms).unwrap();
+
+    let backend = GhCliGithubBackend::with_binary(&gh_script);
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+    let pull = backend.get_pull(&slug, 30).await.unwrap();
+    let names: Vec<&str> = pull.checks.checks.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, vec!["lint", "test-suite"]);
+    assert_eq!(pull.checks.checks[1].conclusion.as_deref(), Some("failure"));
+    let review_ids: Vec<u64> = pull.reviews.reviews.iter().map(|r| r.id).collect();
+    assert_eq!(review_ids, vec![301, 302]);
+
+    let total_checks = backend
+        .get_pull_checks(&slug, 30, "sha-total")
+        .await
+        .unwrap();
+    let total_names: Vec<&str> = total_checks
+        .checks
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(total_names, vec!["total-1", "total-2"]);
+}
+
+#[tokio::test]
+async fn dispatcher_rolls_back_bookkeeping_and_recovers_after_route_failure() {
+    let backend = Arc::new(MemoryGithubBackend::new());
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+    backend.ensure_repo(&slug);
+    let githubfs = Arc::new(
+        GithubFs::with_watched_repos(backend.clone(), [slug.clone()])
+            .await
+            .unwrap(),
+    );
+    let routefs = Arc::new(RouteFs::new());
+    let live_ns = LiveNamespace::new(Namespace::new());
+    live_ns.replace_mount(
+        "/mnt/github",
+        InProcessTransport::new(githubfs.clone()),
+        Access::ReadOnly,
+    );
+    live_ns.replace_mount(
+        "/mnt/route",
+        InProcessTransport::new(routefs.clone()),
+        Access::ReadWrite,
+    );
+    let transport =
+        InProcessTransport::new(Arc::new(MountFs::from_live_namespace(live_ns.clone())));
+
+    let allowlist = TriggerAllowlist {
+        allowed_repos: vec!["acme/alan".to_string()],
+        allowed_actors: vec!["morris".to_string()],
+        required_labels: vec!["alan:auto".to_string()],
+        ignored_actors: vec![],
+        ignored_branch_prefixes: vec![],
+        max_concurrent: 1,
+        max_retries: 1,
+    };
+    let mut dispatcher = GithubEventDispatcher::new(transport, allowlist).unwrap();
+    dispatcher.ensure_route_rules().await.unwrap();
+
+    live_ns.replace_mount(
+        "/mnt/route",
+        InProcessTransport::new(routefs.clone()),
+        Access::ReadOnly,
+    );
+    let make_event = |id: &str| GithubEvent {
+        cursor: 0,
+        event_id: id.to_string(),
+        kind: "pull_synchronized".to_string(),
+        actor: "morris".to_string(),
+        repo: "acme/alan".to_string(),
+        number: Some(55),
+        labels: vec!["alan:auto".to_string()],
+        head_sha: Some("sha-55".to_string()),
+        target_kind: Some("pull".to_string()),
+        branch: Some("feat/55".to_string()),
+        timestamp: None,
+    };
+    backend.push_event(&slug, make_event("ev-recover-1"));
+    githubfs.sync_watched_repos().await.unwrap();
+
+    assert!(dispatcher.process_available_events().await.is_err());
+    let s = dispatcher.stats();
+    assert_eq!(
+        (
+            s.active_runs,
+            s.dispatched_worker,
+            s.deduplicated,
+            s.events_processed
+        ),
+        (0, 0, 0, 0)
+    );
+
+    live_ns.replace_mount(
+        "/mnt/route",
+        InProcessTransport::new(routefs.clone()),
+        Access::ReadWrite,
+    );
+    let outcomes = dispatcher.process_available_events().await.unwrap();
+    assert!(
+        matches!(outcomes.as_slice(), [DispatchOutcome::DispatchedWorker { event_id, attempt: 1, .. }] if event_id == "ev-recover-1")
+    );
+
+    dispatcher
+        .complete_run(&CoalesceKey::new("acme/alan", 55, Some("sha-55")))
+        .await
+        .unwrap();
+    live_ns.replace_mount(
+        "/mnt/route",
+        InProcessTransport::new(routefs.clone()),
+        Access::ReadOnly,
+    );
+    let ev2 = make_event("ev-escalate-2");
+    assert!(dispatcher.process_event(&ev2).await.is_err());
+    assert_eq!(dispatcher.stats().escalated_human_review, 0);
+
+    live_ns.replace_mount(
+        "/mnt/route",
+        InProcessTransport::new(routefs),
+        Access::ReadWrite,
+    );
+    let out2 = dispatcher.process_event(&ev2).await.unwrap();
+    assert!(
+        matches!(out2, DispatchOutcome::EscalatedHumanReview { event_id, .. } if event_id == "ev-escalate-2")
+    );
 }

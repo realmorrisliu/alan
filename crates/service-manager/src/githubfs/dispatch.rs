@@ -439,6 +439,11 @@ impl GithubEventDispatcher {
     /// starting after the previous cursor offset, routing complete NDJSON events.
     pub async fn process_available_events(&mut self) -> Result<Vec<DispatchOutcome>> {
         self.ensure_route_rules().await?;
+        let mut outcomes = if !self.line_buf.is_empty() {
+            self.ingest_bytes(&[]).await?
+        } else {
+            Vec::new()
+        };
         let stat = self
             .shell
             .stat(&self.github_events_path)
@@ -447,7 +452,7 @@ impl GithubEventDispatcher {
                 anyhow::anyhow!("stat `{}` failed: {code:?}", self.github_events_path)
             })?;
         if stat.length <= self.event_offset {
-            return Ok(Vec::new());
+            return Ok(outcomes);
         }
         let mut tail = self
             .shell
@@ -456,14 +461,18 @@ impl GithubEventDispatcher {
             .map_err(|code| {
                 anyhow::anyhow!("tail `{}` failed: {code:?}", self.github_events_path)
             })?;
-        let mut outcomes = Vec::new();
         while self.event_offset < stat.length {
             let want = (stat.length - self.event_offset).min(4096) as u32;
             match tail.read(want).await {
                 Ok(chunk) if !chunk.is_empty() => {
                     self.event_offset += chunk.len() as u64;
-                    let mut batch = self.ingest_bytes(&chunk).await?;
-                    outcomes.append(&mut batch);
+                    match self.ingest_bytes(&chunk).await {
+                        Ok(mut batch) => outcomes.append(&mut batch),
+                        Err(err) => {
+                            let _ = tail.close().await;
+                            return Err(err);
+                        }
+                    }
                 }
                 Ok(_) => break,
                 Err(code) => {
@@ -482,6 +491,11 @@ impl GithubEventDispatcher {
         mut shutdown: oneshot::Receiver<()>,
     ) -> Result<Vec<DispatchOutcome>> {
         self.ensure_route_rules().await?;
+        let mut outcomes = if !self.line_buf.is_empty() {
+            self.ingest_bytes(&[]).await?
+        } else {
+            Vec::new()
+        };
         let mut tail = self
             .shell
             .tail_from(&self.github_events_path, self.event_offset)
@@ -489,7 +503,6 @@ impl GithubEventDispatcher {
             .map_err(|code| {
                 anyhow::anyhow!("tail `{}` failed: {code:?}", self.github_events_path)
             })?;
-        let mut outcomes = Vec::new();
         loop {
             tokio::select! {
                 biased;
@@ -499,8 +512,13 @@ impl GithubEventDispatcher {
                         Ok(chunk) if chunk.is_empty() => break,
                         Ok(chunk) => {
                             self.event_offset += chunk.len() as u64;
-                            let mut batch = self.ingest_bytes(&chunk).await?;
-                            outcomes.append(&mut batch);
+                            match self.ingest_bytes(&chunk).await {
+                                Ok(mut batch) => outcomes.append(&mut batch),
+                                Err(err) => {
+                                    let _ = tail.close().await;
+                                    return Err(err);
+                                }
+                            }
                         }
                         Err(code) => {
                             let _ = tail.close().await;
@@ -525,7 +543,13 @@ impl GithubEventDispatcher {
                 continue;
             }
             let outcome = match serde_json::from_str::<GithubEvent>(trimmed) {
-                Ok(event) => self.process_event(&event).await?,
+                Ok(event) => match self.process_event(&event).await {
+                    Ok(outcome) => outcome,
+                    Err(err) => {
+                        self.line_buf.splice(0..0, line_bytes);
+                        return Err(err);
+                    }
+                },
                 Err(_) => {
                     self.stats.events_processed += 1;
                     self.stats.allowlist_rejected += 1;
@@ -544,13 +568,13 @@ impl GithubEventDispatcher {
     /// routing accepted or exhausted items through `/mnt/route/send`.
     pub async fn process_event(&mut self, event: &GithubEvent) -> Result<DispatchOutcome> {
         self.ensure_route_rules().await?;
-        self.stats.events_processed = self.stats.events_processed.saturating_add(1);
 
         let event_id = event.event_id.trim();
         if event_id.is_empty()
             || RepoSlug::parse(&event.repo).is_err()
             || !valid_actor(&event.actor)
         {
+            self.stats.events_processed = self.stats.events_processed.saturating_add(1);
             self.stats.allowlist_rejected += 1;
             return Ok(DispatchOutcome::Skipped {
                 event_id: event.event_id.clone(),
@@ -558,7 +582,8 @@ impl GithubEventDispatcher {
             });
         }
 
-        if !self.record_event_id(event_id) {
+        if self.seen_event_ids.contains(event_id) {
+            self.stats.events_processed = self.stats.events_processed.saturating_add(1);
             self.stats.deduplicated += 1;
             return Ok(DispatchOutcome::Skipped {
                 event_id: event.event_id.clone(),
@@ -566,6 +591,13 @@ impl GithubEventDispatcher {
             });
         }
 
+        let outcome = self.evaluate_and_route_event(event).await?;
+        self.record_event_id(event_id);
+        self.stats.events_processed = self.stats.events_processed.saturating_add(1);
+        Ok(outcome)
+    }
+
+    async fn evaluate_and_route_event(&mut self, event: &GithubEvent) -> Result<DispatchOutcome> {
         if self.allowlist.is_ignored_actor(&event.actor) {
             self.stats.self_suppressed += 1;
             return Ok(DispatchOutcome::Skipped {
@@ -689,11 +721,11 @@ impl GithubEventDispatcher {
             });
         }
 
+        self.send_worker_envelope(&work.event, next_attempt).await?;
         self.attempts_by_issue
             .insert(work.issue_key.clone(), next_attempt);
         self.active_runs
             .insert(work.coalesce_key.clone(), next_attempt);
-        self.send_worker_envelope(&work.event, next_attempt).await?;
         self.stats.dispatched_worker += 1;
         Ok(DispatchOutcome::DispatchedWorker {
             event_id: work.event.event_id,
@@ -710,7 +742,13 @@ impl GithubEventDispatcher {
             let Some(next) = self.pending_queue.pop_front() else {
                 break;
             };
-            drained.push(self.dispatch_or_queue(next).await?);
+            match self.dispatch_or_queue(next.clone()).await {
+                Ok(outcome) => drained.push(outcome),
+                Err(err) => {
+                    self.pending_queue.push_front(next);
+                    return Err(err);
+                }
+            }
         }
         Ok(drained)
     }
@@ -779,7 +817,6 @@ impl GithubEventDispatcher {
         attempts: u32,
         reason: String,
     ) -> Result<DispatchOutcome> {
-        self.escalated_issues.insert(issue_key.clone());
         let envelope = serde_json::json!({
             "version": 1,
             "type": MSG_TYPE_HUMAN_REVIEW,
@@ -805,6 +842,7 @@ impl GithubEventDispatcher {
             .map_err(|code| {
                 anyhow::anyhow!("send escalation envelope to routefs failed: {code:?}")
             })?;
+        self.escalated_issues.insert(issue_key.clone());
         self.stats.escalated_human_review += 1;
         Ok(DispatchOutcome::EscalatedHumanReview {
             event_id: event.event_id.clone(),

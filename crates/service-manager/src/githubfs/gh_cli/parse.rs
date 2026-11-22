@@ -263,3 +263,23 @@ pub(super) fn parse_gh_events(repo: &RepoSlug, items: &[Value]) -> Vec<GithubEve
         })
         .collect()
 }
+
+pub(super) fn parse_next_link(header_value: &str) -> Option<String> {
+    for segment in header_value.split(',') {
+        let mut parts = segment.split(';').map(str::trim);
+        let Some(url_part) = parts.next() else {
+            continue;
+        };
+        let is_next = parts.any(|param| param.eq_ignore_ascii_case("rel=\"next\""));
+        if is_next
+            && let Some(url) = url_part
+                .strip_prefix('<')
+                .and_then(|rest| rest.strip_suffix('>'))
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+        {
+            return Some(url.to_string());
+        }
+    }
+    None
+}

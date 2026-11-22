@@ -27,7 +27,7 @@ use super::{
 };
 use parse::{
     apply_pull_meta_to_event, parse_gh_comment, parse_gh_events, parse_gh_issue_meta,
-    parse_gh_pull_meta, parse_graphql_review_threads_page,
+    parse_gh_pull_meta, parse_graphql_review_threads_page, parse_next_link,
 };
 
 const ACCEPT_JSON_HEADER: &str = "Accept: application/vnd.github+json";
@@ -39,6 +39,8 @@ pageInfo{hasNextPage endCursor}\
 nodes{id isResolved path line originalLine comments(first:1){nodes{author{login} body}}}\
 }}}}";
 const MAX_REVIEW_THREAD_PAGES: usize = 10;
+const MAX_REST_PAGES: usize = 10;
+const REST_PAGE_SIZE: usize = 100;
 
 /// Non-leaking wrapper holding an ephemeral Host token resolved via `gh auth token`.
 #[derive(Clone)]
@@ -167,6 +169,7 @@ impl GhCliGithubBackend {
         Ok(GhHttpResponse {
             status: 200,
             etag: None,
+            next_link: None,
             rate_limit: None,
             body: stdout.to_string(),
         })
@@ -182,6 +185,24 @@ impl GhCliGithubBackend {
         let parsed = serde_json::from_str(&resp.body)
             .map_err(|err| GithubBackendError::new(ErrorCode::Io, err.to_string()))?;
         Ok((parsed, resp))
+    }
+
+    async fn gh_get_paginated_array(
+        &self,
+        first_path: &str,
+    ) -> Result<Vec<Value>, GithubBackendError> {
+        let mut all_items = Vec::new();
+        let mut path = first_path.to_string();
+        for _ in 0..MAX_REST_PAGES {
+            let (page_items, resp) = self.gh_get_json::<Vec<Value>>(&path).await?;
+            all_items.extend(page_items);
+            if let Some(next_url) = resp.next_link {
+                path = next_url;
+            } else {
+                break;
+            }
+        }
+        Ok(all_items)
     }
 
     async fn gh_send_json<T: DeserializeOwned>(
@@ -208,8 +229,8 @@ impl GhCliGithubBackend {
         repo: &RepoSlug,
         number: u64,
     ) -> Result<Vec<GithubComment>, GithubBackendError> {
-        let path = format!("repos/{repo}/issues/{number}/comments?per_page=100");
-        let (items, _) = self.gh_get_json::<Vec<Value>>(&path).await?;
+        let path = format!("repos/{repo}/issues/{number}/comments?per_page={REST_PAGE_SIZE}");
+        let items = self.gh_get_paginated_array(&path).await?;
         Ok(items.iter().map(parse_gh_comment).collect())
     }
 
@@ -224,20 +245,38 @@ impl GhCliGithubBackend {
                 checks: Vec::new(),
             });
         }
-        let (checks_json, _) = self
-            .gh_get_json::<Value>(&format!("repos/{repo}/commits/{head_sha}/check-runs"))
-            .await?;
-        let runs = checks_json["check_runs"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|c| GithubCheckRun {
-                name: c["name"].as_str().unwrap_or_default().to_string(),
-                status: c["status"].as_str().unwrap_or_default().to_string(),
-                conclusion: c["conclusion"].as_str().map(ToString::to_string),
-                details_url: c["details_url"].as_str().map(ToString::to_string),
-            })
-            .collect();
+        let mut runs = Vec::new();
+        let mut path =
+            format!("repos/{repo}/commits/{head_sha}/check-runs?per_page={REST_PAGE_SIZE}&page=1");
+        for page in 1..=MAX_REST_PAGES {
+            let (checks_json, resp) = self.gh_get_json::<Value>(&path).await?;
+            let page_runs: Vec<GithubCheckRun> = checks_json["check_runs"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|c| GithubCheckRun {
+                    name: c["name"].as_str().unwrap_or_default().to_string(),
+                    status: c["status"].as_str().unwrap_or_default().to_string(),
+                    conclusion: c["conclusion"].as_str().map(ToString::to_string),
+                    details_url: c["details_url"].as_str().map(ToString::to_string),
+                })
+                .collect();
+            let page_count = page_runs.len();
+            runs.extend(page_runs);
+            if let Some(next_url) = resp.next_link {
+                path = next_url;
+            } else if let Some(total) = checks_json["total_count"].as_u64()
+                && page_count > 0
+                && (runs.len() as u64) < total
+            {
+                path = format!(
+                    "repos/{repo}/commits/{head_sha}/check-runs?per_page={REST_PAGE_SIZE}&page={}",
+                    page + 1
+                );
+            } else {
+                break;
+            }
+        }
         Ok(GithubPullChecks {
             head_sha: head_sha.to_string(),
             checks: runs,
@@ -365,6 +404,7 @@ impl GhCliGithubBackend {
 struct GhHttpResponse {
     status: u16,
     etag: Option<String>,
+    next_link: Option<String>,
     rate_limit: Option<RateLimitUpdate>,
     body: String,
 }
@@ -441,7 +481,8 @@ fn parse_http_response(raw: &str) -> Option<GhHttpResponse> {
         .split_whitespace()
         .nth(1)
         .and_then(|code| code.parse::<u16>().ok())?;
-    let (mut etag, mut limit, mut remaining, mut reset_at) = (None, None, None, None);
+    let (mut etag, mut next_link, mut limit, mut remaining, mut reset_at) =
+        (None, None, None, None, None);
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             continue;
@@ -449,6 +490,7 @@ fn parse_http_response(raw: &str) -> Option<GhHttpResponse> {
         let val = value.trim();
         match name.trim().to_ascii_lowercase().as_str() {
             "etag" if !val.is_empty() => etag = Some(val.to_string()),
+            "link" if !val.is_empty() => next_link = next_link.or_else(|| parse_next_link(val)),
             "x-ratelimit-limit" => limit = val.parse::<u64>().ok(),
             "x-ratelimit-remaining" => remaining = val.parse::<u64>().ok(),
             "x-ratelimit-reset" => {
@@ -470,6 +512,7 @@ fn parse_http_response(raw: &str) -> Option<GhHttpResponse> {
     Some(GhHttpResponse {
         status,
         etag,
+        next_link,
         rate_limit,
         body: body.to_string(),
     })
@@ -723,8 +766,10 @@ impl GithubBackend for GhCliGithubBackend {
             .await?;
         let meta = parse_gh_pull_meta(&item);
         let checks = self.fetch_pull_checks(repo, &meta.head_sha).await?;
-        let (raw_reviews, _) = self
-            .gh_get_json::<Vec<Value>>(&format!("repos/{repo}/pulls/{number}/reviews?per_page=100"))
+        let raw_reviews = self
+            .gh_get_paginated_array(&format!(
+                "repos/{repo}/pulls/{number}/reviews?per_page={REST_PAGE_SIZE}"
+            ))
             .await?;
         let reviews = raw_reviews
             .iter()
