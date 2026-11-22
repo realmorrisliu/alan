@@ -83,6 +83,20 @@ pub(super) fn render_catalog(result: PackageCommandResult) -> Result<Vec<u8>, QE
                     .unwrap_or_default();
                 format!("provider={detail}")
             }
+            PackageExportKind::Fileserver => {
+                let detail = record
+                    .fileserver_export
+                    .as_ref()
+                    .map(|fs| {
+                        let transport = match &fs.transport {
+                            crate::FileserverTransportSpec::Stdio { .. } => "stdio",
+                            crate::FileserverTransportSpec::UnixSocket { .. } => "unix_socket",
+                        };
+                        format!("{}({transport})", fs.service_id)
+                    })
+                    .unwrap_or_default();
+                format!("fileserver={detail}")
+            }
         };
         let issues = record
             .exports

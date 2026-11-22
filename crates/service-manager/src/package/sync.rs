@@ -194,5 +194,6 @@ pub(super) fn record_from_materialization(
         tool_exports: materialization.tool_exports,
         mcp_exports: materialization.mcp_exports,
         provider_export: materialization.provider_export,
+        fileserver_export: materialization.fileserver_export,
     }
 }
