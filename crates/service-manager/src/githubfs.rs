@@ -37,6 +37,7 @@ pub use backend::{
 pub use dispatch::{
     CoalesceKey, DispatchOutcome, DispatchStats, GithubEventDispatcher, HUMAN_REVIEW_PORT,
     IssueKey, SkipReason, TriggerAllowlist, WORKER_PORT, install_github_dispatch_rules,
+    new_routefs_transport,
 };
 use tree::{
     FsState, GithubFid, Node, encode_pretty_json, join_lines, parse_positive_u64,

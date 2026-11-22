@@ -12,6 +12,7 @@
 //! - Exceeding per-issue `max_retries` escalates to `/mnt/route/ports/human-review`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alan_ap::{ErrorCode, Fid, FileKind, InProcessTransport, Offset, OpenMode, Request};
@@ -254,6 +255,11 @@ struct QueuedWork {
     event: GithubEvent,
     issue_key: IssueKey,
     coalesce_key: CoalesceKey,
+}
+
+/// Construct a fresh `RouteFs` transport ready to publish on `/srv/route` and mount at `/mnt/route`.
+pub fn new_routefs_transport() -> InProcessTransport {
+    InProcessTransport::new(Arc::new(RouteFs::new()))
 }
 
 /// Install the default inspectable plain-text routing rules directly into a [`RouteFs`].

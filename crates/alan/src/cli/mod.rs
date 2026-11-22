@@ -4,6 +4,7 @@ pub mod connection;
 pub(crate) mod connection_setup;
 pub mod dispatch;
 pub mod doctor;
+pub mod fileserver_github;
 pub mod host;
 pub mod login;
 pub mod man;

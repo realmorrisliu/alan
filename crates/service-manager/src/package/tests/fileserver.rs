@@ -539,3 +539,53 @@ socket_name = "mem.sock"
         .unwrap();
     assert!(removed.success, "{}", removed.message);
 }
+
+#[test]
+fn bundled_self_iteration_packages_validate_and_install_cleanly() {
+    let packages_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("packages");
+    let service = PackageService::ephemeral().unwrap();
+
+    for (pkg_id, expected_kind) in [
+        ("github-fileserver", PackageExportKind::Fileserver),
+        ("alan-self-iterate", PackageExportKind::Skill),
+        ("alan-release-prep", PackageExportKind::Skill),
+    ] {
+        let pkg_dir = packages_root.join(pkg_id);
+        assert!(pkg_dir.is_dir(), "missing {}", pkg_dir.display());
+        let snapshot = PackageSnapshot::from_directory(&pkg_dir).unwrap();
+        let res = service
+            .execute(PackageCommand::Install {
+                request_id: format!("bundled-{pkg_id}"),
+                package_id: pkg_id.to_string(),
+                snapshot,
+            })
+            .unwrap();
+        assert!(res.success, "{pkg_id}: {}", res.message);
+        let record = res.package.unwrap();
+        assert_eq!(record.export_kind, expected_kind);
+        if expected_kind == PackageExportKind::Fileserver {
+            let export = record.fileserver_export.as_ref().unwrap();
+            assert_eq!(export.service_id, "github");
+            assert_eq!(export.entrypoint, "fileservers/github/bin");
+            assert!(export.allow_network);
+            assert_eq!(
+                export.network_domains,
+                vec!["api.github.com".to_string(), "github.com".to_string()]
+            );
+            let lease = service.acquire(pkg_id).unwrap();
+            let bin = lease.content_file_path("fileservers/github/bin").unwrap();
+            assert!(bin.is_file());
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    fs::metadata(&bin).unwrap().permissions().mode() & 0o777,
+                    0o555
+                );
+            }
+        } else {
+            assert_eq!(record.exports.len(), 1);
+            assert_eq!(record.exports[0].skill_id, pkg_id);
+        }
+    }
+}

@@ -123,6 +123,8 @@ SYNOPSIS
   alan login [PROVIDER]
   alan connection <SUBCOMMAND>
   alan skills <SUBCOMMAND>
+  alan q <SUBCOMMAND>
+  alan workflow <SUBCOMMAND>
   alan update [OPTIONS]
 
 DESCRIPTION
@@ -141,6 +143,7 @@ COMPOSER & COMMANDS
   /login                connect or authenticate an LLM provider in place
   /man [topic]          read /man manual pages inside the TUI
   /project [revoke]     explicitly grant or revoke a Host Mount
+  /issue [title]  /bug  draft and confirm a redacted GitHub issue
   /compact  /rollback   summarize context or undo the last turn
   /status  /help  /quit inspect status, show shortcuts, or exit
 
