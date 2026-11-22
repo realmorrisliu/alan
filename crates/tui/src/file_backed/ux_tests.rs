@@ -348,3 +348,132 @@ fn usage_snapshot_renders_in_context_line_and_status() {
     let status = app.notice.as_deref().unwrap();
     assert!(status.contains("usage: turn in 12800 out 500"), "{status}");
 }
+
+#[test]
+fn usage_context_occupancy_uses_context_tokens_and_reports_cache_hit_rate() {
+    let mut app = ready_model_app();
+
+    // Multi-step tool turn: cumulative input_tokens is 2x the single-generation context_tokens.
+    app.usage.apply(
+        "/agent/1",
+        Some(UiUsageSnapshot {
+            input_tokens: 25_600,
+            cached_input_tokens: Some(19_200),
+            output_tokens: 500,
+            context_tokens: 12_800,
+            context_window: 128_000,
+            cost_usd: Some(0.0125),
+            session_input_tokens: 51_200,
+            session_cached_input_tokens: Some(30_720),
+            session_output_tokens: 1_000,
+            session_cost_usd: Some(0.025),
+            ..UiUsageSnapshot::empty()
+        }),
+    );
+    let header = app.context_line(140).to_string();
+    assert!(
+        header.contains("ctx 10% (12.8k/128.0k)"),
+        "ctx must reflect single-generation context_tokens, not cumulative input_tokens: {header}"
+    );
+    assert!(header.contains("cache 75%"), "{header}");
+    assert!(header.contains("$0.0250"), "{header}");
+    assert_eq!(app.usage.short_prompt_label().as_deref(), Some("ctx 10%"));
+
+    app.handle_command("/status");
+    let status = app.notice.as_deref().unwrap();
+    assert!(
+        status.contains("usage: turn in 25600 out 500 (cached 19200, 75%)"),
+        "{status}"
+    );
+    assert!(
+        status.contains("session in 51200 out 1000 (cached 30720, 60%)"),
+        "{status}"
+    );
+    assert!(status.contains("ctx 10% (12800/128000)"), "{status}");
+
+    // At turn start, reset_turn zeroes input_tokens & cached_input_tokens while preserving
+    // context_tokens and session totals: ctx must not flicker to `... tok`, and cache falls back
+    // cleanly to the session hit rate.
+    app.usage.apply(
+        "/agent/1",
+        Some(UiUsageSnapshot {
+            input_tokens: 0,
+            cached_input_tokens: None,
+            output_tokens: 0,
+            context_tokens: 12_800,
+            context_window: 128_000,
+            cost_usd: None,
+            session_input_tokens: 51_200,
+            session_cached_input_tokens: Some(30_720),
+            session_output_tokens: 1_000,
+            session_cost_usd: Some(0.025),
+            ..UiUsageSnapshot::empty()
+        }),
+    );
+    let reset_label = app.usage.prompt_label().unwrap();
+    assert!(
+        reset_label.contains("ctx 10% (12.8k/128.0k)") && reset_label.contains("cache 60%"),
+        "{reset_label}"
+    );
+    assert!(!reset_label.contains(" tok"), "{reset_label}");
+
+    // Cold turn with input_tokens > 0 and 0 cached tokens must not reuse stale session hit rate.
+    app.usage.apply(
+        "/agent/1",
+        Some(UiUsageSnapshot {
+            input_tokens: 10_000,
+            cached_input_tokens: Some(0),
+            output_tokens: 200,
+            context_tokens: 10_000,
+            context_window: 128_000,
+            session_input_tokens: 61_200,
+            session_cached_input_tokens: Some(30_720),
+            session_output_tokens: 1_200,
+            ..UiUsageSnapshot::empty()
+        }),
+    );
+    let cold_label = app.usage.prompt_label().unwrap();
+    assert!(
+        cold_label.contains("ctx 8% (10.0k/128.0k)") && !cold_label.contains("cache "),
+        "{cold_label}"
+    );
+
+    // Defensive bounds: cached > input clamps to 100%, and input == 0 never divides by zero.
+    app.usage.apply(
+        "/agent/1",
+        Some(UiUsageSnapshot {
+            input_tokens: 1_000,
+            cached_input_tokens: Some(1_500),
+            context_tokens: 1_000,
+            context_window: 10_000,
+            ..UiUsageSnapshot::empty()
+        }),
+    );
+    assert!(
+        app.usage.prompt_label().unwrap().contains("cache 100%"),
+        "{:?}",
+        app.usage.prompt_label()
+    );
+    app.usage.apply(
+        "/agent/1",
+        Some(UiUsageSnapshot {
+            input_tokens: 0,
+            cached_input_tokens: Some(50),
+            context_tokens: 500,
+            context_window: 10_000,
+            session_input_tokens: 0,
+            session_cached_input_tokens: Some(50),
+            ..UiUsageSnapshot::empty()
+        }),
+    );
+    let zero_input_label = app.usage.prompt_label().unwrap();
+    assert!(
+        zero_input_label.contains("ctx 5%") && !zero_input_label.contains("cache "),
+        "{zero_input_label}"
+    );
+    let zero_input_status = app.usage.status().unwrap();
+    assert!(
+        zero_input_status.contains("(cached 50)"),
+        "{zero_input_status}"
+    );
+}

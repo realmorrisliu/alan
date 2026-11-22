@@ -1,7 +1,7 @@
 //! Fresh, read-only retained Action detail IO. AgentFS owns the catalog and evidence.
 use super::app::{FileBackedApp, FileBackedEvent};
 use super::file_surface::{ActionSnapshot, action_snapshot_to_history_cell, read_action_ids};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 mod presentation;
 pub(super) mod reference;
 use reference::resolve as resolve_reference;
@@ -199,13 +199,8 @@ pub(super) async fn read_detail_with_theme(
     };
     let mut rows = Vec::new();
     let mut readable = false;
-    for (label, value) in [
-        ("Name", name),
-        ("Status", status),
-        ("Original output", output),
-        ("Result metadata", result),
-    ] {
-        rows.push(Line::from(label));
+    for (label, value) in [("Original output", output), ("Result metadata", result)] {
+        rows.push(Line::styled(label, theme.muted_style()));
         match value {
             Err(error) => rows.push(Line::from(error)),
             Ok(text) if text.is_empty() => rows.push(Line::from("(empty)")),
@@ -220,22 +215,37 @@ pub(super) async fn read_detail_with_theme(
                             value.get("cause").unwrap_or(&serde_json::Value::Null)
                         ))),
                         Some("evidence_projection") => {
-                            rows.push(Line::from("Evidence projection: bounded preview; resolving retained reference"));
-                            let resolved = resolve_reference(shell, &value, path).await;
+                            rows.push(Line::from(
+                                "Evidence projection: bounded preview; resolving retained reference",
+                            ));
+                            let resolved = resolve_reference(shell, &value, path, theme).await;
                             readable |= resolved.readable;
                             rows.extend(resolved.rows);
                         }
                         _ => {}
                     }
                 }
-                let acquired = presentation::acquired_content(&mut rows, &text);
+                let acquired = presentation::acquired_content(&mut rows, &text, theme);
                 readable |= label == "Original output" && acquired;
             }
         }
     }
-    let mut header = vec![Line::from(format!("Action {id} · {path}"))];
+    let mut header = vec![Line::styled(
+        format!("Action {id} · {path}"),
+        theme.muted_style(),
+    )];
     if let Some(subagent_line) = format_subagent_header(&snapshot) {
         header.push(Line::styled(subagent_line, theme.accent_style()));
+    }
+    header.push(format_action_meta_line(&name, &status, theme));
+    if name
+        .as_deref()
+        .is_ok_and(|text| text.contains("[REDACTED reason="))
+        || status
+            .as_deref()
+            .is_ok_and(|text| text.contains("[REDACTED reason="))
+    {
+        header.push(Line::from("Redacted evidence (not truncation)"));
     }
     if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
         let mut detail = crate::history::action_detail_with_theme(&cell, theme);
@@ -251,6 +261,33 @@ pub(super) async fn read_detail_with_theme(
     }
     header.extend(rows);
     header
+}
+
+fn format_scalar_field(value: &Result<String, String>) -> String {
+    match value {
+        Err(error) => error.clone(),
+        Ok(text) if text.trim().is_empty() => "(empty)".to_string(),
+        Ok(text) => crate::history::clean_text(text.trim()),
+    }
+}
+
+fn format_action_meta_line(
+    name: &Result<String, String>,
+    status: &Result<String, String>,
+    theme: crate::theme::Theme,
+) -> Line<'static> {
+    let status_style = match status.as_deref().map(str::trim) {
+        Ok("completed") => theme.run_style(),
+        Ok("failed") => theme.block_style(),
+        Ok("rejected" | "cancelled") => theme.wait_style(),
+        _ => theme.muted_style(),
+    };
+    Line::from(vec![
+        Span::styled("Tool: ", theme.muted_style()),
+        Span::raw(format_scalar_field(name)),
+        Span::styled(" · Status: ", theme.muted_style()),
+        Span::styled(format_scalar_field(status), status_style),
+    ])
 }
 
 fn format_subagent_header(snapshot: &ActionSnapshot) -> Option<String> {

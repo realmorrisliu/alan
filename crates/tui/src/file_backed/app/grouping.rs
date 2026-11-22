@@ -42,6 +42,51 @@ impl FileBackedApp {
         end
     }
 
+    fn has_trailing_assistant_gap(&self, index: usize) -> bool {
+        let unfrozen_tool_or_plan = match self.transcript.get(index) {
+            Some(HistoryCell::Tool {
+                action: Some(action),
+                ..
+            }) => action.frozen_rows.is_none(),
+            Some(HistoryCell::Tool { action: None, .. } | HistoryCell::Plan { .. }) => true,
+            _ => false,
+        };
+        unfrozen_tool_or_plan
+            && matches!(
+                self.transcript.get(index + 1),
+                Some(HistoryCell::Assistant(_) | HistoryCell::AssistantTail { .. })
+            )
+    }
+
+    /// Project one standalone transcript cell into styled lines. Shared by both
+    /// [`Self::history_row_projection`] and [`Self::prune_rendered_prefix`] so
+    /// scrollback pruning can never drift from rendered row counts.
+    pub(super) fn single_cell_rows(&self, index: usize, opts: RenderOpts) -> Vec<Line<'static>> {
+        let mut cell_rows = match &self.transcript[index] {
+            HistoryCell::Tool {
+                action: Some(action),
+                ..
+            } if action.frozen_rows.is_some() => {
+                HistoryCell::Styled(action.frozen_rows.clone().unwrap()).render_styled_lines(opts)
+            }
+            HistoryCell::Tool {
+                action: Some(_), ..
+            } => crate::history::action_summary_with_theme(
+                &self.transcript[index],
+                opts.width,
+                opts.theme,
+            ),
+            cell if self.action_cells.values().any(|i| *i == index) => {
+                crate::history::action_summary_with_theme(cell, opts.width, opts.theme)
+            }
+            cell => cell.render_styled_lines(opts),
+        };
+        if self.has_trailing_assistant_gap(index) {
+            cell_rows.push(Line::default());
+        }
+        cell_rows
+    }
+
     pub(super) fn history_row_projection(&self, opts: RenderOpts) -> Vec<Vec<Line<'static>>> {
         let mut rows = vec![Vec::new(); self.transcript.len()];
         let mut index = 0;
@@ -60,27 +105,11 @@ impl FileBackedApp {
                         opts.theme,
                     ));
                 }
+                if self.has_trailing_assistant_gap(end - 1) {
+                    rows[end - 1].push(Line::default());
+                }
             } else {
-                rows[index] = match &self.transcript[index] {
-                    HistoryCell::Tool {
-                        action: Some(action),
-                        ..
-                    } if action.frozen_rows.is_some() => {
-                        HistoryCell::Styled(action.frozen_rows.clone().unwrap())
-                            .render_styled_lines(opts)
-                    }
-                    HistoryCell::Tool {
-                        action: Some(_), ..
-                    } => crate::history::action_summary_with_theme(
-                        &self.transcript[index],
-                        opts.width,
-                        opts.theme,
-                    ),
-                    cell if self.action_cells.values().any(|i| *i == index) => {
-                        crate::history::action_summary_with_theme(cell, opts.width, opts.theme)
-                    }
-                    cell => cell.render_styled_lines(opts),
-                };
+                rows[index] = self.single_cell_rows(index, opts);
             }
             index = end;
         }

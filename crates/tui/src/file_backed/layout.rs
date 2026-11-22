@@ -226,6 +226,13 @@ fn history_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
 #[path = "history_notice_tests.rs"]
 mod history_notice_tests;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CollapsedSection {
+    None,
+    RawBytes,
+    ResultMetadata,
+}
+
 fn filter_modal_rows(
     rows: &[Line<'static>],
     show_raw_json: bool,
@@ -235,32 +242,27 @@ fn filter_modal_rows(
         return rows.to_vec();
     }
     let mut filtered = Vec::with_capacity(rows.len());
-    let mut skipping_raw_bytes = false;
-    let mut skipping_result_metadata = false;
-    let mut emitted_collapsed_hint = false;
+    let mut collapsed = CollapsedSection::None;
 
     for row in rows {
         let text = row.to_string();
         if text == "Result metadata" {
-            skipping_raw_bytes = false;
-            skipping_result_metadata = true;
-            if !emitted_collapsed_hint {
+            if collapsed != CollapsedSection::ResultMetadata {
                 filtered.push(Line::styled(
-                    "  [raw JSON/bytes collapsed · press d to expand]",
+                    "  [result metadata collapsed · press d to expand]",
                     theme.muted_style(),
                 ));
-                emitted_collapsed_hint = true;
+                collapsed = CollapsedSection::ResultMetadata;
             }
             continue;
         }
         if text == "Original raw bytes" {
-            skipping_raw_bytes = true;
-            if !emitted_collapsed_hint {
+            if collapsed != CollapsedSection::RawBytes {
                 filtered.push(Line::styled(
                     "  [raw JSON/bytes collapsed · press d to expand]",
                     theme.muted_style(),
                 ));
-                emitted_collapsed_hint = true;
+                collapsed = CollapsedSection::RawBytes;
             }
             continue;
         }
@@ -268,11 +270,9 @@ fn filter_modal_rows(
             text.as_str(),
             "Name" | "Status" | "Original output" | "Recovered reference (retained original)"
         ) {
-            skipping_raw_bytes = false;
-            skipping_result_metadata = false;
-            emitted_collapsed_hint = false;
+            collapsed = CollapsedSection::None;
         }
-        if skipping_raw_bytes || skipping_result_metadata {
+        if collapsed != CollapsedSection::None {
             continue;
         }
         filtered.push(row.clone());

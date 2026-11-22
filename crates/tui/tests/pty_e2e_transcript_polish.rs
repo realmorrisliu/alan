@@ -390,6 +390,22 @@ async fn run_polish_session() -> Result<()> {
                         )
                         .await;
                 } else {
+                    // Intentionally race io/output BEFORE UiEvent::Thinking::Complete to verify
+                    // the renderer still places `· thought · 2s` above the streamed reply.
+                    let _ = responder_shell
+                        .write(&format!("{responder_owner}/io/output"), b"I am Alan.")
+                        .await;
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                    let thinking = UiEvent::Thinking {
+                        snapshot: UiThinkingSnapshot::complete("identity check".into(), 2),
+                    };
+                    let _ = responder_shell
+                        .write(
+                            &format!("{responder_owner}/machine/ui/events"),
+                            format!("{}\n", serde_json::to_string(&thinking).unwrap()).as_bytes(),
+                        )
+                        .await;
+                    tokio::time::sleep(Duration::from_millis(40)).await;
                     let assistant_rec = serde_json::json!({
                         "version": 1,
                         "kind": "message",
@@ -479,7 +495,7 @@ fn run_case(extra_env: &[(&str, &OsStr)], expect_styled: bool) -> Result<()> {
 
     write_master(&master_write, b"who are you\r")?;
     let settled = screen.wait_for("turn 2 settled", Duration::from_secs(5), |s| {
-        s.contains(": who are you") && s.contains("I am Alan.")
+        s.contains(": who are you") && s.contains("· thought · 2s") && s.contains("I am Alan.")
     })?;
 
     assert!(!settled.contains("effort unknown"), "{settled}");
@@ -516,7 +532,12 @@ fn run_case(extra_env: &[(&str, &OsStr)], expect_styled: bool) -> Result<()> {
         "",
         "missing blank row between turn 1 reply and `: who are you`:\n{settled}"
     );
-    assert_eq!(lines[turn2_idx + 1], "I am Alan.", "{settled}");
+    assert_eq!(
+        lines[turn2_idx + 1],
+        "· thought · 2s",
+        "late Thinking::Complete arriving after io/output must still render above reply:\n{settled}"
+    );
+    assert_eq!(lines[turn2_idx + 2], "I am Alan.", "{settled}");
 
     // Verify hanging indent on wrapped unordered and ordered list items.
     let bullet_prefix = if expect_styled { "• " } else { "- " };

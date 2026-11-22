@@ -66,24 +66,7 @@ impl FileBackedApp {
         let mut remaining = lines_to_prune;
         let mut index = 0;
         while remaining > 0 && index < self.transcript.len() {
-            let is_action = self.action_cells.values().any(|i| *i == index)
-                && matches!(self.transcript[index], HistoryCell::Tool { .. });
-            let rows = if let HistoryCell::Tool {
-                action: Some(action),
-                ..
-            } = &self.transcript[index]
-                && let Some(rows) = &action.frozen_rows
-            {
-                HistoryCell::Styled(rows.clone()).render_styled_lines(opts)
-            } else if is_action {
-                crate::history::action_summary_with_theme(
-                    &self.transcript[index],
-                    opts.width,
-                    opts.theme,
-                )
-            } else {
-                self.transcript[index].render_styled_lines(opts)
-            };
+            let rows = self.single_cell_rows(index, opts);
             let cell_lines = rows.len();
             let keep_source = Some(index) == self.current_assistant_cell();
             for input in self.local_inputs.values_mut() {
@@ -101,11 +84,15 @@ impl FileBackedApp {
                     } = &mut self.transcript[index]
                     {
                         action.frozen_rows = Some(rows.into_iter().skip(count).collect());
-                    } else if is_action {
+                    } else if self.transcript[index].input_source().is_some()
+                        || self.transcript[index].assistant_source().is_some()
+                    {
+                        if !self.transcript[index].trim_rendered_prefix(opts, count) {
+                            break;
+                        }
+                    } else {
                         self.transcript[index] =
                             HistoryCell::Styled(rows.into_iter().skip(count).collect());
-                    } else if !self.transcript[index].trim_rendered_prefix(opts, count) {
-                        break;
                     }
                     if let Some((_, _, cut)) = self.transcript[index].input_source() {
                         for input in self.local_inputs.values_mut() {
@@ -335,6 +322,7 @@ impl FileBackedApp {
                     }
                 }
                 self.reconciler.on_user_record();
+                self.clear_late_thinking_latch();
                 if !local || !duplicate {
                     let index = self
                         .pending_remote_turn_start
@@ -372,6 +360,11 @@ impl FileBackedApp {
                         self.transcript.push(HistoryCell::Assistant(content))
                     }
                 }
+                let already_has_thinking = self.current_assistant_cell().is_some_and(|i| {
+                    i > 0 && matches!(self.transcript[i - 1], HistoryCell::Thinking { .. })
+                });
+                self.closed_assistant_accepts_late_thinking =
+                    !self.ui_turn_closed && !already_has_thinking;
             }
             _ => {}
         }
@@ -395,6 +388,8 @@ impl FileBackedApp {
         match event {
             UiEvent::InputCompleted { status, .. } => {
                 self.last_input_failed = status == UiInputStatus::Failed;
+                self.closed_assistant_accepts_late_thinking = false;
+                self.ui_turn_closed = true;
             }
             UiEvent::Activity { snapshot } => self.apply_ui_activity_snapshot(snapshot),
             UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
@@ -416,14 +411,23 @@ impl FileBackedApp {
         }
     }
 
+    pub(in crate::file_backed) fn clear_late_thinking_latch(&mut self) {
+        self.closed_assistant_accepts_late_thinking = false;
+        self.ui_turn_closed = false;
+    }
+
     pub(in crate::file_backed) fn apply_ui_activity_snapshot(
         &mut self,
         snapshot: UiActivitySnapshot,
     ) {
-        if snapshot.state == UiActivityState::Idle
-            && matches!(self.thinking.state, UiThinkingState::Streaming)
-        {
-            self.thinking = UiThinkingSnapshot::idle();
+        if snapshot.state == UiActivityState::Idle {
+            self.closed_assistant_accepts_late_thinking = false;
+            if self.activity.state != UiActivityState::Idle {
+                self.ui_turn_closed = true;
+            }
+            if matches!(self.thinking.state, UiThinkingState::Streaming) {
+                self.thinking = UiThinkingSnapshot::idle();
+            }
         }
         self.activity = snapshot;
     }
@@ -450,6 +454,29 @@ impl FileBackedApp {
         }
     }
 
+    /// If the current generation's assistant text raced ahead of `machine/ui/events`
+    /// (`UiThinkingState::Complete`) on the separate `io/output` tail, return the
+    /// index of that unpruned assistant cell so completed thinking inserts above it.
+    fn thinking_insert_index(&self) -> Option<usize> {
+        let awaiting_boundary = self.reconciler.awaiting_boundary();
+        if awaiting_boundary && !self.closed_assistant_accepts_late_thinking {
+            return None;
+        }
+        for (idx, cell) in self.transcript.iter().enumerate().rev() {
+            if !awaiting_boundary && self.queued_receipt_at(idx) {
+                continue;
+            }
+            return match cell {
+                HistoryCell::Assistant(_)
+                | HistoryCell::AssistantTail {
+                    committed: (0, 0), ..
+                } => Some(idx),
+                _ => None,
+            };
+        }
+        None
+    }
+
     pub(in crate::file_backed) fn apply_ui_thinking_snapshot(
         &mut self,
         snapshot: UiThinkingSnapshot,
@@ -460,10 +487,18 @@ impl FileBackedApp {
             && matches!(snapshot.state, UiThinkingState::Complete)
             && !snapshot.text.trim().is_empty()
         {
-            self.push_turn_preview_cell(HistoryCell::Thinking {
+            let cell = HistoryCell::Thinking {
                 text: snapshot.text,
                 duration_secs: snapshot.duration_secs.unwrap_or(0),
-            });
+            };
+            let insert_at = self.thinking_insert_index();
+            self.closed_assistant_accepts_late_thinking = false;
+            if let Some(index) = insert_at {
+                self.transcript.insert(index, cell);
+                self.shift_action_cells_for_insert(index);
+            } else {
+                self.push_turn_preview_cell(cell);
+            }
         }
     }
 

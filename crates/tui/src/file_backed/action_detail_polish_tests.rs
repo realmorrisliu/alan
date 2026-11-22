@@ -206,7 +206,15 @@ async fn details_polish_acquired_readable_omits_summary_and_metadata_duplicates(
         );
         assert!(lines.iter().any(|s| s == "Read title"));
         assert!(lines.iter().any(|s| s == "readable200"));
-        for label in ["Name", "Status", "Original output", "Result metadata"] {
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|s| s.as_str() == "Tool: legacy tool · Status: completed")
+                .count(),
+            1,
+            "{lines:?}"
+        );
+        for label in ["Original output", "Result metadata"] {
             assert_eq!(lines.iter().filter(|s| s.as_str() == label).count(), 1);
             assert!(!lines.iter().any(|s| s == &format!("Original raw {label}")));
         }
@@ -321,4 +329,145 @@ async fn details_polish_newest_numeric_default_navigation_and_refresh() {
     assert_eq!(app.modal.scroll, 1);
     app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
     assert_eq!(app.modal.scroll, 0);
+}
+
+#[tokio::test]
+async fn details_polish_tool_error_json_formats_readably_and_collapses_honestly() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let raw_error = serde_json::json!({
+        "error": "permission denied: /etc/passwd",
+        "success": false,
+    })
+    .to_string();
+    let result_meta = serde_json::json!({
+        "exit_code": 1,
+        "title": "Read /etc/passwd",
+        "result_preview": "error: permission denied: /etc/passwd",
+    })
+    .to_string();
+    let (shell, path, id) = action_fixture(&raw_error, &result_meta).await;
+    shell
+        .write(&format!("{path}/actions/{id}/name"), b"read_file")
+        .await
+        .unwrap();
+    shell
+        .write(&format!("{path}/actions/{id}/status"), b"failed")
+        .await
+        .unwrap();
+
+    let theme = crate::theme::Theme::midnight();
+    let detail_rows = action_detail_io::read_detail_with_theme(&shell, &path, &id, theme).await;
+    let lines: Vec<String> = detail_rows.iter().map(ToString::to_string).collect();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "Tool: read_file · Status: failed"),
+        "{lines:?}"
+    );
+    assert!(lines.iter().any(|l| l == "Read /etc/passwd"), "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "Error: permission denied: /etc/passwd"),
+        "{lines:?}"
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l == "error: permission denied: /etc/passwd"),
+        "duplicate result_preview should be omitted once readable error is acquired: {lines:?}"
+    );
+    assert!(
+        detail_rows.iter().any(|row| {
+            row.to_string() == "Error: permission denied: /etc/passwd"
+                && (row.style.fg == Some(theme.status_block)
+                    || row
+                        .spans
+                        .iter()
+                        .any(|s| s.style.fg == Some(theme.status_block)))
+        }),
+        "error text should use block error style: {detail_rows:?}"
+    );
+    assert!(lines.iter().any(|l| l == "Original raw bytes"), "{lines:?}");
+    assert!(lines.iter().any(|l| l == &raw_error), "{lines:?}");
+    assert!(lines.iter().any(|l| l == &result_meta), "{lines:?}");
+
+    let render = |app: &FileBackedApp| -> String {
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let buf = terminal.backend().buffer();
+        (0..20)
+            .map(|y| {
+                (0..120)
+                    .map(|x| buf.cell((x, y)).unwrap().symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let mut app = FileBackedApp::new(path.clone());
+    app.theme = theme;
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    app.modal.actions = vec![action_detail_io::ActionEntry {
+        owner: path.clone(),
+        id: id.clone(),
+    }];
+    app.modal.pending = false;
+    app.modal.rows = detail_rows;
+
+    let collapsed = render(&app);
+    assert!(
+        collapsed.contains("Tool: read_file · Status: failed"),
+        "{collapsed}"
+    );
+    assert!(
+        collapsed.contains("Error: permission denied: /etc/passwd"),
+        "{collapsed}"
+    );
+    assert!(
+        collapsed.contains("[raw JSON/bytes collapsed · press d to expand]"),
+        "{collapsed}"
+    );
+    assert!(
+        collapsed.contains("[result metadata collapsed · press d to expand]"),
+        "{collapsed}"
+    );
+    assert!(
+        !collapsed.contains("\"success\":false"),
+        "raw error JSON must stay collapsed until d is pressed:\n{collapsed}"
+    );
+    assert!(
+        !collapsed.contains("\"result_preview\""),
+        "raw result metadata must stay collapsed until d is pressed:\n{collapsed}"
+    );
+
+    // Pressing `d` expands both raw error JSON and result metadata verbatim.
+    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+    let expanded = render(&app);
+    assert!(expanded.contains(&raw_error), "{expanded}");
+    assert!(expanded.contains(&result_meta), "{expanded}");
+
+    // Unstructured output shows only result-metadata collapse hint (never falsely claims raw JSON collapsed).
+    let (plain_shell, plain_path, plain_id) =
+        action_fixture("plain unstructured output", &result_meta).await;
+    app.modal.show_raw_json = false;
+    app.modal.rows =
+        action_detail_io::read_detail_with_theme(&plain_shell, &plain_path, &plain_id, theme).await;
+    let plain_collapsed = render(&app);
+    assert!(
+        plain_collapsed.contains("plain unstructured output"),
+        "{plain_collapsed}"
+    );
+    assert!(
+        plain_collapsed.contains("[result metadata collapsed · press d to expand]"),
+        "{plain_collapsed}"
+    );
+    assert!(
+        !plain_collapsed.contains("[raw JSON/bytes collapsed"),
+        "must not claim raw JSON collapsed when none was collapsed:\n{plain_collapsed}"
+    );
 }
