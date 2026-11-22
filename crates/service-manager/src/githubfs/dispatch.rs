@@ -146,7 +146,13 @@ impl TriggerAllowlist {
         }
         matches!(
             event.kind.as_str(),
-            "push" | "pull_synchronized" | "synchronize" | "commit" | "pull_opened"
+            "push"
+                | "pushevent"
+                | "pull_synchronize"
+                | "pull_synchronized"
+                | "synchronize"
+                | "commit"
+                | "pull_opened"
         )
     }
 }

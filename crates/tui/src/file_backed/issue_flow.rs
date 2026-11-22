@@ -90,22 +90,25 @@ pub(in crate::file_backed) struct IssueFlowState {
     phase: IssuePhase,
 }
 
+#[derive(Clone)]
+struct IssueDraft {
+    repo: String,
+    title: String,
+    title_cursor: usize,
+    body: String,
+    body_cursor: usize,
+    focus: IssueFieldFocus,
+    warning: Option<String>,
+}
+
 #[derive(Clone, Default)]
 enum IssuePhase {
     #[default]
     Idle,
-    Editing {
-        repo: String,
-        title: String,
-        title_cursor: usize,
-        body: String,
-        body_cursor: usize,
-        focus: IssueFieldFocus,
-        warning: Option<String>,
-    },
+    Editing(IssueDraft),
     Submitting {
-        repo: String,
-        title: String,
+        draft: IssueDraft,
+        submitted_title: String,
     },
 }
 
@@ -175,7 +178,7 @@ impl FileBackedApp {
         };
 
         self.issue.next_generation();
-        self.issue.phase = IssuePhase::Editing {
+        self.issue.phase = IssuePhase::Editing(IssueDraft {
             repo,
             title: initial_title,
             title_cursor,
@@ -183,13 +186,13 @@ impl FileBackedApp {
             body_cursor,
             focus,
             warning: None,
-        };
+        });
         self.notice = None;
         None
     }
 
     pub(in crate::file_backed) fn issue_paste(&mut self, text: &str) {
-        let IssuePhase::Editing {
+        let IssuePhase::Editing(IssueDraft {
             title,
             title_cursor,
             body,
@@ -197,7 +200,7 @@ impl FileBackedApp {
             focus,
             warning,
             ..
-        } = &mut self.issue.phase
+        }) = &mut self.issue.phase
         else {
             return;
         };
@@ -237,7 +240,7 @@ impl FileBackedApp {
             return was_submitting.then_some(FileBackedAction::CancelIssue);
         }
 
-        let IssuePhase::Editing {
+        let IssuePhase::Editing(IssueDraft {
             repo,
             title,
             title_cursor,
@@ -245,7 +248,7 @@ impl FileBackedApp {
             body_cursor,
             focus,
             warning,
-        } = &mut self.issue.phase
+        }) = &mut self.issue.phase
         else {
             return None;
         };
@@ -265,18 +268,22 @@ impl FileBackedApp {
                     *warning = Some("Title is required before submitting (Esc to cancel).".into());
                     return None;
                 }
+                *warning = None;
                 let repo = repo.clone();
-                let body = body.trim_end().to_string();
+                let submitted_body = body.trim_end().to_string();
+                let IssuePhase::Editing(draft) = std::mem::take(&mut self.issue.phase) else {
+                    unreachable!("checked Editing phase above");
+                };
                 let generation = self.issue.next_generation();
                 self.issue.phase = IssuePhase::Submitting {
-                    repo: repo.clone(),
-                    title: trimmed_title.clone(),
+                    draft,
+                    submitted_title: trimmed_title.clone(),
                 };
                 return Some(FileBackedAction::SubmitIssue {
                     generation,
                     repo,
                     title: trimmed_title,
-                    body,
+                    body: submitted_body,
                 });
             }
             KeyCode::Enter if shift || alt => {
@@ -330,44 +337,62 @@ impl FileBackedApp {
         if generation != self.issue.generation || !self.issue.is_active() {
             return;
         }
-        self.issue.close();
         match result {
-            Ok(IssueSubmissionOutcome::MountedGithubFs { number, url }) => {
-                let num = number.map_or_else(String::new, |n| format!("#{n} "));
-                let summary = format!("Issue {num}created via /mnt/github: {}", clean_text(&url));
-                self.transcript.push(HistoryCell::Styled(vec![Line::styled(
-                    summary.clone(),
-                    self.theme.run_style(),
-                )]));
-                self.notice = Some(summary.into());
-            }
-            Ok(IssueSubmissionOutcome::GhCli { number, url }) => {
-                let num = number.map_or_else(String::new, |n| format!("#{n} "));
-                let summary = format!("Issue {num}created via gh CLI: {}", clean_text(&url));
-                self.transcript.push(HistoryCell::Styled(vec![Line::styled(
-                    summary.clone(),
-                    self.theme.run_style(),
-                )]));
-                self.notice = Some(summary.into());
-            }
-            Ok(IssueSubmissionOutcome::WebFallback { url, reason }) => {
-                let clean_url = clean_text(&url);
-                let clean_reason = clean_text(&reason);
-                self.transcript.push(HistoryCell::Styled(vec![
-                    Line::styled(
-                        "Issue draft ready (browser URL fallback)",
-                        self.theme.accent_bold(),
-                    ),
-                    Line::styled(
-                        format!("  Reason: {clean_reason}"),
-                        self.theme.muted_style(),
-                    ),
-                    Line::from(format!("  Open: {clean_url}")),
-                ]));
-                self.notice =
-                    Some(format!("Issue fallback URL ({clean_reason}): {clean_url}").into());
+            Ok(outcome) => {
+                self.issue.close();
+                match outcome {
+                    IssueSubmissionOutcome::MountedGithubFs { number, url } => {
+                        let num = number.map_or_else(String::new, |n| format!("#{n} "));
+                        let summary =
+                            format!("Issue {num}created via /mnt/github: {}", clean_text(&url));
+                        self.transcript.push(HistoryCell::Styled(vec![Line::styled(
+                            summary.clone(),
+                            self.theme.run_style(),
+                        )]));
+                        self.notice = Some(summary.into());
+                    }
+                    IssueSubmissionOutcome::GhCli { number, url } => {
+                        let num = number.map_or_else(String::new, |n| format!("#{n} "));
+                        let summary =
+                            format!("Issue {num}created via gh CLI: {}", clean_text(&url));
+                        self.transcript.push(HistoryCell::Styled(vec![Line::styled(
+                            summary.clone(),
+                            self.theme.run_style(),
+                        )]));
+                        self.notice = Some(summary.into());
+                    }
+                    IssueSubmissionOutcome::WebFallback { url, reason } => {
+                        let clean_url = clean_text(&url);
+                        let clean_reason = clean_text(&reason);
+                        self.transcript.push(HistoryCell::Styled(vec![
+                            Line::styled(
+                                "Issue draft ready (browser URL fallback)",
+                                self.theme.accent_bold(),
+                            ),
+                            Line::styled(
+                                format!("  Reason: {clean_reason}"),
+                                self.theme.muted_style(),
+                            ),
+                            Line::from(format!("  Open: {clean_url}")),
+                        ]));
+                        self.notice = Some(
+                            format!("Issue fallback URL ({clean_reason}): {clean_url}").into(),
+                        );
+                    }
+                }
             }
             Err(error) => {
+                match std::mem::take(&mut self.issue.phase) {
+                    IssuePhase::Submitting { mut draft, .. } => {
+                        self.issue.next_generation();
+                        draft.warning = Some(format!(
+                            "Submission failed: {} (Enter to retry, Esc to cancel)",
+                            sanitize_single_line(&clean_text(&error))
+                        ));
+                        self.issue.phase = IssuePhase::Editing(draft);
+                    }
+                    _ => self.issue.close(),
+                }
                 let msg = format!("issue submission failed: {error}");
                 self.push_error(msg.clone());
                 self.notice = Some(Notice::error(msg));
@@ -669,19 +694,22 @@ fn build_view(
     let width = width.max(16);
     match &app.issue.phase {
         IssuePhase::Idle => (Vec::new(), None, 0),
-        IssuePhase::Submitting { repo, title } => {
+        IssuePhase::Submitting {
+            draft,
+            submitted_title,
+        } => {
             let lines = vec![
                 Line::styled(
-                    format!("Submitting Issue · {}", clean_text(repo)),
+                    format!("Submitting Issue · {}", clean_text(&draft.repo)),
                     theme.accent_bold(),
                 ),
                 Line::styled("Please wait… (Esc to close)", theme.muted_style()),
                 Line::default(),
-                Line::from(format!("Title: {}", clean_text(title))),
+                Line::from(format!("Title: {}", clean_text(submitted_title))),
             ];
             (lines, None, 0)
         }
-        IssuePhase::Editing {
+        IssuePhase::Editing(IssueDraft {
             repo,
             title,
             title_cursor,
@@ -689,7 +717,7 @@ fn build_view(
             body_cursor,
             focus,
             warning,
-        } => {
+        }) => {
             let hint = if width >= 68 {
                 "Tab switch field · Enter submit · Shift+Enter/Ctrl+J newline · Esc cancel"
             } else {
@@ -710,6 +738,9 @@ fn build_view(
                     theme.rule_style(),
                 ),
             ];
+            if let Some(warn) = warning {
+                rows.push(Line::styled(format!("! {warn}"), theme.wait_style()));
+            }
             let title_focused = *focus == IssueFieldFocus::Title;
             let title_prefix = if title_focused {
                 "▶ Title: "
@@ -781,9 +812,6 @@ fn build_view(
                     ]));
                 }
                 offset = line_end + usize::from(lines_iter.peek().is_some());
-            }
-            if let Some(warn) = warning {
-                rows.push(Line::styled(format!("! {warn}"), theme.wait_style()));
             }
             (rows, cursor_pos, body_start_row)
         }

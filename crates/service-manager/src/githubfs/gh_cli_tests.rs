@@ -629,3 +629,107 @@ esac
     let ids_3: Vec<&str> = s3.events.iter().map(|e| e.event_id.as_str()).collect();
     assert_eq!(ids_3, vec!["ev-4", "ev-5"]);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gh_cli_parsed_pull_synchronize_and_push_on_ignored_branch_are_suppressed() {
+    use super::dispatch::{DispatchOutcome, SkipReason};
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let gh_script = dir.path().join("gh");
+    let script = r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "auth" && "${2:-}" == "token" ]]; then
+  echo "ghp_loop_guard_token"
+  exit 0
+fi
+all_args="$*"
+case "$all_args" in
+  *"repos/acme/alan/events"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n[
+      {"id":"ev-human-sync","type":"PullRequestEvent","actor":{"login":"morris"},"payload":{"action":"synchronize","number":78,"pull_request":{"number":78,"head":{"ref":"feat/human-fix","sha":"sha-human-1"}}},"created_at":"2026-11-22T01:03:00Z"},
+      {"id":"ev-bot-push","type":"PushEvent","actor":{"login":"morris"},"payload":{"ref":"refs/heads/alan/issue-77","head":"sha-bot-1"},"created_at":"2026-11-22T01:02:00Z"},
+      {"id":"ev-bot-sync","type":"PullRequestEvent","actor":{"login":"morris"},"payload":{"action":"synchronize","number":77,"pull_request":{"number":77,"head":{"ref":"alan/issue-77","sha":"sha-bot-1"}}},"created_at":"2026-11-22T01:01:00Z"}
+    ]'
+    ;;
+  *"repos/acme/alan/issues?"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n[]'
+    ;;
+  *"repos/acme/alan/pulls?"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n[
+      {"number":77,"title":"Bot PR","user":{"login":"morris"},"state":"open","draft":false,"mergeable":true,"labels":[{"name":"alan:auto"}],"head":{"ref":"alan/issue-77","sha":"sha-bot-1"},"base":{"ref":"main"},"updated_at":"2026-11-22T01:01:00Z","html_url":"https://github.com/acme/alan/pull/77"},
+      {"number":78,"title":"Human PR","user":{"login":"morris"},"state":"open","draft":false,"mergeable":true,"labels":[{"name":"alan:auto"}],"head":{"ref":"feat/human-fix","sha":"sha-human-1"},"base":{"ref":"main"},"updated_at":"2026-11-22T01:03:00Z","html_url":"https://github.com/acme/alan/pull/78"}
+    ]'
+    ;;
+  *)
+    echo "unexpected args: $all_args" >&2
+    exit 1
+    ;;
+esac
+"#;
+    std::fs::write(&gh_script, script).unwrap();
+    let mut perms = std::fs::metadata(&gh_script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gh_script, perms).unwrap();
+
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+    let ghfs = Arc::new(
+        GithubFs::with_watched_repos(
+            Arc::new(GhCliGithubBackend::with_binary(&gh_script)),
+            [slug.clone()],
+        )
+        .await
+        .unwrap(),
+    );
+    let routefs = Arc::new(RouteFs::new());
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/mnt/github",
+        InProcessTransport::new(ghfs),
+        Access::ReadWrite,
+    );
+    ns.mount(
+        "/mnt/route",
+        InProcessTransport::new(routefs),
+        Access::ReadWrite,
+    );
+    let transport = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+    let shell = alan_shell::Shell::new(transport.clone());
+    shell.write("/mnt/github/ctl", b"sync").await.unwrap();
+
+    let mut dispatcher = GithubEventDispatcher::new(
+        transport,
+        TriggerAllowlist {
+            allowed_repos: vec![slug.as_slug()],
+            allowed_actors: vec!["morris".to_string()],
+            required_labels: vec!["alan:auto".to_string()],
+            ignored_actors: vec!["alan-bot".to_string()],
+            ignored_branch_prefixes: vec!["alan/".to_string()],
+            max_concurrent: 2,
+            max_retries: 2,
+        },
+    )
+    .unwrap();
+    let outcomes = dispatcher.process_available_events().await.unwrap();
+    assert_eq!(outcomes.len(), 3, "{outcomes:?}");
+    assert!(matches!(
+        &outcomes[0],
+        DispatchOutcome::Skipped {
+            event_id,
+            reason: SkipReason::SelfBranchLoop,
+        } if event_id == "ev-bot-sync"
+    ));
+    assert!(matches!(
+        &outcomes[1],
+        DispatchOutcome::Skipped {
+            event_id,
+            reason: SkipReason::SelfBranchLoop,
+        } if event_id == "ev-bot-push"
+    ));
+    assert!(matches!(
+        &outcomes[2],
+        DispatchOutcome::DispatchedWorker { event_id, .. }
+            if event_id == "ev-human-sync"
+    ));
+}

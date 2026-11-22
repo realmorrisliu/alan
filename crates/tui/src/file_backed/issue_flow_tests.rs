@@ -325,3 +325,76 @@ async fn tiered_submission_prefers_writable_githubfs_then_gh_then_web_url() {
         other => panic!("expected web fallback, got {other:?}"),
     }
 }
+
+#[test]
+fn failed_issue_submission_preserves_draft_and_allows_retry() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.handle_command("/issue Retry title");
+    for ch in "repro step 1".chars() {
+        app.handle_key(test_key(KeyCode::Char(ch)));
+    }
+    let Some(FileBackedAction::SubmitIssue {
+        generation: g1,
+        title: t1,
+        body: b1,
+        ..
+    }) = app.handle_key(test_key(KeyCode::Enter))
+    else {
+        panic!("expected first SubmitIssue");
+    };
+    assert_eq!(t1, "Retry title");
+    assert!(b1.contains("repro step 1"), "{b1}");
+    assert!(!app.issue.is_editing());
+
+    // Submission failure must keep the draft open in Editing state with inline retry guidance.
+    app.apply_issue_submit_result(g1, Err("HTTP 503 temporary outage".into()));
+    assert!(app.issue.is_editing());
+    let rendered = render_lines(&app, 100)
+        .into_iter()
+        .map(|l| l.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("Retry title"), "{rendered}");
+    assert!(rendered.contains("repro step 1"), "{rendered}");
+    assert!(
+        rendered.contains("Submission failed: HTTP 503 temporary outage"),
+        "{rendered}"
+    );
+
+    // Late/duplicate completion for old generation `g1` must be ignored after generation bump.
+    let transcript_len = app.transcript.len();
+    app.apply_issue_submit_result(
+        g1,
+        Ok(IssueSubmissionOutcome::GhCli {
+            number: Some(999),
+            url: "https://github.com/realmorrisliu/alan/issues/999".into(),
+        }),
+    );
+    assert!(app.issue.is_editing());
+    assert_eq!(app.transcript.len(), transcript_len);
+
+    // User can edit further and retry submission with preserved draft + new edit.
+    app.handle_key(test_key(KeyCode::Char('!')));
+    let Some(FileBackedAction::SubmitIssue {
+        generation: g2,
+        title: t2,
+        body: b2,
+        ..
+    }) = app.handle_key(test_key(KeyCode::Enter))
+    else {
+        panic!("expected retry SubmitIssue");
+    };
+    assert_ne!(g2, g1);
+    assert_eq!(t2, "Retry title");
+    assert!(b2.contains("repro step 1!"), "{b2}");
+
+    app.apply_issue_submit_result(
+        g2,
+        Ok(IssueSubmissionOutcome::GhCli {
+            number: Some(77),
+            url: "https://github.com/realmorrisliu/alan/issues/77".into(),
+        }),
+    );
+    assert!(!app.issue.is_active());
+    assert!(app.transcript.len() > transcript_len);
+}

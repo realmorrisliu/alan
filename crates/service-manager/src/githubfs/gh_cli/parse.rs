@@ -236,6 +236,16 @@ pub(super) fn parse_gh_events(repo: &RepoSlug, items: &[Value]) -> Vec<GithubEve
                         br,
                     )
                 }
+                "PushEvent" => (
+                    "push".to_string(),
+                    None,
+                    None,
+                    Vec::new(),
+                    payload["head"].as_str().map(ToString::to_string),
+                    payload["ref"]
+                        .as_str()
+                        .map(|r| r.strip_prefix("refs/heads/").unwrap_or(r).to_string()),
+                ),
                 _ => (
                     raw_type.to_ascii_lowercase(),
                     None,
