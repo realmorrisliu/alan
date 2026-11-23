@@ -8,7 +8,7 @@ impl FileBackedApp {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
-            KeyCode::Esc => Some(FileBackedAction::Interrupt),
+            KeyCode::Esc => Some(self.interrupt_action()),
             KeyCode::Tab => {
                 if let Some(form) = self.form.as_mut() {
                     form.next_field();

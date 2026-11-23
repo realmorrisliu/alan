@@ -576,3 +576,56 @@ fn confirmation_overflow_scrolls_to_top_preview_and_snaps_back_on_selection() {
     assert!(snapped.contains("▶ [2] allow_session"), "{snapped}");
     assert!(snapped.contains("PgUp/PgDn scroll"), "{snapped}");
 }
+
+#[test]
+fn confirmation_esc_preserves_empty_queue_auto_continue_and_respects_queued_items() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.queue.apply(
+        "/agent/1",
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            active_submission_ids: vec!["sub-1".into()],
+            ..Default::default()
+        }),
+    );
+    app.set_pending_yield(bash_confirmation());
+    assert!(matches!(
+        app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE)),
+        Some(FileBackedAction::Interrupt)
+    ));
+    assert!(app.auto_continue_on_empty_cancel);
+
+    app.clear_pending_yield();
+    app.queue.apply(
+        "/agent/1",
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 2,
+            paused: true,
+            ..Default::default()
+        }),
+    );
+    app.activity = UiActivitySnapshot::paused(Some(1));
+    assert!(app.take_ready_auto_continue_on_empty_cancel());
+    assert!(!app.take_ready_auto_continue_on_empty_cancel());
+
+    // When another submission is pending in the queue, Esc must not auto-continue.
+    let mut queued_app = FileBackedApp::new("/agent/root".into());
+    queued_app.queue.apply(
+        "/agent/1",
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            active_submission_ids: vec!["sub-1".into()],
+            pending_submission_ids: vec!["sub-2".into()],
+            ..Default::default()
+        }),
+    );
+    queued_app.set_pending_yield(bash_confirmation());
+    assert!(matches!(
+        queued_app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE)),
+        Some(FileBackedAction::Interrupt)
+    ));
+    assert!(!queued_app.auto_continue_on_empty_cancel);
+}

@@ -549,12 +549,7 @@ impl FileBackedApp {
                 }
                 return None;
             }
-            self.auto_continue_on_empty_cancel = self
-                .queue
-                .snapshot
-                .as_ref()
-                .is_none_or(|q| q.pending_submission_ids.is_empty());
-            return Some(FileBackedAction::Interrupt);
+            return Some(self.interrupt_action());
         }
         if self.project_selection.is_some() {
             return self.handle_project_key(key);
@@ -662,12 +657,7 @@ impl FileBackedApp {
                 code: KeyCode::Esc, ..
             } => {
                 if self.interruptible_work_active(has_pending_submission) {
-                    self.auto_continue_on_empty_cancel = self
-                        .queue
-                        .snapshot
-                        .as_ref()
-                        .is_none_or(|q| q.pending_submission_ids.is_empty());
-                    Some(FileBackedAction::Interrupt)
+                    Some(self.interrupt_action())
                 } else {
                     self.notice = None;
                     None

@@ -675,7 +675,7 @@ impl FileBackedApp {
 
         match key.code {
             KeyCode::Esc => {
-                return Some(ConfirmationKeyResult::Action(FileBackedAction::Interrupt));
+                return Some(ConfirmationKeyResult::Action(self.interrupt_action()));
             }
             KeyCode::Up | KeyCode::BackTab => conf.move_up(),
             KeyCode::Down | KeyCode::Tab => conf.move_down(),

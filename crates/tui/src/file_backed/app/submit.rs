@@ -193,6 +193,15 @@ impl FileBackedApp {
         // Submission may be queued behind another client. Tape owns turn boundaries.
     }
 
+    pub(in crate::file_backed) fn interrupt_action(&mut self) -> FileBackedAction {
+        self.auto_continue_on_empty_cancel = self
+            .queue
+            .snapshot
+            .as_ref()
+            .is_none_or(|q| q.pending_submission_ids.is_empty());
+        FileBackedAction::Interrupt
+    }
+
     pub(in crate::file_backed) fn take_ready_auto_continue_on_empty_cancel(&mut self) -> bool {
         if !self.auto_continue_on_empty_cancel
             || self.has_pending_response()
