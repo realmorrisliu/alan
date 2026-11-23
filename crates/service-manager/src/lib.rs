@@ -49,10 +49,11 @@ pub use host_mount::{
 };
 pub use local_entry::LocalEntryService;
 pub use package::{
-    FileserverPackageExport, FileserverTransportSpec, McpPackageExport, McpTransportSpec,
-    PackageCatalog, PackageCommand, PackageCommandResult, PackageExport, PackageExportKind,
-    PackageKind, PackageRecord, PackageReferenceLease, PackageService, PackageSnapshot,
-    PackageSnapshotEntry, PackageState, PackageSyncEntry, ProviderAuthMode, ProviderPackageExport,
+    FileserverMountAccess, FileserverPackageExport, FileserverTransportSpec, McpPackageExport,
+    McpTransportSpec, PackageCatalog, PackageCommand, PackageCommandResult, PackageExport,
+    PackageExportKind, PackageKind, PackageRecord, PackageReferenceLease, PackageService,
+    PackageSnapshot, PackageSnapshotEntry, PackageState, PackageSyncEntry, ProviderAuthMode,
+    ProviderPackageExport, RootBindingMode, RootFileserverActivation, RootPackageBinding,
     ToolPackageExport, validate_package_id, validate_package_store_for_migration,
 };
 pub use process_launch::ProcessLaunchContext;
@@ -61,5 +62,5 @@ pub use quartermaster::{
 };
 pub use runtime::{
     BOOT_ID_PATH, BOOT_STATE_PATH, InputShadowSelection, LlmClientFactory, ServiceManager,
-    ServiceManagerConfig, SessionHandle, SessionLaunchOptions,
+    ServiceManagerConfig, SessionHandle, SessionLaunchOptions, prepare_fileserver_launch_grant,
 };

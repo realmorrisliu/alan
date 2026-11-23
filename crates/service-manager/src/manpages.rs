@@ -118,13 +118,14 @@ NAME
 SYNOPSIS
   alan [OPTIONS]
   alan -p, --print <PROMPT> [--json] [--image <PATH>...]
+  alan [--package <ID>]... [--fileserver <ID>[:ro|rw][:net]]...
   echo <TASK> | alan [--json]
   alan about | alan man [TOPIC]
   alan login [PROVIDER]
   alan connection <SUBCOMMAND>
   alan skills <SUBCOMMAND>
-  alan q <SUBCOMMAND>
-  alan workflow <SUBCOMMAND>
+  alan q <install|enable|disable|list|inspect|upgrade|uninstall|sync>
+  alan workflow <init|init-self-iterate|init-release-prep|watch|run|list|logs>
   alan update [OPTIONS]
 
 DESCRIPTION
@@ -217,6 +218,11 @@ NAME
   q - Package Service client (/bin/q -> /srv/package)
 
 SYNOPSIS
+  alan q install [--name <PACKAGE_ID>] [--catalog-only] <PATH>
+  alan q enable <PACKAGE_ID> [--access read-only|read-write] [--allow-network] [--skills-only]
+  alan q disable <PACKAGE_ID> [--keep-skills]
+  alan q list | alan q inspect <PACKAGE_ID>
+  alan q upgrade <PACKAGE_ID> <PATH> | alan q uninstall <PACKAGE_ID>
   /bin/q list
   /bin/q install [--name <PACKAGE_ID>] </mnt/...>
   /bin/q uninstall <PACKAGE_ID>
@@ -224,7 +230,15 @@ SYNOPSIS
 DESCRIPTION
   Quartermaster (`q`) manages immutable extension packages stored in the
   Alan System Store and projected read-only at `/lib/pkg/<id>` only when
-  a Process holds an explicit descriptor reference.
+  a Process holds an explicit Root binding or descriptor reference.
+  Non-skill packages (`tool`, `mcp`, `provider`, `fileserver`) may bundle
+  read-only Companion Skills under `skills/`.
+
+ROOT LIFECYCLE (`skills_only` vs `active`)
+  `alan q install` catalogs the revision and attaches read-only `skills/`
+  (`skills_only`) unless `--catalog-only` is passed. Runtime tools, MCP
+  servers, and `fileserver` mounts stay inactive until `alan q enable`
+  (or per-invocation `--package` / `--fileserver` flags).
 
 PACKAGE KINDS (ADR-0061)
   skill                 knowledge manuals and workflows (SKILL.md)
@@ -234,7 +248,7 @@ PACKAGE KINDS (ADR-0061)
   fileserver            confined external aP file-server plugin packages
 
 BOUNDARIES
-  `q` operates strictly over authorized alan9 namespace paths such as
+  `/bin/q` operates strictly over authorized alan9 namespace paths such as
   `/mnt/import/...`. It never accepts raw Host filesystem paths and never
   performs implicit remote network fetches.
 

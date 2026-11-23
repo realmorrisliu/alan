@@ -262,6 +262,9 @@ impl HostBootConfig {
         let launch_context =
             prepare_system_store_launch(&system_store, namespace, &mut process, None)?;
         let connection_store = system_store.connection_bindings()?;
+        let packages_dir = system_store.packages()?;
+        let root_package_bindings =
+            alan_service_manager::PackageService::load_root_bindings_from_store(&packages_dir)?;
         let tools = product_tool_registry(Arc::new(process.agent_config.core_config.clone()));
         let llm_factory = Arc::new(ProductLlmClientFactory {
             credentials_dir: host_store.credentials.clone(),
@@ -278,12 +281,14 @@ impl HostBootConfig {
                 input_shadow: None,
                 launch_context,
                 connection_store: Some(connection_store),
-                package_store: Some(system_store.packages()?),
+                package_store: Some(packages_dir),
                 in_memory_stores: false,
                 llm_factory,
                 host_mount_adapter: Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
                 tools,
                 include_builtin_skills: true,
+                root_package_bindings,
+                explicit_root_package_bindings: Vec::new(),
             },
             ephemeral_rollout: false,
             saved_grants: Vec::new(),
@@ -385,6 +390,24 @@ impl HostBootConfig {
             profile: profile.into(),
             surface,
         });
+        self
+    }
+
+    /// Replace durable Root package bindings (for example cleared on `--ephemeral`).
+    pub fn with_root_package_bindings(
+        mut self,
+        bindings: Vec<alan_service_manager::RootPackageBinding>,
+    ) -> Self {
+        self.service_manager.root_package_bindings = bindings;
+        self
+    }
+
+    /// Add fail-closed per-invocation Root package bindings (`--package` / `--fileserver`).
+    pub fn with_explicit_root_package_bindings(
+        mut self,
+        bindings: Vec<alan_service_manager::RootPackageBinding>,
+    ) -> Self {
+        self.service_manager.explicit_root_package_bindings = bindings;
         self
     }
 

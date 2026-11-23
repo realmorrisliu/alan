@@ -1,6 +1,7 @@
 use super::*;
+use crate::quartermaster::QUARTERMASTER_EXECUTABLE;
 use alan_agent_engine::LlmProvider as ConnectionProvider;
-use alan_kernel::Status;
+use alan_kernel::{Namespace, Status};
 use alan_llm::{LlmProvider, MockLlmProvider};
 
 use crate::{BootUnit, ConnectionCredential, ConnectionProfile, CredentialKind};
@@ -980,5 +981,6 @@ mod child_budget;
 mod four_kind_projection;
 mod input_shadow;
 mod manpages;
+mod root_bindings;
 
 mod root_abort;

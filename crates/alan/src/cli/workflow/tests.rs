@@ -27,6 +27,8 @@ fn manifest_validation_enforces_ids_explicit_mounts_and_defaults() {
         prompt: "Summarize new inbox notes".to_string(),
         model_profile: None,
         mounts: vec!["notes".to_string()],
+        packages: vec![],
+        fileservers: vec![],
         trust: WorkflowTrustPosture::default(),
         json: true,
         timeout_secs: None,
@@ -82,6 +84,8 @@ fn schedule_parsing_and_launchd_cron_rendering_cover_intervals_and_calendar_cron
         prompt: "Check inbox".to_string(),
         model_profile: None,
         mounts: vec![],
+        packages: vec![],
+        fileservers: vec![],
         trust: WorkflowTrustPosture::Governed,
         json: true,
         timeout_secs: Some(60),
@@ -104,6 +108,8 @@ fn schedule_parsing_and_launchd_cron_rendering_cover_intervals_and_calendar_cron
         prompt: "Weekly digest".to_string(),
         model_profile: None,
         mounts: vec![],
+        packages: vec![],
+        fileservers: vec![],
         trust: WorkflowTrustPosture::Governed,
         json: true,
         timeout_secs: None,
@@ -230,6 +236,8 @@ printf '{{"type":"turn_finished","status":"completed","answer":"Found 2 notes; s
                 prompt: "Digest personal notes".to_string(),
                 model_profile: Some("openai-main".to_string()),
                 mounts: vec!["notes-grant".to_string()],
+                packages: vec![],
+                fileservers: vec![],
                 trust: WorkflowTrustPosture::Governed,
                 no_stream_json: false,
                 timeout_secs: Some(30),
@@ -324,6 +332,8 @@ printf '{{"type":"turn_finished","status":"completed","answer":"Found 2 notes; s
                 prompt: "Slow task".to_string(),
                 model_profile: None,
                 mounts: vec![],
+                packages: vec![],
+                fileservers: vec![],
                 trust: WorkflowTrustPosture::Governed,
                 no_stream_json: false,
                 timeout_secs: Some(1),
@@ -369,6 +379,8 @@ pub(super) fn sample_self_iterate_args() -> InitSelfIterateArgs {
         schedule: "every 15m".to_string(),
         model_profile: Some("openai-main".to_string()),
         mounts: vec!["alan-repo".to_string()],
+        packages: vec![],
+        fileservers: vec![],
         trust: WorkflowTrustPosture::Governed,
         no_stream_json: false,
         timeout_secs: 1_800,
@@ -558,6 +570,8 @@ async fn cli_init_self_iterate_and_release_prep_require_grants_and_render_safe_p
                 schedule: "@weekly".to_string(),
                 model_profile: None,
                 mounts: vec!["alan-repo".to_string()],
+                packages: vec![],
+                fileservers: vec![],
                 trust: WorkflowTrustPosture::Governed,
                 no_stream_json: false,
                 timeout_secs: 1_800,
@@ -642,6 +656,7 @@ async fn quartermaster_self_iterate_and_release_prep_skills_pass_snapshot_and_q_
             QArgs {
                 action: QAction::Install {
                     name: None,
+                    catalog_only: false,
                     path: pkg_dir,
                 },
             },
@@ -774,4 +789,85 @@ async fn cli_evaluate_trigger_and_check_release_gate_enforce_fail_closed_gates()
         .unwrap();
     assert!(gate_block_err.is_some());
     assert!(gate_block_out.contains("\"allowed\": false"));
+}
+
+#[tokio::test]
+async fn workflow_manifest_forwards_explicit_packages_and_fileservers_in_isolated_runs() {
+    use crate::cli::dispatch::{Cli, Commands};
+    use clap::Parser;
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::from_root(temp.path().join("workflows")).unwrap();
+    let mock_bin = write_mock_script(temp.path(), "mock-alan.sh", "#!/bin/sh\nexit 0\n");
+
+    let Cli {
+        command: Some(Commands::Workflow(init_args)),
+        ..
+    } = Cli::try_parse_from([
+        "alan",
+        "workflow",
+        "init-self-iterate",
+        "--repo",
+        "realmorrisliu/alan",
+        "--allowed-actor",
+        "morris",
+        "--grant",
+        "alan-repo",
+        "--package",
+        "extra-helper",
+        "--fileserver",
+        "github-fileserver:rw:net",
+        "--json",
+    ])
+    .unwrap()
+    else {
+        panic!("expected workflow command");
+    };
+    let (init_out, init_err) = run_with_store(&store, init_args, None, None).await.unwrap();
+    assert!(init_err.is_none());
+    let init_json: serde_json::Value = serde_json::from_str(&init_out).unwrap();
+    assert_eq!(
+        init_json["manifest"]["packages"],
+        serde_json::json!(["extra-helper"])
+    );
+    assert_eq!(
+        init_json["manifest"]["fileservers"],
+        serde_json::json!([{
+            "package_id": "github-fileserver",
+            "access": "read_write",
+            "allow_network": true,
+        }])
+    );
+
+    let (dry_out, _) = run_with_store(
+        &store,
+        WorkflowArgs {
+            action: WorkflowAction::Run {
+                id: "self-iterate".to_string(),
+                dry_run: true,
+                json: true,
+            },
+        },
+        None,
+        Some(&mock_bin),
+    )
+    .await
+    .unwrap();
+    let dry_json: serde_json::Value = serde_json::from_str(&dry_out).unwrap();
+    let args: Vec<&str> = dry_json["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(args.windows(2).any(|w| w == ["--package", "extra-helper"]));
+    assert!(
+        args.windows(2)
+            .any(|w| w == ["--fileserver", "github-fileserver:rw:net"])
+    );
+
+    // Duplicate package across `packages` and `fileservers` fails validation cleanly.
+    let mut bad = store.load_manifest("self-iterate").unwrap();
+    bad.packages.push("github-fileserver".to_string());
+    assert!(bad.validate().is_err());
 }

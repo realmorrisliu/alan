@@ -588,4 +588,196 @@ fn bundled_self_iteration_packages_validate_and_install_cleanly() {
             assert_eq!(record.exports[0].skill_id, pkg_id);
         }
     }
+
+    // `github-fileserver` bundles read-only Companion Skills beneath `skills/` while
+    // ignoring `README.md`.
+    let gh_record = service.resolve("github-fileserver").unwrap();
+    let companion_ids: Vec<&str> = gh_record
+        .exports
+        .iter()
+        .map(|export| export.skill_id.as_str())
+        .collect();
+    assert_eq!(
+        companion_ids,
+        vec!["github-setup", "release-prep", "self-iterate"]
+    );
+}
+
+#[test]
+fn companion_skills_and_root_bindings_enforce_isolation_collisions_and_cleanup() {
+    let temp = tempfile::tempdir().unwrap();
+    let store_root = temp.path().join("packages");
+    let service = PackageService::open(store_root.clone()).unwrap();
+    crate::runtime::seed_preinstalled_packages(&service).unwrap();
+
+    // 1. Tool package with Companion Skills + top-level README.md (ignored).
+    let tool_snap = fs_snapshot_with_manifest(
+        "probe-with-skills",
+        r#"
+schema_version = 1
+kind = "tool"
+version = "0.1.0"
+[tool]
+name = "probe_companion"
+description = "Probe"
+entrypoint = "bin/probe.sh"
+parameters = { type = "object" }
+"#,
+        vec![
+            ("bin/probe.sh", b"#!/bin/sh\necho '{}'\n", true),
+            ("README.md", b"# Top-level readme stays non-skill\n", false),
+            (
+                "skills/probe-guide/SKILL.md",
+                b"---\nname: probe-guide\ndescription: How to use probe.\n---\nUse carefully.\n",
+                false,
+            ),
+        ],
+    );
+    let res = service
+        .execute(PackageCommand::Install {
+            request_id: "install-tool".to_string(),
+            package_id: "probe-with-skills".to_string(),
+            snapshot: tool_snap,
+        })
+        .unwrap();
+    assert!(res.success, "{}", res.message);
+    let rec = res.package.unwrap();
+    assert_eq!(rec.export_kind, PackageExportKind::Tool);
+    assert_eq!(rec.exports.len(), 1);
+    assert_eq!(rec.exports[0].skill_id, "probe-guide");
+
+    // 2. Malformed Companion Skill fails installation atomically.
+    let bad_tool = fs_snapshot_with_manifest(
+        "bad-tool",
+        r#"
+schema_version = 1
+kind = "tool"
+[tool]
+name = "bad_probe"
+description = "Bad"
+entrypoint = "bin/probe.sh"
+parameters = { type = "object" }
+"#,
+        vec![
+            ("bin/probe.sh", b"#!/bin/sh\necho '{}'\n", true),
+            ("skills/broken/SKILL.md", b"---\nname: broken\n", false),
+        ],
+    );
+    let bad_res = service
+        .execute(PackageCommand::Install {
+            request_id: "install-bad".to_string(),
+            package_id: "bad-tool".to_string(),
+            snapshot: bad_tool,
+        })
+        .unwrap();
+    assert!(!bad_res.success);
+    assert!(service.resolve("bad-tool").is_err());
+
+    // 3. Binding Root persistence (`SkillsOnly` -> `Active` -> reopen -> `uninstall` cleanup).
+    let bound = service
+        .bind_for_root("probe-with-skills", RootBindingMode::SkillsOnly, None)
+        .unwrap();
+    assert_eq!(bound.mode, RootBindingMode::SkillsOnly);
+    drop(service);
+
+    let loaded_from_store = PackageService::load_root_bindings_from_store(&store_root).unwrap();
+    assert_eq!(loaded_from_store.len(), 1);
+    assert_eq!(loaded_from_store[0].package_id, "probe-with-skills");
+    assert_eq!(loaded_from_store[0].mode, RootBindingMode::SkillsOnly);
+
+    let reopened = PackageService::open(store_root).unwrap();
+    assert_eq!(
+        reopened
+            .root_binding("probe-with-skills")
+            .unwrap()
+            .unwrap()
+            .mode,
+        RootBindingMode::SkillsOnly
+    );
+
+    // Colliding Companion Skill ID with an already bound Root package fails closed.
+    let colliding = fs_snapshot_with_manifest(
+        "colliding-pack",
+        r#"
+schema_version = 1
+kind = "fileserver"
+[fileserver]
+id = "collide"
+entrypoint = "bin/srv"
+allow_network = false
+[fileserver.transport]
+type = "stdio"
+"#,
+        vec![
+            ("bin/srv", b"#!/bin/sh\nexit 0\n", true),
+            (
+                "skills/probe-guide/SKILL.md",
+                b"---\nname: probe-guide\ndescription: Colliding skill.\n---\n",
+                false,
+            ),
+        ],
+    );
+    reopened
+        .execute(PackageCommand::Install {
+            request_id: "install-colliding".to_string(),
+            package_id: "colliding-pack".to_string(),
+            snapshot: colliding,
+        })
+        .unwrap();
+    let collision_err = reopened
+        .bind_for_root("colliding-pack", RootBindingMode::SkillsOnly, None)
+        .unwrap_err();
+    assert!(
+        collision_err.to_string().contains("collides"),
+        "{collision_err:#}"
+    );
+
+    // Network escalation on a fileserver with `allow_network = false` fails closed.
+    let no_net = fs_snapshot_with_manifest(
+        "local-only-fs",
+        r#"
+schema_version = 1
+kind = "fileserver"
+[fileserver]
+id = "local_fs"
+entrypoint = "bin/srv"
+allow_network = false
+[fileserver.transport]
+type = "stdio"
+"#,
+        vec![("bin/srv", b"#!/bin/sh\nexit 0\n", true)],
+    );
+    reopened
+        .execute(PackageCommand::Install {
+            request_id: "install-no-net".to_string(),
+            package_id: "local-only-fs".to_string(),
+            snapshot: no_net,
+        })
+        .unwrap();
+    let net_err = reopened
+        .bind_for_root(
+            "local-only-fs",
+            RootBindingMode::Active,
+            Some(RootFileserverActivation {
+                access: FileserverMountAccess::ReadWrite,
+                allow_network: true,
+                host_grant_ids: Vec::new(),
+            }),
+        )
+        .unwrap_err();
+    assert!(net_err.to_string().contains("allow_network"), "{net_err:#}");
+
+    // Uninstalling automatically removes its Root binding.
+    reopened
+        .execute(PackageCommand::Uninstall {
+            request_id: "uninstall-probe".to_string(),
+            package_id: "probe-with-skills".to_string(),
+        })
+        .unwrap();
+    assert!(
+        reopened
+            .root_binding("probe-with-skills")
+            .unwrap()
+            .is_none()
+    );
 }

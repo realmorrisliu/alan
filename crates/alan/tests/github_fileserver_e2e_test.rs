@@ -297,6 +297,7 @@ async fn q_install_github_fileserver_start_mount_issue_write_and_routefs_dispatc
             QArgs {
                 action: QAction::Install {
                     name: None,
+                    catalog_only: false,
                     path: repo_packages.join(pkg_id),
                 },
             },

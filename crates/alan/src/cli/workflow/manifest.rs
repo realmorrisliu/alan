@@ -174,6 +174,20 @@ impl Default for ReleaseGatePolicy {
     }
 }
 
+/// Declarative `fileserver` activation included on an isolated workflow run (`--fileserver`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowFileserverSpec {
+    /// Installed Quartermaster `fileserver` package identifier.
+    pub package_id: String,
+    /// Mount access (`read_only` or `read_write`; defaults to `read_only`).
+    #[serde(default)]
+    pub access: alan_service_manager::FileserverMountAccess,
+    /// Authorize outbound network inside OS confinement (`false` by default).
+    #[serde(default)]
+    pub allow_network: bool,
+}
+
 /// Declarative TOML workflow manifest stored in System Store (`services/workflows/manifests/<id>.toml`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -193,6 +207,12 @@ pub struct WorkflowManifest {
     /// Explicit saved System Store Host Mount grant ids (`--grant <id>`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mounts: Vec<String>,
+    /// Explicit Quartermaster package ids projected only for this workflow's isolated run (`--package <id>`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<String>,
+    /// Explicit Quartermaster fileserver activations for this workflow's isolated run (`--fileserver ...`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fileservers: Vec<WorkflowFileserverSpec>,
     /// Explicit invocation trust posture (defaults to `"governed"`).
     #[serde(default)]
     pub trust: WorkflowTrustPosture,
@@ -262,6 +282,25 @@ impl WorkflowManifest {
             ensure!(
                 seen_mounts.insert(mount.as_str()),
                 "duplicate workflow mount grant `{mount}`"
+            );
+        }
+
+        let mut seen_packages = std::collections::BTreeSet::new();
+        for pkg in &self.packages {
+            alan_service_manager::validate_package_id(pkg)
+                .with_context(|| format!("invalid workflow package `{pkg}`"))?;
+            ensure!(
+                seen_packages.insert(pkg.as_str()),
+                "duplicate workflow package `{pkg}`"
+            );
+        }
+        for fs in &self.fileservers {
+            alan_service_manager::validate_package_id(&fs.package_id)
+                .with_context(|| format!("invalid workflow fileserver `{}`", fs.package_id))?;
+            ensure!(
+                seen_packages.insert(fs.package_id.as_str()),
+                "duplicate workflow package/fileserver `{}`",
+                fs.package_id
             );
         }
 
@@ -696,6 +735,40 @@ pub(crate) fn normalize_model_profile(model_profile: Option<String>) -> Option<S
     model_profile
         .map(|profile| profile.trim().to_string())
         .filter(|profile| !profile.is_empty())
+}
+
+/// Parse repeatable `--package` and `--fileserver` CLI inputs with duplicate checks.
+pub(crate) fn parse_workflow_package_inputs(
+    raw_packages: &[String],
+    raw_fileservers: &[String],
+) -> Result<(Vec<String>, Vec<WorkflowFileserverSpec>)> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut packages = Vec::new();
+    for raw in raw_packages {
+        let id = raw.trim();
+        alan_service_manager::validate_package_id(id)?;
+        ensure!(
+            seen.insert(id.to_string()),
+            "duplicate `--package` / `--fileserver` selection `{id}`"
+        );
+        packages.push(id.to_string());
+    }
+    let mut fileservers = Vec::new();
+    for spec in raw_fileservers {
+        let parsed = crate::cli::trust::parse_fileserver_cli_spec(spec)?;
+        let activation = parsed.fileserver.unwrap_or_default();
+        ensure!(
+            seen.insert(parsed.package_id.clone()),
+            "duplicate `--package` / `--fileserver` selection `{}`",
+            parsed.package_id
+        );
+        fileservers.push(WorkflowFileserverSpec {
+            package_id: parsed.package_id,
+            access: activation.access,
+            allow_network: activation.allow_network,
+        });
+    }
+    Ok((packages, fileservers))
 }
 
 /// Ensure a template workflow uses explicit grants and OS-confined trust posture.

@@ -12,7 +12,7 @@ use super::manifest::{
     DEFAULT_TRIGGER_MAX_CONCURRENT, DEFAULT_TRIGGER_MAX_RETRIES, ReleaseGatePolicy,
     SUPPORTED_MANIFEST_VERSION, TriggerAllowlist, WorkflowManifest, WorkflowStore,
     WorkflowTrustPosture, ensure_confined_template_inputs, normalize_model_profile,
-    normalize_unique_entries,
+    normalize_unique_entries, parse_workflow_package_inputs,
 };
 
 /// Default workflow identifier for `alan workflow init-self-iterate`.
@@ -59,6 +59,12 @@ pub struct InitSelfIterateArgs {
         required = true
     )]
     pub mounts: Vec<String>,
+    /// Explicit Quartermaster package id enabled only for this workflow's isolated run (repeatable)
+    #[arg(long = "package", value_name = "PACKAGE_ID")]
+    pub packages: Vec<String>,
+    /// Explicit Quartermaster fileserver activation (`<id>[:ro|rw][:net]`, repeatable)
+    #[arg(long = "fileserver", value_name = "PACKAGE_ID[:ro|rw][:net]")]
+    pub fileservers: Vec<String>,
     /// OS-confined invocation trust posture (`governed` or `confined_trusted`)
     #[arg(long, value_enum, default_value_t = WorkflowTrustPosture::Governed)]
     pub trust: WorkflowTrustPosture,
@@ -103,6 +109,7 @@ pub fn build_self_iterate_manifest(args: &InitSelfIterateArgs) -> Result<Workflo
         max_concurrent: args.max_concurrent,
     };
     let release_gate = ReleaseGatePolicy::enforced();
+    let (packages, fileservers) = parse_workflow_package_inputs(&args.packages, &args.fileservers)?;
     let prompt = build_self_iterate_prompt(&trigger_allowlist, &args.mounts, &release_gate);
 
     let manifest = WorkflowManifest {
@@ -112,6 +119,8 @@ pub fn build_self_iterate_manifest(args: &InitSelfIterateArgs) -> Result<Workflo
         prompt,
         model_profile: normalize_model_profile(args.model_profile.clone()),
         mounts: args.mounts.clone(),
+        packages,
+        fileservers,
         trust: args.trust,
         json: !args.no_stream_json,
         timeout_secs: Some(args.timeout_secs),
@@ -137,7 +146,7 @@ pub fn build_self_iterate_prompt(
     };
     let grants = mounts.join(", ");
     format!(
-        "Run the `alan-self-iterate` Quartermaster skill for repository `{repo}` under explicit \
+        "Run the `self-iterate` (or `alan-self-iterate`) workflow skill for repository `{repo}` under explicit \
          grants [{grants}].\n\
          Control-plane allowlist: allowed_actors=[{actors}], required_labels=[{labels}], \
          ignored_actors=[{ignored}], max_retries={max_retries}, max_concurrent={max_concurrent}.\n\
@@ -591,6 +600,8 @@ mod tests {
             schedule: "@weekly".to_string(),
             model_profile: None,
             mounts: vec!["alan-repo".to_string()],
+            packages: vec![],
+            fileservers: vec![],
             trust: WorkflowTrustPosture::Governed,
             no_stream_json: false,
             timeout_secs: 1_800,

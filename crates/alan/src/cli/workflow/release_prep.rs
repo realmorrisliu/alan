@@ -8,6 +8,7 @@ use super::manifest::{
     DEFAULT_TRIGGER_MAX_CONCURRENT, ReleaseGatePolicy, SUPPORTED_MANIFEST_VERSION,
     TriggerAllowlist, WorkflowManifest, WorkflowStore, WorkflowTrustPosture,
     ensure_confined_template_inputs, normalize_model_profile, normalize_unique_entries,
+    parse_workflow_package_inputs,
 };
 use crate::cli::update::semver::normalize_version_str;
 
@@ -59,6 +60,12 @@ pub struct InitReleasePrepArgs {
         required = true
     )]
     pub mounts: Vec<String>,
+    /// Explicit Quartermaster package id enabled only for this workflow's isolated run (repeatable)
+    #[arg(long = "package", value_name = "PACKAGE_ID")]
+    pub packages: Vec<String>,
+    /// Explicit Quartermaster fileserver activation (`<id>[:ro|rw][:net]`, repeatable)
+    #[arg(long = "fileserver", value_name = "PACKAGE_ID[:ro|rw][:net]")]
+    pub fileservers: Vec<String>,
     /// OS-confined invocation trust posture (`governed` or `confined_trusted`)
     #[arg(long, value_enum, default_value_t = WorkflowTrustPosture::Governed)]
     pub trust: WorkflowTrustPosture,
@@ -263,6 +270,7 @@ pub fn build_release_prep_manifest(args: &InitReleasePrepArgs) -> Result<Workflo
     };
 
     let release_gate = ReleaseGatePolicy::enforced();
+    let (packages, fileservers) = parse_workflow_package_inputs(&args.packages, &args.fileservers)?;
     let prompt = build_release_prep_prompt(
         target_version.as_deref(),
         trigger_allowlist.as_ref(),
@@ -277,6 +285,8 @@ pub fn build_release_prep_manifest(args: &InitReleasePrepArgs) -> Result<Workflo
         prompt,
         model_profile: normalize_model_profile(args.model_profile.clone()),
         mounts: args.mounts.clone(),
+        packages,
+        fileservers,
         trust: args.trust,
         json: !args.no_stream_json,
         timeout_secs: Some(args.timeout_secs),
@@ -311,7 +321,7 @@ pub fn build_release_prep_prompt(
     };
     let grants = mounts.join(", ");
     format!(
-        "Run the `alan-release-prep` Quartermaster skill for {version_directive} under explicit \
+        "Run the `release-prep` (or `alan-release-prep`) workflow skill for {version_directive} under explicit \
          grants [{grants}].\n\
          {repo_context}\n\
          Strict human gate enforced: require_human_merge={merge}, \

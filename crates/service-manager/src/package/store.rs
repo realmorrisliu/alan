@@ -567,29 +567,25 @@ fn verify_revision(root: &Path, record: &PackageRecord) -> Result<()> {
                     && record.fileserver_export.is_none()
             }
             PackageExportKind::Tool => {
-                record.exports.is_empty()
-                    && !record.tool_exports.is_empty()
+                !record.tool_exports.is_empty()
                     && record.mcp_exports.is_empty()
                     && record.provider_export.is_none()
                     && record.fileserver_export.is_none()
             }
             PackageExportKind::Mcp => {
-                record.exports.is_empty()
-                    && record.tool_exports.is_empty()
+                record.tool_exports.is_empty()
                     && !record.mcp_exports.is_empty()
                     && record.provider_export.is_none()
                     && record.fileserver_export.is_none()
             }
             PackageExportKind::Provider => {
-                record.exports.is_empty()
-                    && record.tool_exports.is_empty()
+                record.tool_exports.is_empty()
                     && record.mcp_exports.is_empty()
                     && record.provider_export.is_some()
                     && record.fileserver_export.is_none()
             }
             PackageExportKind::Fileserver => {
-                record.exports.is_empty()
-                    && record.tool_exports.is_empty()
+                record.tool_exports.is_empty()
                     && record.mcp_exports.is_empty()
                     && record.provider_export.is_none()
                     && record.fileserver_export.is_some()

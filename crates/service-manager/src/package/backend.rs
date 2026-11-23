@@ -1,9 +1,7 @@
 //! Storage backend abstraction for [`super::PackageService`] (disk-backed or in-memory).
 
 use std::collections::{BTreeMap, BTreeSet};
-#[cfg(test)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, ensure};
@@ -194,6 +192,13 @@ impl PackageStoreBackend {
                     });
                 Ok(())
             }
+        }
+    }
+
+    pub(super) fn disk_root(&self) -> Option<&Path> {
+        match self {
+            Self::Disk(store) => Some(store.root()),
+            Self::InMemory(_) => None,
         }
     }
 

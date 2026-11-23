@@ -395,14 +395,15 @@ fn collect_single_or_many<T>(single: Option<T>, many: Vec<T>, section: &str) -> 
 }
 
 fn ensure_no_skill_exports_in_non_skill_package(snapshot: &PackageSnapshot) -> Result<()> {
-    let has_skill = snapshot.entries.iter().any(|entry| {
-        entry.path == "SKILL.md"
-            || entry.path.ends_with("/SKILL.md")
-            || (entry.path.starts_with("skills/") && entry.path.ends_with(".md"))
+    let has_outside_skill = snapshot.entries.iter().any(|entry| {
+        if entry.path == "SKILL.md" || entry.path == "skills/SKILL.md" {
+            return true;
+        }
+        entry.path.ends_with("/SKILL.md") && !entry.path.starts_with("skills/")
     });
     ensure!(
-        !has_skill,
-        "non-skill package cannot mix Skill exports (single export kind per package)"
+        !has_outside_skill,
+        "non-skill package cannot declare SKILL.md outside `skills/` (bundle Companion Skills under `skills/<id>/SKILL.md`)"
     );
     Ok(())
 }

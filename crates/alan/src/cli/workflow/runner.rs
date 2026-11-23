@@ -11,7 +11,9 @@ use serde_json::Value;
 use tokio::io::AsyncReadExt;
 
 use super::logs::{WorkflowRunLogEntry, WorkflowRunUsage, append_run_log, scrub_and_bound_text};
-use super::manifest::{ReleaseGatePolicy, TriggerAllowlist, WorkflowManifest, WorkflowStore};
+use super::manifest::{
+    ReleaseGatePolicy, TriggerAllowlist, WorkflowFileserverSpec, WorkflowManifest, WorkflowStore,
+};
 
 /// Environment variable overriding the `alan` executable invoked by `workflow run` / `render-schedule`.
 pub const ALAN_WORKFLOW_BIN_ENV: &str = "ALAN_WORKFLOW_ALAN_BIN";
@@ -27,6 +29,10 @@ pub struct WorkflowDryRunPlan {
     pub args: Vec<String>,
     pub trust: String,
     pub mounts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fileservers: Vec<WorkflowFileserverSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_profile: Option<String>,
     pub timeout_secs: u64,
@@ -58,9 +64,17 @@ pub fn resolve_alan_binary(explicit: Option<&Path>) -> Result<PathBuf> {
 
 /// Build the exact bounded invocation arguments for `alan -p --ephemeral`.
 pub fn build_alan_args(manifest: &WorkflowManifest) -> Vec<String> {
+    build_alan_args_with_prompt(manifest, None)
+}
+
+fn build_alan_args_with_prompt(
+    manifest: &WorkflowManifest,
+    prompt_override: Option<&str>,
+) -> Vec<String> {
+    let prompt = prompt_override.unwrap_or(manifest.prompt.as_str());
     let mut args = vec![
         "-p".to_string(),
-        manifest.prompt.clone(),
+        prompt.to_string(),
         "--ephemeral".to_string(),
     ];
     if manifest.json {
@@ -72,6 +86,18 @@ pub fn build_alan_args(manifest: &WorkflowManifest) -> Vec<String> {
     for grant_id in &manifest.mounts {
         args.push("--grant".to_string());
         args.push(grant_id.clone());
+    }
+    for pkg_id in &manifest.packages {
+        args.push("--package".to_string());
+        args.push(pkg_id.clone());
+    }
+    for fs in &manifest.fileservers {
+        args.push("--fileserver".to_string());
+        args.push(crate::cli::trust::format_fileserver_cli_spec(
+            &fs.package_id,
+            fs.access,
+            fs.allow_network,
+        ));
     }
     args
 }
@@ -94,6 +120,8 @@ pub fn build_dry_run_plan(
         args: build_alan_args(manifest),
         trust: manifest.trust.as_str().to_string(),
         mounts: manifest.mounts.clone(),
+        packages: manifest.packages.clone(),
+        fileservers: manifest.fileservers.clone(),
         model_profile: manifest.model_profile.clone(),
         timeout_secs: manifest.effective_timeout_secs(),
         ephemeral: true,
@@ -109,6 +137,16 @@ pub async fn execute_workflow_run(
     manifest: &WorkflowManifest,
     alan_bin: &Path,
 ) -> Result<WorkflowRunOutcome> {
+    execute_workflow_run_with_prompt(store, manifest, alan_bin, None).await
+}
+
+/// Execute one bounded workflow run with an optional per-event prompt override.
+pub async fn execute_workflow_run_with_prompt(
+    store: &WorkflowStore,
+    manifest: &WorkflowManifest,
+    alan_bin: &Path,
+    prompt_override: Option<&str>,
+) -> Result<WorkflowRunOutcome> {
     manifest.validate()?;
     if let Some(gate) = &manifest.release_gate {
         super::release_prep::ensure_release_operation_allowed(
@@ -119,7 +157,7 @@ pub async fn execute_workflow_run(
     let run_id = format!("wf-{}", uuid::Uuid::new_v4().simple());
     let started_at = Utc::now().to_rfc3339();
     let timer = Instant::now();
-    let args = build_alan_args(manifest);
+    let args = build_alan_args_with_prompt(manifest, prompt_override);
 
     // Keep any temporary `connection_profile` agent.toml scoped strictly to this single run.
     let _temp_config_dir = prepare_model_profile_config(manifest.model_profile.as_deref())?;

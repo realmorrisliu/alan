@@ -85,6 +85,12 @@ impl FileserverLaunchGrant {
         self.runtime_env = runtime_env;
         self
     }
+
+    /// Set explicit confinement trust posture for this fileserver launch.
+    pub fn with_trust_posture(mut self, trust_posture: TrustPosture) -> Self {
+        self.trust_posture = trust_posture;
+        self
+    }
 }
 
 /// Observable runtime status of one supervised `fileserver` service.

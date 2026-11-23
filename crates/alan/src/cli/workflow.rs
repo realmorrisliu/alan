@@ -9,6 +9,7 @@ mod schedule;
 mod self_iterate;
 #[cfg(test)]
 mod tests;
+mod watch;
 
 use std::path::Path;
 
@@ -18,10 +19,15 @@ use clap::{Args, Subcommand};
 use serde::Serialize;
 
 use logs::{WorkflowRunLogEntry, read_run_logs};
+#[allow(
+    unused_imports,
+    reason = "re-exported for alan library callers; main.rs includes cli privately"
+)]
+pub use manifest::WorkflowFileserverSpec;
 pub use manifest::{
     ReleaseGatePolicy, TriggerAllowlist, WorkflowManifest, WorkflowStore, WorkflowTrustPosture,
 };
-use manifest::{normalize_model_profile, validate_workflow_id};
+use manifest::{normalize_model_profile, parse_workflow_package_inputs, validate_workflow_id};
 use release_prep::run_check_release_gate;
 #[allow(
     unused_imports,
@@ -44,6 +50,11 @@ pub use self_iterate::{
     TriggerEvent, TriggerEventKind, TriggerGuardState, TriggerRejectionReason,
     build_self_iterate_manifest, evaluate_trigger_event,
 };
+#[allow(
+    unused_imports,
+    reason = "re-exported for alan library callers; main.rs includes cli privately"
+)]
+pub use watch::{WatchWorkflowArgs, run_watch_with_stores};
 
 /// Top-level arguments for `alan workflow`.
 #[derive(Debug, Args)]
@@ -72,6 +83,12 @@ pub enum WorkflowAction {
         /// Explicit saved Host Mount grant id (`alan host grant save <id> <path>`)
         #[arg(long = "mount", alias = "grant", value_name = "GRANT_ID")]
         mounts: Vec<String>,
+        /// Explicit Quartermaster package id enabled only for this workflow's isolated run (repeatable)
+        #[arg(long = "package", value_name = "PACKAGE_ID")]
+        packages: Vec<String>,
+        /// Explicit Quartermaster fileserver activation (`<id>[:ro|rw][:net]`, repeatable)
+        #[arg(long = "fileserver", value_name = "PACKAGE_ID[:ro|rw][:net]")]
+        fileservers: Vec<String>,
         /// Explicit invocation trust posture (defaults to `governed`)
         #[arg(long, value_enum, default_value_t = WorkflowTrustPosture::Governed)]
         trust: WorkflowTrustPosture,
@@ -135,6 +152,8 @@ pub enum WorkflowAction {
         #[arg(long)]
         json: bool,
     },
+    /// Watch allowlisted GitHub events via confined `github-fileserver` + `routefs` and dispatch bounded runs
+    Watch(WatchWorkflowArgs),
 }
 
 #[derive(Debug, Serialize)]
@@ -162,6 +181,18 @@ pub async fn run(args: WorkflowArgs) -> Result<()> {
     let _installation_access = alan_os_host::installation::InstallationPaths::detect()?.access()?;
     let system = SystemStorePaths::detect()?;
     let store = WorkflowStore::from_system_store(&system)?;
+    if let WorkflowAction::Watch(watch_args) = args.action {
+        let packages = std::sync::Arc::new(alan_service_manager::PackageService::open(
+            system.packages()?,
+        )?);
+        let (output, failed_msg) =
+            watch::run_watch_with_stores(&store, &packages, watch_args, None).await?;
+        print!("{output}");
+        if let Some(error) = failed_msg {
+            bail!("{error}");
+        }
+        return Ok(());
+    }
     let home_dir = dirs::home_dir();
     let (output, failed_msg) = run_with_store(&store, args, home_dir.as_deref(), None).await?;
     print!("{output}");
@@ -188,12 +219,15 @@ pub async fn run_with_store(
             prompt,
             model_profile,
             mounts,
+            packages,
+            fileservers,
             trust,
             no_stream_json,
             timeout_secs,
             force,
             json,
         } => {
+            let (packages, fileservers) = parse_workflow_package_inputs(&packages, &fileservers)?;
             let manifest = WorkflowManifest {
                 schema_version: manifest::SUPPORTED_MANIFEST_VERSION,
                 id,
@@ -201,6 +235,8 @@ pub async fn run_with_store(
                 prompt,
                 model_profile: normalize_model_profile(model_profile),
                 mounts,
+                packages,
+                fileservers,
                 trust,
                 json: !no_stream_json,
                 timeout_secs,
@@ -400,6 +436,12 @@ pub async fn run_with_store(
                 ));
             }
             Ok((out, None))
+        }
+        WorkflowAction::Watch(watch_args) => {
+            let packages = std::sync::Arc::new(alan_service_manager::PackageService::open(
+                SystemStorePaths::detect()?.packages()?,
+            )?);
+            watch::run_watch_with_stores(store, &packages, watch_args, alan_bin_override).await
         }
     }
 }

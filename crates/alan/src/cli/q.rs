@@ -5,17 +5,37 @@ use std::sync::Arc;
 
 use alan_os_host::SystemStorePaths;
 use alan_service_manager::{
-    CLI_IMPORT_MOUNT_PATH, FileserverTransportSpec, PackageExportKind, PackageKind, PackageRecord,
-    PackageService, PackageState, run_q_command_with_package_service, validate_package_id,
+    CLI_IMPORT_MOUNT_PATH, FileserverMountAccess, FileserverTransportSpec, PackageExportKind,
+    PackageKind, PackageRecord, PackageService, PackageState, RootBindingMode,
+    RootFileserverActivation, RootPackageBinding, run_q_command_with_package_service,
+    validate_package_id,
 };
 use anyhow::{Context, Result, bail, ensure};
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 /// Top-level arguments for `alan q`.
 #[derive(Debug, Args)]
 pub struct QArgs {
     #[command(subcommand)]
     pub action: QAction,
+}
+
+/// Access mode exposed when enabling a Quartermaster `fileserver` package.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum FileserverAccessArg {
+    #[value(alias = "ro")]
+    ReadOnly,
+    #[value(alias = "rw")]
+    ReadWrite,
+}
+
+impl From<FileserverAccessArg> for FileserverMountAccess {
+    fn from(value: FileserverAccessArg) -> Self {
+        match value {
+            FileserverAccessArg::ReadOnly => Self::ReadOnly,
+            FileserverAccessArg::ReadWrite => Self::ReadWrite,
+        }
+    }
 }
 
 /// Supported Quartermaster hub subcommands.
@@ -26,8 +46,33 @@ pub enum QAction {
         /// Optional explicit canonical package identifier (`[a-z0-9]+(?:-[a-z0-9]+)*`).
         #[arg(long)]
         name: Option<String>,
+        /// Catalog the immutable revision only without attaching Companion Skills to Root.
+        #[arg(long = "catalog-only")]
+        catalog_only: bool,
         /// Local directory containing `SKILL.md` or `alan-package.toml` / `package.toml`.
         path: PathBuf,
+    },
+    /// Bind an installed package for the Root Agent (`Active` runtime or `--skills-only`).
+    Enable {
+        /// Installed canonical package identifier.
+        package_id: String,
+        /// Fileserver mount access (`read-only`/`ro` or `read-write`/`rw`; defaults to `read-only`).
+        #[arg(long, value_enum)]
+        access: Option<FileserverAccessArg>,
+        /// Authorize outbound network inside OS confinement (requires manifest `allow_network = true`).
+        #[arg(long = "allow-network")]
+        allow_network: bool,
+        /// Attach read-only Skills / Companion Skills only without enabling runtime execution.
+        #[arg(long = "skills-only")]
+        skills_only: bool,
+    },
+    /// Unbind an installed package from Root (optionally retaining `SkillsOnly` instructions).
+    Disable {
+        /// Installed canonical package identifier.
+        package_id: String,
+        /// Keep read-only Skills / Companion Skills attached while disabling runtime capabilities.
+        #[arg(long = "keep-skills")]
+        keep_skills: bool,
     },
     /// List installed and preinstalled Quartermaster packages and their export kinds.
     List,
@@ -72,16 +117,98 @@ pub async fn run(args: QArgs) -> Result<()> {
 /// Executes `QArgs` against an explicit `PackageService` using read-only `/mnt/import/source` mounts
 /// and `/bin/q` -> `/mnt/package/ctl` (never bypassing Service Manager).
 pub async fn run_with_service(service: &Arc<PackageService>, args: QArgs) -> Result<String> {
-    if let QAction::Inspect { package_id } = args.action {
-        validate_package_id(&package_id)?;
-        let record = service.resolve(&package_id)?;
-        return Ok(render_package_inspection(&record));
+    match args.action {
+        QAction::Inspect { package_id } => {
+            validate_package_id(&package_id)?;
+            let record = service.resolve(&package_id)?;
+            let binding = service.root_binding(&package_id)?;
+            return Ok(render_package_inspection(&record, binding.as_ref()));
+        }
+        QAction::Enable {
+            package_id,
+            access,
+            allow_network,
+            skills_only,
+        } => {
+            validate_package_id(&package_id)?;
+            let record = service.resolve(&package_id)?;
+            if skills_only {
+                ensure!(
+                    access.is_none() && !allow_network,
+                    "`--skills-only` cannot be combined with `--access` or `--allow-network`"
+                );
+                service.bind_for_root(&package_id, RootBindingMode::SkillsOnly, None)?;
+                let skills = comma_skill_ids(&record);
+                return Ok(format!(
+                    "enabled `{package_id}` in `skills_only` mode (skills: {}; takes effect on next `alan` invocation)\n",
+                    if skills.is_empty() { "none" } else { &skills }
+                ));
+            }
+            if record.export_kind == PackageExportKind::Fileserver {
+                let fs_access = access
+                    .map(Into::into)
+                    .unwrap_or(FileserverMountAccess::ReadOnly);
+                let activation = RootFileserverActivation {
+                    access: fs_access,
+                    allow_network,
+                    host_grant_ids: Vec::new(),
+                };
+                service.bind_for_root(&package_id, RootBindingMode::Active, Some(activation))?;
+                let service_id = record
+                    .fileserver_export
+                    .as_ref()
+                    .map(|fs| fs.service_id.as_str())
+                    .unwrap_or(package_id.as_str());
+                return Ok(format!(
+                    "enabled `{package_id}` (`active` fileserver `/mnt/{service_id}` access={} allow_network={allow_network}; takes effect on next `alan` invocation)\n",
+                    fs_access.as_str()
+                ));
+            }
+            ensure!(
+                access.is_none() && !allow_network,
+                "`--access` and `--allow-network` only apply to `fileserver` packages"
+            );
+            service.bind_for_root(&package_id, RootBindingMode::Active, None)?;
+            return Ok(format!(
+                "enabled `{package_id}` (`active` {}; takes effect on next `alan` invocation)\n",
+                record.export_kind.as_str()
+            ));
+        }
+        QAction::Disable {
+            package_id,
+            keep_skills,
+        } => {
+            validate_package_id(&package_id)?;
+            if keep_skills {
+                let record = service.resolve(&package_id)?;
+                service.bind_for_root(&package_id, RootBindingMode::SkillsOnly, None)?;
+                let skills = comma_skill_ids(&record);
+                return Ok(format!(
+                    "downgraded `{package_id}` to `skills_only` (skills kept: {}; runtime disabled on next `alan` invocation)\n",
+                    if skills.is_empty() { "none" } else { &skills }
+                ));
+            }
+            let removed = service.unbind_for_root(&package_id)?;
+            return Ok(if removed {
+                format!("disabled `{package_id}` from Root bindings\n")
+            } else {
+                format!("`{package_id}` was not bound to Root\n")
+            });
+        }
+        _ => {}
     }
 
+    let is_list = matches!(args.action, QAction::List);
+    let mut post_install: Option<(String, bool)> = None;
     let (host_source_dir, q_args) = match args.action {
-        QAction::Install { name, path } => {
+        QAction::Install {
+            name,
+            catalog_only,
+            path,
+        } => {
             let canonical = canonical_package_source_dir(&path)?;
             let package_id = resolve_effective_package_id(name, &canonical)?;
+            post_install = Some((package_id.clone(), catalog_only));
             let q_args = vec![
                 "install".to_string(),
                 "--name".to_string(),
@@ -91,7 +218,9 @@ pub async fn run_with_service(service: &Arc<PackageService>, args: QArgs) -> Res
             (Some(canonical), q_args)
         }
         QAction::List => (None, vec!["list".to_string()]),
-        QAction::Inspect { .. } => unreachable!("inspect handled above"),
+        QAction::Inspect { .. } | QAction::Enable { .. } | QAction::Disable { .. } => {
+            unreachable!("handled above")
+        }
         QAction::Upgrade { package_id, path } => {
             validate_package_id(&package_id)?;
             let canonical = canonical_package_source_dir(&path)?;
@@ -130,11 +259,137 @@ pub async fn run_with_service(service: &Arc<PackageService>, args: QArgs) -> Res
 
     let result =
         run_q_command_with_package_service(service, host_source_dir.as_deref(), &q_args).await?;
-    let text = String::from_utf8_lossy(&result.output).to_string();
+    let mut text = String::from_utf8_lossy(&result.output).to_string();
     if result.exit_code != 0 {
         bail!("{}", text.trim_end());
     }
+    if let Some((package_id, catalog_only)) = post_install {
+        text.push_str(&apply_post_install_binding(
+            service,
+            &package_id,
+            catalog_only,
+        )?);
+    } else if is_list {
+        text = annotate_list_with_root_bindings(service, &text)?;
+    }
     Ok(text)
+}
+
+fn comma_skill_ids(record: &PackageRecord) -> String {
+    record
+        .exports
+        .iter()
+        .map(|export| export.skill_id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn apply_post_install_binding(
+    service: &Arc<PackageService>,
+    package_id: &str,
+    catalog_only: bool,
+) -> Result<String> {
+    use std::fmt::Write;
+    let record = service.resolve(package_id)?;
+    let mut note = String::new();
+    if catalog_only {
+        let _ = writeln!(
+            note,
+            "root_binding: catalog-only (run `alan q enable {package_id}` when ready)"
+        );
+        return Ok(note);
+    }
+
+    if !record.exports.is_empty() {
+        match service.bind_for_root(package_id, RootBindingMode::SkillsOnly, None) {
+            Ok(_) => {
+                let _ = writeln!(note, "root_skills: attached ({})", comma_skill_ids(&record));
+            }
+            Err(err) => {
+                let _ = writeln!(
+                    note,
+                    "warning: installed to catalog only; Companion Skills were not auto-attached: {err:#}"
+                );
+                return Ok(note);
+            }
+        }
+    }
+
+    if record.export_kind != PackageExportKind::Skill {
+        let hint = if let Some(fs) = record.fileserver_export.as_ref() {
+            if fs.allow_network {
+                format!("alan q enable {package_id} --access read-write --allow-network")
+            } else {
+                format!("alan q enable {package_id}")
+            }
+        } else {
+            format!("alan q enable {package_id}")
+        };
+        let _ = writeln!(note, "runtime: inactive (enable with `{hint}`)");
+    }
+    Ok(note)
+}
+
+fn annotate_list_with_root_bindings(service: &Arc<PackageService>, raw: &str) -> Result<String> {
+    if raw.trim() == "no packages installed" {
+        return Ok(raw.to_string());
+    }
+    let bindings = service
+        .list_root_bindings()?
+        .into_iter()
+        .map(|binding| (binding.package_id.clone(), binding))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut out = String::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some(package_id) = trimmed.split_whitespace().next() else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let Ok(record) = service.resolve(package_id) else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let root_label = match record.kind {
+            PackageKind::Preinstalled => "preinstalled".to_string(),
+            PackageKind::Installed => match bindings.get(package_id) {
+                None => "catalog".to_string(),
+                Some(b) if b.mode == RootBindingMode::SkillsOnly => "skills".to_string(),
+                Some(b) => match b.fileserver.as_ref() {
+                    Some(fs) => {
+                        let access = match fs.access {
+                            FileserverMountAccess::ReadOnly => "ro",
+                            FileserverMountAccess::ReadWrite => "rw",
+                        };
+                        if fs.allow_network {
+                            format!("active({access},net)")
+                        } else {
+                            format!("active({access})")
+                        }
+                    }
+                    None => "active".to_string(),
+                },
+            },
+        };
+        out.push_str(line);
+        out.push_str(&format!(" root={root_label}"));
+        if record.export_kind != PackageExportKind::Skill && !record.exports.is_empty() {
+            let skills = record
+                .exports
+                .iter()
+                .map(|export| export.skill_id.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            out.push_str(&format!(" companion_skills={skills}"));
+        }
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 fn canonical_package_source_dir(path: &Path) -> Result<PathBuf> {
@@ -168,7 +423,10 @@ fn resolve_effective_package_id(explicit: Option<String>, source_dir: &Path) -> 
     Ok(leaf.to_string())
 }
 
-fn render_package_inspection(record: &PackageRecord) -> String {
+fn render_package_inspection(
+    record: &PackageRecord,
+    binding: Option<&RootPackageBinding>,
+) -> String {
     use std::fmt::Write;
 
     let mut out = String::new();
@@ -185,6 +443,18 @@ fn render_package_inspection(record: &PackageRecord) -> String {
     let _ = writeln!(out, "ownership: {kind}");
     let _ = writeln!(out, "state: {state}");
     let _ = writeln!(out, "export_kind: {}", record.export_kind.as_str());
+    let root_binding = match record.kind {
+        PackageKind::Preinstalled => "preinstalled",
+        PackageKind::Installed => match binding {
+            None => "catalog-only",
+            Some(b) => b.mode.as_str(),
+        },
+    };
+    let _ = writeln!(out, "root_binding: {root_binding}");
+    if let Some(fs) = binding.and_then(|b| b.fileserver.as_ref()) {
+        let _ = writeln!(out, "root_fileserver_access: {}", fs.access.as_str());
+        let _ = writeln!(out, "root_fileserver_allow_network: {}", fs.allow_network);
+    }
     let _ = writeln!(out, "refs: {}", record.reference_count);
     if let Some(version) = record.manifest_version.as_deref() {
         let _ = writeln!(out, "version: {version}");
@@ -257,6 +527,9 @@ fn render_package_inspection(record: &PackageRecord) -> String {
             }
         }
     }
+    if record.export_kind != PackageExportKind::Skill && !record.exports.is_empty() {
+        let _ = writeln!(out, "companion_skills: {}", comma_skill_ids(record));
+    }
 
     out
 }
@@ -295,6 +568,7 @@ parameters = { type = "object" }
             QArgs {
                 action: QAction::Install {
                     name: Some("cli-probe-pack".to_string()),
+                    catalog_only: false,
                     path: pkg_dir.path().to_path_buf(),
                 },
             },
@@ -382,6 +656,7 @@ args = ["--serve"]
             QArgs {
                 action: QAction::Install {
                     name: Some("demo-fileserver".to_string()),
+                    catalog_only: false,
                     path: pkg_dir.path().to_path_buf(),
                 },
             },
@@ -432,6 +707,203 @@ args = ["--serve"]
         assert!(
             inspected.contains("network_domains: api.github.com"),
             "{inspected}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cli_q_install_auto_attaches_companion_skills_and_enable_disable_controls_runtime() {
+        let service = PackageService::ephemeral().unwrap();
+        let pkg_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(pkg_dir.path().join("bin")).unwrap();
+        std::fs::create_dir_all(pkg_dir.path().join("skills/guide")).unwrap();
+        std::fs::write(
+            pkg_dir.path().join("alan-package.toml"),
+            r#"
+schema_version = 1
+kind = "fileserver"
+version = "0.1.0"
+[fileserver]
+id = "guidefs"
+entrypoint = "bin/guidefs"
+allow_network = true
+[fileserver.transport]
+type = "stdio"
+"#,
+        )
+        .unwrap();
+        std::fs::write(pkg_dir.path().join("bin/guidefs"), "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::write(
+            pkg_dir.path().join("skills/guide/SKILL.md"),
+            "---\nname: guide\ndescription: Guide companion skill.\n---\nSetup guide.\n",
+        )
+        .unwrap();
+
+        // 1. Default `alan q install` attaches Companion Skills (`SkillsOnly`) while keeping runtime inactive.
+        let installed = run_with_service(
+            &service,
+            QArgs {
+                action: QAction::Install {
+                    name: Some("guide-pack".to_string()),
+                    catalog_only: false,
+                    path: pkg_dir.path().to_path_buf(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            installed.contains("root_skills: attached (guide)"),
+            "{installed}"
+        );
+        assert!(installed.contains("runtime: inactive"), "{installed}");
+        assert_eq!(
+            service.root_binding("guide-pack").unwrap().unwrap().mode,
+            RootBindingMode::SkillsOnly
+        );
+
+        let inspected = run_with_service(
+            &service,
+            QArgs {
+                action: QAction::Inspect {
+                    package_id: "guide-pack".to_string(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            inspected.contains("root_binding: skills_only"),
+            "{inspected}"
+        );
+        assert!(inspected.contains("companion_skills: guide"), "{inspected}");
+
+        // 2. `enable` without escalation defaults to `ReadOnly` and `allow_network = false`.
+        let enabled_ro = run_with_service(
+            &service,
+            QArgs {
+                action: QAction::Enable {
+                    package_id: "guide-pack".to_string(),
+                    access: None,
+                    allow_network: false,
+                    skills_only: false,
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert!(enabled_ro.contains("access=read_only"), "{enabled_ro}");
+        assert!(enabled_ro.contains("allow_network=false"), "{enabled_ro}");
+
+        // 3. Explicit `enable --access rw --allow-network` updates binding cleanly.
+        let enabled_rw = run_with_service(
+            &service,
+            QArgs {
+                action: QAction::Enable {
+                    package_id: "guide-pack".to_string(),
+                    access: Some(FileserverAccessArg::ReadWrite),
+                    allow_network: true,
+                    skills_only: false,
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert!(enabled_rw.contains("access=read_write"), "{enabled_rw}");
+        assert!(enabled_rw.contains("allow_network=true"), "{enabled_rw}");
+        let list_rw = run_with_service(
+            &service,
+            QArgs {
+                action: QAction::List,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(list_rw.contains("root=active(rw,net)"), "{list_rw}");
+        assert!(list_rw.contains("companion_skills=guide"), "{list_rw}");
+
+        // 4. `disable --keep-skills` downgrades back to `skills_only`; `disable` removes binding.
+        let kept = run_with_service(
+            &service,
+            QArgs {
+                action: QAction::Disable {
+                    package_id: "guide-pack".to_string(),
+                    keep_skills: true,
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert!(kept.contains("skills_only"), "{kept}");
+        assert_eq!(
+            service.root_binding("guide-pack").unwrap().unwrap().mode,
+            RootBindingMode::SkillsOnly
+        );
+
+        run_with_service(
+            &service,
+            QArgs {
+                action: QAction::Disable {
+                    package_id: "guide-pack".to_string(),
+                    keep_skills: false,
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert!(service.root_binding("guide-pack").unwrap().is_none());
+
+        // 5. `--catalog-only` skips auto-attaching Root binding.
+        let cat_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(cat_dir.path().join("bin")).unwrap();
+        std::fs::create_dir_all(cat_dir.path().join("skills/helper")).unwrap();
+        std::fs::write(
+            cat_dir.path().join("alan-package.toml"),
+            r#"
+kind = "tool"
+[tool]
+name = "cat_tool"
+description = "Cat"
+entrypoint = "bin/t.sh"
+parameters = { type = "object" }
+"#,
+        )
+        .unwrap();
+        std::fs::write(cat_dir.path().join("bin/t.sh"), "#!/bin/sh\necho '{}'\n").unwrap();
+        std::fs::write(
+            cat_dir.path().join("skills/helper/SKILL.md"),
+            "---\nname: helper\ndescription: Helper.\n---\nBody.\n",
+        )
+        .unwrap();
+        let cat_out = run_with_service(
+            &service,
+            QArgs {
+                action: QAction::Install {
+                    name: Some("cat-pack".to_string()),
+                    catalog_only: true,
+                    path: cat_dir.path().to_path_buf(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert!(cat_out.contains("catalog-only"), "{cat_out}");
+        assert!(service.root_binding("cat-pack").unwrap().is_none());
+
+        // Non-fileserver `--allow-network` fails cleanly.
+        assert!(
+            run_with_service(
+                &service,
+                QArgs {
+                    action: QAction::Enable {
+                        package_id: "cat-pack".to_string(),
+                        access: None,
+                        allow_network: true,
+                        skills_only: false,
+                    },
+                },
+            )
+            .await
+            .is_err()
         );
     }
 }

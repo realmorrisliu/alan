@@ -13,6 +13,7 @@ pub struct ProcessLaunchContext {
     pub descriptors: BTreeMap<String, ProcessDescriptor>,
     pub package_references: Vec<ProcessPackageReference>,
     pub packaged_tools: Vec<Arc<dyn Tool>>,
+    pub(crate) packaged_tool_manifests: Vec<(String, Vec<u8>)>,
     pub credentials: Credentials,
     pub cwd: String,
     live_namespace: Option<LiveNamespace>,
@@ -46,6 +47,7 @@ impl ProcessLaunchContext {
             descriptors: BTreeMap::new(),
             package_references: Vec::new(),
             packaged_tools: Vec::new(),
+            packaged_tool_manifests: Vec::new(),
             credentials,
             cwd: normalize_namespace_path(&cwd.into())?,
             live_namespace: None,
@@ -79,6 +81,10 @@ impl ProcessLaunchContext {
         self.packaged_tools.push(tool);
     }
 
+    pub(crate) fn add_packaged_tool_manifest(&mut self, name: String, manifest_bytes: Vec<u8>) {
+        self.packaged_tool_manifests.push((name, manifest_bytes));
+    }
+
     pub fn retain_authority<T>(&mut self, authority: Arc<T>)
     where
         T: Any + Send + Sync,
@@ -92,6 +98,7 @@ impl ProcessLaunchContext {
             descriptors: self.descriptors.clone(),
             package_references: self.package_references.clone(),
             packaged_tools: self.packaged_tools.clone(),
+            packaged_tool_manifests: self.packaged_tool_manifests.clone(),
             credentials: self.credentials.clone(),
             cwd: self.cwd.clone(),
             live_namespace: None,
@@ -112,6 +119,7 @@ impl ProcessLaunchContext {
             descriptors: self.descriptors.clone(),
             package_references: self.package_references.clone(),
             packaged_tools: self.packaged_tools.clone(),
+            packaged_tool_manifests: self.packaged_tool_manifests.clone(),
             credentials,
             cwd: self.cwd.clone(),
             live_namespace: None,
@@ -125,6 +133,7 @@ impl ProcessLaunchContext {
             descriptors: self.descriptors.clone(),
             package_references: self.package_references.clone(),
             packaged_tools: self.packaged_tools.clone(),
+            packaged_tool_manifests: self.packaged_tool_manifests.clone(),
             credentials,
             cwd: self.cwd.clone(),
             live_namespace: Some(namespace),
