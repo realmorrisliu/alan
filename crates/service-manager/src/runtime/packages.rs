@@ -112,13 +112,15 @@ pub(crate) fn project_package_skills_only(
     launch_context: &mut ProcessLaunchContext,
     package_id: &str,
 ) -> Result<()> {
+    let mut staged = launch_context.clone();
     let acquired = project_package_sync_inner(
         package_service,
-        launch_context,
+        &mut staged,
         package_id,
         PackageProjectionMode::SkillsOnly,
     )?;
-    launch_context.retain_authority(acquired.lease);
+    staged.retain_authority(acquired.lease);
+    *launch_context = staged;
     Ok(())
 }
 
@@ -128,9 +130,10 @@ pub(crate) fn project_package_reference(
     launch_context: &mut ProcessLaunchContext,
     package_id: &str,
 ) -> Result<()> {
+    let mut staged = launch_context.clone();
     let acquired = project_package_sync_inner(
         package_service,
-        launch_context,
+        &mut staged,
         package_id,
         PackageProjectionMode::Full,
     )?;
@@ -139,7 +142,8 @@ pub(crate) fn project_package_reference(
             "MCP package `{package_id}` requires async projection (`project_package_reference_async`)"
         );
     }
-    launch_context.retain_authority(acquired.lease);
+    staged.retain_authority(acquired.lease);
+    *launch_context = staged;
     Ok(())
 }
 
@@ -151,9 +155,10 @@ pub(crate) async fn project_package_reference_async(
     launch_context: &mut ProcessLaunchContext,
     package_id: &str,
 ) -> Result<()> {
+    let mut staged = launch_context.clone();
     let acquired = project_package_sync_inner(
         package_service,
-        launch_context,
+        &mut staged,
         package_id,
         PackageProjectionMode::Full,
     )?;
@@ -201,14 +206,14 @@ pub(crate) async fn project_package_reference_async(
             })?;
         for projected in discovered {
             let manifest = projected.manifest()?;
-            mount_projected_tool(launch_context, projected, &manifest)?;
+            mount_projected_tool(&mut staged, projected, &manifest)?;
         }
-        launch_context.retain_authority(Arc::new(scratch));
-        launch_context.retain_authority(session);
+        staged.retain_authority(Arc::new(scratch));
+        staged.retain_authority(session);
     }
 
     if !acquired.mcp_exports.is_empty() {
-        launch_context.add_package_reference(ProcessPackageReference::new(
+        staged.add_package_reference(ProcessPackageReference::new(
             package_id,
             &acquired.lease.record().revision,
             acquired.kind,
@@ -217,7 +222,8 @@ pub(crate) async fn project_package_reference_async(
             acquired.handle,
         )?);
     }
-    launch_context.retain_authority(acquired.lease);
+    staged.retain_authority(acquired.lease);
+    *launch_context = staged;
     Ok(())
 }
 
@@ -481,19 +487,21 @@ pub(crate) async fn apply_root_package_bindings(
             }
             continue;
         }
+        let mut staged = launch_context.clone();
         let result = apply_single_root_binding(
             package_service,
             fileserver_manager,
             srvfs,
             system_namespace,
             local_entry,
-            launch_context,
+            &mut staged,
             trust_posture,
             &binding,
         )
         .await;
         match result {
             Ok(()) => {
+                *launch_context = staged;
                 projected_ids.insert(package_id);
             }
             Err(error) if strict => return Err(error),
@@ -555,24 +563,14 @@ async fn apply_single_root_binding(
                     None,
                 );
                 let status = fileserver_manager.start(grant).await?;
-                if !record.exports.is_empty()
-                    && let Err(err) = project_package_skills_only(
-                        package_service,
-                        launch_context,
-                        &binding.package_id,
-                    )
-                {
-                    let _ = fileserver_manager.stop(&status.service_id).await;
-                    return Err(err);
-                }
                 if let Err(err) = async {
-                    fileserver_manager
-                        .mount_into_live_namespace(
-                            &status.service_id,
-                            system_namespace,
-                            status.mount_access,
-                        )
-                        .await?;
+                    if !record.exports.is_empty() {
+                        project_package_skills_only(
+                            package_service,
+                            launch_context,
+                            &binding.package_id,
+                        )?;
+                    }
                     fileserver_manager
                         .mount_into_namespace(
                             &status.service_id,
@@ -588,6 +586,13 @@ async fn apply_single_root_binding(
                         (Access::ReadWrite, Access::ReadWrite) => Access::ReadWrite,
                         _ => Access::ReadOnly,
                     };
+                    fileserver_manager
+                        .mount_into_live_namespace(
+                            &status.service_id,
+                            system_namespace,
+                            status.mount_access,
+                        )
+                        .await?;
                     local_entry.mount_service(&status.mount_path, transport, effective);
                     Ok::<_, anyhow::Error>(())
                 }

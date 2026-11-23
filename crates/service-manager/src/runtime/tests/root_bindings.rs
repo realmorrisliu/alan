@@ -273,3 +273,122 @@ async fn skills_only_and_active_fileserver_root_bindings_enforce_lifecycle_and_m
     fail_cfg.package_store = Some(pkg_store);
     assert!(ServiceManager::boot(fail_cfg).await.is_err());
 }
+
+fn install_test_tool_package(store_root: &std::path::Path, package_id: &str, tool_names: &[&str]) {
+    let service = PackageService::open(store_root.to_path_buf()).unwrap();
+    let mut manifest =
+        String::from("schema_version = 1\nkind = \"tool\"\ndescription = \"Test tool package\"\n");
+    let mut entries = Vec::new();
+    for tool in tool_names {
+        manifest.push_str(&format!(
+            "\n[[tools]]\nname = \"{tool}\"\ndescription = \"{tool}\"\nentrypoint = \"bin/{tool}.sh\"\nparameters = {{ type = \"object\" }}\n",
+        ));
+        entries.push(PackageSnapshotEntry {
+            path: format!("bin/{tool}.sh"),
+            bytes: b"#!/bin/sh\necho '{\"ok\":true}'\n".to_vec(),
+            executable: true,
+        });
+    }
+    entries.push(PackageSnapshotEntry {
+        path: "alan-package.toml".to_string(),
+        bytes: manifest.into_bytes(),
+        executable: false,
+    });
+    let res = service
+        .execute(PackageCommand::Install {
+            request_id: format!("install-{package_id}"),
+            package_id: package_id.to_string(),
+            snapshot: PackageSnapshot {
+                source_name: package_id.to_string(),
+                entries,
+            },
+        })
+        .unwrap();
+    assert!(res.success, "{}", res.message);
+}
+
+#[tokio::test]
+async fn durable_root_binding_collision_rolls_back_all_partial_tool_projections() {
+    let temp = tempfile::tempdir().unwrap();
+    let pkg_store = temp.path().join("packages");
+    install_test_tool_package(&pkg_store, "a-pre-tool", &["beta_tool"]);
+    install_test_tool_package(&pkg_store, "b-multi-tool", &["alpha_tool", "beta_tool"]);
+    install_test_tool_package(&pkg_store, "c-clean-tool", &["gamma_tool"]);
+
+    let package_service = PackageService::open(pkg_store).unwrap();
+    let srvfs = Arc::new(alan_kernel::SrvFs::new());
+    let fileserver_manager = Arc::new(crate::FileserverManager::new(
+        package_service.clone(),
+        srvfs.clone(),
+    ));
+    let system_namespace = alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new());
+    let local_entry =
+        crate::LocalEntryService::new(alan_kernel::ProcFs::new(), system_namespace.clone());
+    let mut launch_context = ProcessLaunchContext::root();
+
+    let bindings = ["a-pre-tool", "b-multi-tool", "c-clean-tool"]
+        .into_iter()
+        .map(|id| RootPackageBinding {
+            package_id: id.to_string(),
+            mode: RootBindingMode::Active,
+            fileserver: None,
+            updated_at: chrono::Utc::now(),
+        })
+        .collect::<Vec<_>>();
+
+    crate::runtime::packages::apply_root_package_bindings(
+        &package_service,
+        &fileserver_manager,
+        &srvfs,
+        &system_namespace,
+        &local_entry,
+        &mut launch_context,
+        alan_agent_engine::TrustPosture::Governed,
+        &bindings,
+        &[],
+    )
+    .await
+    .unwrap();
+
+    let mounted_paths: Vec<String> = launch_context
+        .namespace
+        .describe()
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    assert!(
+        !mounted_paths.iter().any(|p| p == "/bin/alpha_tool"),
+        "{mounted_paths:?}"
+    );
+    assert!(
+        !mounted_paths.iter().any(|p| p == "/lib/exec/alpha_tool"),
+        "{mounted_paths:?}"
+    );
+    assert!(
+        !mounted_paths.iter().any(|p| p == "/lib/pkg/b-multi-tool"),
+        "{mounted_paths:?}"
+    );
+    assert!(mounted_paths.iter().any(|p| p == "/bin/beta_tool"));
+    assert!(mounted_paths.iter().any(|p| p == "/bin/gamma_tool"));
+
+    let tool_names: Vec<&str> = launch_context
+        .packaged_tools
+        .iter()
+        .map(|t| t.name())
+        .collect();
+    assert_eq!(tool_names, vec!["beta_tool", "gamma_tool"]);
+
+    let manifest_names: Vec<&str> = launch_context
+        .packaged_tool_manifests
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(manifest_names, vec!["beta_tool", "gamma_tool"]);
+
+    let ref_ids: Vec<&str> = launch_context
+        .package_references
+        .iter()
+        .map(|r| r.package_id.as_str())
+        .collect();
+    assert_eq!(ref_ids, vec!["a-pre-tool", "c-clean-tool"]);
+}

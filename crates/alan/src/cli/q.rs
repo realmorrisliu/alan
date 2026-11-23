@@ -284,6 +284,42 @@ fn comma_skill_ids(record: &PackageRecord) -> String {
         .join(", ")
 }
 
+fn format_root_binding_label(binding: Option<&RootPackageBinding>) -> String {
+    match binding {
+        None => "catalog".to_string(),
+        Some(b) if b.mode == RootBindingMode::SkillsOnly => "skills".to_string(),
+        Some(b) => match b.fileserver.as_ref() {
+            Some(fs) => {
+                let access = match fs.access {
+                    FileserverMountAccess::ReadOnly => "ro",
+                    FileserverMountAccess::ReadWrite => "rw",
+                };
+                if fs.allow_network {
+                    format!("active({access},net)")
+                } else {
+                    format!("active({access})")
+                }
+            }
+            None => "active".to_string(),
+        },
+    }
+}
+
+fn emit_inactive_runtime_hint(note: &mut String, package_id: &str, record: &PackageRecord) {
+    use std::fmt::Write;
+    if record.export_kind == PackageExportKind::Skill {
+        return;
+    }
+    let hint = if let Some(fs) = record.fileserver_export.as_ref()
+        && fs.allow_network
+    {
+        format!("alan q enable {package_id} --access read-write --allow-network")
+    } else {
+        format!("alan q enable {package_id}")
+    };
+    let _ = writeln!(note, "runtime: inactive (enable with `{hint}`)");
+}
+
 fn apply_post_install_binding(
     service: &Arc<PackageService>,
     package_id: &str,
@@ -292,6 +328,16 @@ fn apply_post_install_binding(
     use std::fmt::Write;
     let record = service.resolve(package_id)?;
     let mut note = String::new();
+
+    if let Some(existing) = service.root_binding(package_id)? {
+        let label = format_root_binding_label(Some(&existing));
+        let _ = writeln!(note, "root_binding: preserved ({label})");
+        if existing.mode == RootBindingMode::SkillsOnly {
+            emit_inactive_runtime_hint(&mut note, package_id, &record);
+        }
+        return Ok(note);
+    }
+
     if catalog_only {
         let _ = writeln!(
             note,
@@ -315,18 +361,7 @@ fn apply_post_install_binding(
         }
     }
 
-    if record.export_kind != PackageExportKind::Skill {
-        let hint = if let Some(fs) = record.fileserver_export.as_ref() {
-            if fs.allow_network {
-                format!("alan q enable {package_id} --access read-write --allow-network")
-            } else {
-                format!("alan q enable {package_id}")
-            }
-        } else {
-            format!("alan q enable {package_id}")
-        };
-        let _ = writeln!(note, "runtime: inactive (enable with `{hint}`)");
-    }
+    emit_inactive_runtime_hint(&mut note, package_id, &record);
     Ok(note)
 }
 
@@ -357,24 +392,7 @@ fn annotate_list_with_root_bindings(service: &Arc<PackageService>, raw: &str) ->
         };
         let root_label = match record.kind {
             PackageKind::Preinstalled => "preinstalled".to_string(),
-            PackageKind::Installed => match bindings.get(package_id) {
-                None => "catalog".to_string(),
-                Some(b) if b.mode == RootBindingMode::SkillsOnly => "skills".to_string(),
-                Some(b) => match b.fileserver.as_ref() {
-                    Some(fs) => {
-                        let access = match fs.access {
-                            FileserverMountAccess::ReadOnly => "ro",
-                            FileserverMountAccess::ReadWrite => "rw",
-                        };
-                        if fs.allow_network {
-                            format!("active({access},net)")
-                        } else {
-                            format!("active({access})")
-                        }
-                    }
-                    None => "active".to_string(),
-                },
-            },
+            PackageKind::Installed => format_root_binding_label(bindings.get(package_id)),
         };
         out.push_str(line);
         out.push_str(&format!(" root={root_label}"));
@@ -888,6 +906,59 @@ parameters = { type = "object" }
         .unwrap();
         assert!(cat_out.contains("catalog-only"), "{cat_out}");
         assert!(service.root_binding("cat-pack").unwrap().is_none());
+
+        // Reinstalling the same or `--catalog-only` package preserves existing Active binding.
+        let repo_packages =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../service-manager/packages");
+        let gh_pkg = repo_packages.join("github-fileserver");
+        run_with_service(
+            &service,
+            QArgs {
+                action: QAction::Install {
+                    name: None,
+                    catalog_only: false,
+                    path: gh_pkg.clone(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+        run_with_service(
+            &service,
+            QArgs {
+                action: QAction::Enable {
+                    package_id: "github-fileserver".to_string(),
+                    access: Some(FileserverAccessArg::ReadWrite),
+                    allow_network: true,
+                    skills_only: false,
+                },
+            },
+        )
+        .await
+        .unwrap();
+        for catalog_only in [false, true] {
+            let reinstall = run_with_service(
+                &service,
+                QArgs {
+                    action: QAction::Install {
+                        name: None,
+                        catalog_only,
+                        path: gh_pkg.clone(),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+            assert!(
+                reinstall.contains("preserved (active(rw,net))"),
+                "{reinstall}"
+            );
+            let preserved = service.root_binding("github-fileserver").unwrap().unwrap();
+            assert_eq!(preserved.mode, RootBindingMode::Active);
+            let fs = preserved.fileserver.unwrap();
+            assert_eq!(fs.access, FileserverMountAccess::ReadWrite);
+            assert!(fs.allow_network);
+        }
 
         // Non-fileserver `--allow-network` fails cleanly.
         assert!(
