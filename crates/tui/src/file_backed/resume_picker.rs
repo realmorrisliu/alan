@@ -295,6 +295,8 @@ impl FileBackedApp {
         self.scrollback_front_is_partial = false;
         self.pending_yield = None;
         self.form = None;
+        self.confirmation = None;
+        self.staged_confirmation_outcome = None;
         self.completion = None;
         self.tape_consumed_offset = 0;
         self.last_input_failed = false;

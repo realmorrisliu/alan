@@ -332,7 +332,8 @@ fn confirmation_reject_with_note_mode_and_external_clear_race_handling() {
         })
     );
 
-    // Simulate RequestsChanged(None) clearing pending_yield BEFORE ResumeWriteCompleted arrives.
+    // Simulate RequestsChanged(None) clearing pending_yield BEFORE ResumeWriteCompleted arrives,
+    // plus a user keypress in that window that triggers the in-flight notice.
     app.begin_resume_write(request_id.clone());
     app.clear_pending_yield();
     assert!(app.pending_yield.is_none());
@@ -340,12 +341,25 @@ fn confirmation_reject_with_note_mode_and_external_clear_race_handling() {
         app.transcript.is_empty(),
         "must not prematurely emit Approval closed while response_in_flight"
     );
+    assert!(
+        app.handle_key(key(KeyCode::Char('1'), KeyModifiers::NONE))
+            .is_none()
+    );
+    assert_eq!(
+        app.notice.as_deref(),
+        Some("request response is still being sent")
+    );
 
     app.dispatch(FileBackedEvent::ResumeWriteCompleted {
         request_id,
         retry_input,
         result: Ok(()),
     });
+    assert!(
+        app.notice.is_none(),
+        "settled confirmation should clear stale in-flight notice: {:?}",
+        app.notice
+    );
     let screen = render_lines(&app, 100, 14).join("\n");
     assert!(
         screen.contains("✕ Rejected · edit_file src/lib.rs (use explicit allowlist)"),
@@ -450,4 +464,58 @@ fn queued_preview_single_primary_state_and_context_footer() {
         "{idle}"
     );
     assert!(!idle.contains("Enter queue next"), "{idle}");
+}
+
+#[test]
+fn confirmation_note_footer_and_idle_details_footer_respect_narrow_widths() {
+    use unicode_width::UnicodeWidthStr;
+
+    let mut conf = super::confirmation::ConfirmationState::new(bash_confirmation());
+    conf.enter_note_mode();
+
+    for width in [46usize, 47, 48] {
+        let hint = conf.footer_hint(width, false);
+        assert_eq!(hint, "Enter submit · Esc back", "width={width}");
+        assert!(UnicodeWidthStr::width(hint.as_str()) <= width);
+    }
+    let full = conf.footer_hint(49, false);
+    assert_eq!(full, "Enter submit rejection note · Esc back to options");
+    assert!(UnicodeWidthStr::width(full.as_str()) <= 49);
+
+    for width in [10usize, 20, 22] {
+        let hint = conf.footer_hint(width, false);
+        assert!(
+            UnicodeWidthStr::width(hint.as_str()) <= width,
+            "{width}: {hint}"
+        );
+    }
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.projected_actions
+        .insert(("/agent/1".into(), "a1".into()), (1, true));
+    let narrow_idle = render_lines(&app, 20, 8);
+    let last_line = narrow_idle
+        .iter()
+        .rfind(|line| !line.is_empty())
+        .map(String::as_str)
+        .unwrap_or("");
+    assert!(last_line.contains("Ctrl+O"), "{narrow_idle:?}");
+    assert!(UnicodeWidthStr::width(last_line) <= 20, "{last_line:?}");
+}
+
+#[test]
+fn rollout_switch_clears_confirmation_and_staged_outcome() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.set_pending_yield(bash_confirmation());
+    assert!(app.confirmation.is_some());
+    assert!(matches!(
+        app.handle_key(key(KeyCode::Char('1'), KeyModifiers::NONE)),
+        Some(FileBackedAction::Resume { .. })
+    ));
+    assert!(app.staged_confirmation_outcome.is_some());
+
+    app.reset_for_rollout_switch(Some("rollout-2"));
+    assert!(app.pending_yield.is_none());
+    assert!(app.confirmation.is_none());
+    assert!(app.staged_confirmation_outcome.is_none());
 }

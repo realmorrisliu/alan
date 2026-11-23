@@ -155,7 +155,9 @@ impl FileBackedApp {
                 }
                 if settled_conf {
                     if self.notice.as_deref().is_some_and(|text| {
-                        text == "sending response…" || text.starts_with("resume failed:")
+                        text == "sending response…"
+                            || text == "request response is still being sent"
+                            || text.starts_with("resume failed:")
                     }) {
                         self.notice = None;
                     }

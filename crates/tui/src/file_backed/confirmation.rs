@@ -210,10 +210,12 @@ impl ConfirmationState {
             return clamp_text_width("Sending response…", width);
         }
         if self.editing_note {
-            return if width >= 46 {
-                "Enter submit rejection note · Esc back to options".to_string()
-            } else if width >= 26 {
-                "Enter submit · Esc back".to_string()
+            let full = "Enter submit rejection note · Esc back to options";
+            let medium = "Enter submit · Esc back";
+            return if UnicodeWidthStr::width(full) <= width {
+                full.to_string()
+            } else if UnicodeWidthStr::width(medium) <= width {
+                medium.to_string()
             } else {
                 clamp_text_width("Enter · Esc", width)
             };

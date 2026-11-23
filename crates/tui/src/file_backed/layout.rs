@@ -504,7 +504,10 @@ pub(super) fn live_region_lines_at(
                 } else {
                     "Ctrl+O details (p: plans)"
                 };
-                lines.push(Line::styled(hint, app.theme.muted_style()));
+                lines.push(Line::styled(
+                    crate::history::clamp_text_width(hint, width),
+                    app.theme.muted_style(),
+                ));
             }
         }
         (lines, Some(prompt_start))
