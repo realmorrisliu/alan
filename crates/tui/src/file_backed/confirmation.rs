@@ -38,6 +38,7 @@ pub(in crate::file_backed) struct ConfirmationState {
     pub note: String,
     pub note_cursor: usize,
     pub scroll_from_bottom: usize,
+    pub expanded_details: bool,
     pub error: Option<String>,
 }
 
@@ -71,7 +72,39 @@ impl ConfirmationState {
             note: String::new(),
             note_cursor: 0,
             scroll_from_bottom: 0,
+            expanded_details: false,
             error: None,
+        }
+    }
+
+    pub fn has_collapsible_details(&self) -> bool {
+        let title_extra = self
+            .pending
+            .title
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count()
+            > 3;
+        let prompt_extra = self.pending.prompt.as_ref().is_some_and(|prompt| {
+            !prompt.trim().is_empty()
+                && prompt.trim() != self.pending.title.trim()
+                && prompt
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .count()
+                    > CONFIRMATION_PROMPT_MAX_LINES
+        });
+        let preview_extra = self.pending.presentation.as_ref().is_some_and(|pres| {
+            presentation_rows_with_theme(pres, true, Theme::default()).len()
+                > CONFIRMATION_PREVIEW_MAX_LINES
+        });
+        title_extra || prompt_extra || preview_extra
+    }
+
+    pub fn toggle_expanded_details(&mut self) {
+        if self.has_collapsible_details() {
+            self.expanded_details = !self.expanded_details;
+            self.scroll_from_bottom = 0;
         }
     }
 
@@ -226,17 +259,30 @@ impl ConfirmationState {
             };
         }
         let total = self.total_items();
-        let full = if scrollable {
-            format!("↑↓ / 1-{total} choose · PgUp/PgDn scroll · Enter confirm · Esc cancel")
-        } else {
-            format!("↑↓ / 1-{total} choose · Enter confirm · Esc cancel")
+        let (full, medium) = match (scrollable, self.expanded_details) {
+            (true, true) => (
+                format!(
+                    "↑↓ / 1-{total} choose · PgUp/PgDn scroll · d collapse · Enter confirm · Esc cancel"
+                ),
+                format!("↑↓/1-{total} · PgUp/PgDn · d · Enter · Esc"),
+            ),
+            (true, false) => (
+                format!("↑↓ / 1-{total} choose · PgUp/PgDn scroll · Enter confirm · Esc cancel"),
+                format!("↑↓/1-{total} · PgUp/PgDn · Enter · Esc"),
+            ),
+            (false, true) => (
+                format!("↑↓ / 1-{total} choose · d collapse · Enter confirm · Esc cancel"),
+                format!("↑↓/1-{total} · d · Enter · Esc"),
+            ),
+            (false, false) => (
+                format!("↑↓ / 1-{total} choose · Enter confirm · Esc cancel"),
+                format!("↑↓/1-{total} · Enter · Esc"),
+            ),
         };
         if UnicodeWidthStr::width(full.as_str()) <= width {
             full
-        } else if scrollable && width >= 32 {
-            format!("↑↓/1-{total} · PgUp/PgDn · Enter · Esc")
-        } else if width >= 28 {
-            format!("↑↓/1-{total} · Enter · Esc")
+        } else if UnicodeWidthStr::width(medium.as_str()) <= width {
+            medium
         } else {
             clamp_text_width(&format!("1-{total} Enter Esc"), width)
         }
@@ -261,10 +307,20 @@ impl ConfirmationState {
             Span::styled("Approval · ", theme.bold_if_capable(theme.wait_style())),
             Span::styled(clean_text(head_title), theme.accent_bold()),
         ]));
-        for extra in title_lines.iter().skip(1).take(2) {
+        let extra_title = if self.expanded_details { usize::MAX } else { 2 };
+        for extra in title_lines.iter().skip(1).take(extra_title) {
             lines.push(Line::from(vec![
                 Span::styled(gutter, wait_gutter),
                 Span::raw(clean_text(extra)),
+            ]));
+        }
+        if !self.expanded_details && title_lines.len() > 3 {
+            lines.push(Line::from(vec![
+                Span::styled(gutter, wait_gutter),
+                Span::styled(
+                    format!("… +{} more lines (d to expand)", title_lines.len() - 3),
+                    metadata_style(theme),
+                ),
             ]));
         }
 
@@ -277,18 +333,23 @@ impl ConfirmationState {
                 .map(str::trim_end)
                 .filter(|line| !line.trim().is_empty())
                 .collect();
-            for segment in prompt_lines.iter().take(CONFIRMATION_PROMPT_MAX_LINES) {
+            let prompt_cap = if self.expanded_details {
+                usize::MAX
+            } else {
+                CONFIRMATION_PROMPT_MAX_LINES
+            };
+            for segment in prompt_lines.iter().take(prompt_cap) {
                 lines.push(Line::from(vec![
                     Span::styled(gutter, wait_gutter),
                     Span::raw(clean_text(segment)),
                 ]));
             }
-            if prompt_lines.len() > CONFIRMATION_PROMPT_MAX_LINES {
+            if !self.expanded_details && prompt_lines.len() > CONFIRMATION_PROMPT_MAX_LINES {
                 lines.push(Line::from(vec![
                     Span::styled(gutter, wait_gutter),
                     Span::styled(
                         format!(
-                            "… +{} more lines",
+                            "… +{} more lines (d to expand)",
                             prompt_lines.len() - CONFIRMATION_PROMPT_MAX_LINES
                         ),
                         metadata_style(theme),
@@ -314,11 +375,14 @@ impl ConfirmationState {
         }
 
         if let Some(presentation) = &self.pending.presentation {
-            let rows = presentation_rows_with_theme(presentation, false, theme);
+            let rows = presentation_rows_with_theme(presentation, true, theme);
             let total = rows.len();
-            for (row_gutter_style, text, style) in
-                rows.into_iter().take(CONFIRMATION_PREVIEW_MAX_LINES)
-            {
+            let preview_cap = if self.expanded_details {
+                usize::MAX
+            } else {
+                CONFIRMATION_PREVIEW_MAX_LINES
+            };
+            for (row_gutter_style, text, style) in rows.into_iter().take(preview_cap) {
                 let bar_style = if row_gutter_style == Style::default() && !theme.is_dumb {
                     wait_gutter
                 } else {
@@ -329,11 +393,14 @@ impl ConfirmationState {
                     Span::styled(clean_text(&text), style),
                 ]));
             }
-            if total > CONFIRMATION_PREVIEW_MAX_LINES {
+            if !self.expanded_details && total > CONFIRMATION_PREVIEW_MAX_LINES {
                 lines.push(Line::from(vec![
                     Span::styled(gutter, wait_gutter),
                     Span::styled(
-                        format!("… +{} more lines", total - CONFIRMATION_PREVIEW_MAX_LINES),
+                        format!(
+                            "… +{} more lines (d to expand)",
+                            total - CONFIRMATION_PREVIEW_MAX_LINES
+                        ),
                         metadata_style(theme),
                     ),
                 ]));
@@ -681,6 +748,7 @@ impl FileBackedApp {
             KeyCode::Down | KeyCode::Tab => conf.move_down(),
             KeyCode::Char('k') if !ctrl && !alt => conf.move_up(),
             KeyCode::Char('j') if !ctrl && !alt => conf.move_down(),
+            KeyCode::Char('d') if !ctrl && !alt => conf.toggle_expanded_details(),
             KeyCode::Enter if !ctrl && !alt => {
                 if conf.selected_is_reject_with_note() {
                     conf.enter_note_mode();

@@ -629,3 +629,54 @@ fn confirmation_esc_preserves_empty_queue_auto_continue_and_respects_queued_item
     ));
     assert!(!queued_app.auto_continue_on_empty_cancel);
 }
+
+#[test]
+fn confirmation_expands_truncated_prompt_and_presentation_details_with_d() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.viewport_size = (90, 30);
+    let mut pending = diff_confirmation();
+    pending.prompt = Some("prompt-1\nprompt-2\nprompt-3\nprompt-4-hidden\nprompt-5-hidden".into());
+    let lines = (1..=12)
+        .map(|i| DiffLine::Added {
+            text: format!("diff-line-{i:02}"),
+        })
+        .collect();
+    pending.presentation = Some(ToolResultPresentation::Diff {
+        path: "src/lib.rs".into(),
+        hunks: vec![DiffHunk {
+            header: Some("@@ -1 +1,12 @@".into()),
+            lines,
+        }],
+    });
+    app.set_pending_yield(pending);
+
+    let collapsed = render_lines(&app, 90, 30).join("\n");
+    assert!(collapsed.contains("prompt-3"), "{collapsed}");
+    assert!(!collapsed.contains("prompt-4-hidden"), "{collapsed}");
+    assert!(collapsed.contains("+diff-line-06"), "{collapsed}");
+    assert!(!collapsed.contains("+diff-line-12"), "{collapsed}");
+    assert!(collapsed.contains("(d to expand)"), "{collapsed}");
+
+    // Press `d` to expand full prompt and full diff preview cleanly.
+    assert!(
+        app.handle_key(key(KeyCode::Char('d'), KeyModifiers::NONE))
+            .is_none()
+    );
+    assert!(app.confirmation.as_ref().unwrap().expanded_details);
+    let expanded = render_lines(&app, 90, 30).join("\n");
+    assert!(expanded.contains("prompt-4-hidden"), "{expanded}");
+    assert!(expanded.contains("prompt-5-hidden"), "{expanded}");
+    assert!(expanded.contains("+diff-line-12"), "{expanded}");
+    assert!(expanded.contains("d collapse"), "{expanded}");
+    assert!(!expanded.contains("(d to expand)"), "{expanded}");
+
+    // Press `d` again to collapse back to compact view cleanly without leaking `d`.
+    assert!(
+        app.handle_key(key(KeyCode::Char('d'), KeyModifiers::NONE))
+            .is_none()
+    );
+    assert!(!app.confirmation.as_ref().unwrap().expanded_details);
+    let recollapsed = render_lines(&app, 90, 30).join("\n");
+    assert!(!recollapsed.contains("+diff-line-12"), "{recollapsed}");
+    assert!(app.composer.text().is_empty());
+}

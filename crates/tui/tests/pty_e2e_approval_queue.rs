@@ -667,7 +667,7 @@ async fn run_child(log_dir: PathBuf) -> Result<()> {
                                 "capability": "bash",
                                 "policy": { "reason": "Inspect overflow preview" },
                                 "presentation": ToolResultPresentation::Command {
-                                    cmdline: "head-marker-cmd\nmid-line-two\nmid-line-three\nmid-line-four\nmid-line-five\ntail-line-six".into(),
+                                    cmdline: "head-marker-cmd\nmid-line-two\nmid-line-three\nmid-line-four\nmid-line-five\nmid-line-six\nmid-line-seven\nmid-line-eight\nline-9-hidden\ntail-line-ten".into(),
                                     exit_code: None,
                                     stdout: String::new(),
                                     stderr: String::new(),
@@ -951,17 +951,24 @@ fn pty_e2e_overflowing_confirmation_scrolls_in_80x10_terminal() -> Result<()> {
         })?;
         write_master(&master_write, b"bash-overflow\r")?;
         let clipped = screen.wait_for("80x10 overflow footer", Duration::from_secs(5), |s| {
-            s.contains("[1] approve (default)") && s.contains("PgUp/PgDn scroll")
+            s.contains("[1] approve (default)")
+                && s.contains("PgUp/PgDn scroll")
+                && s.contains("(d to expand)")
         })?;
         assert!(!clipped.contains("$ head-marker-cmd"), "{clipped}");
-        write_master(&master_write, b"\x1b[5~\x1b[5~")?;
+        assert!(!clipped.contains("tail-line-ten"), "{clipped}");
+        write_master(&master_write, b"d")?;
+        screen.wait_for("d expands full preview", Duration::from_secs(3), |s| {
+            s.contains("tail-line-ten") && s.contains("d collapse")
+        })?;
+        write_master(&master_write, b"\x1b[5~\x1b[5~\x1b[5~")?;
         let top = screen.wait_for("PgUp reveals head", Duration::from_secs(3), |s| {
             s.contains("Approval · Escalate tool call `bash`")
                 && s.contains("$ head-marker-cmd")
                 && s.contains("why: Inspect overflow preview")
         })?;
         assert!(top.contains("capability: bash"), "{top}");
-        write_master(&master_write, b"\x1b[6~\x1b[6~1")?;
+        write_master(&master_write, b"\x1b[6~\x1b[6~\x1b[6~1")?;
         screen.wait_for("settled overflow", Duration::from_secs(5), |s| {
             s.contains("✓ Approved · bash: head-marker-cmd")
         })?;

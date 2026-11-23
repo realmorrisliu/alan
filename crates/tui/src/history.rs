@@ -839,11 +839,13 @@ pub(crate) fn presentation_rows_with_theme(
                     lines.push(format!("  {rest}"));
                 }
             }
-            if detail {
+            let show_stream_headers =
+                detail && (exit_code.is_some() || !stdout.is_empty() || !stderr.is_empty());
+            if show_stream_headers {
                 lines.push("stdout".into());
             }
             lines.extend(stdout.lines().map(str::to_string));
-            if detail {
+            if show_stream_headers {
                 lines.push("stderr".into());
             }
             lines.extend(stderr.lines().map(str::to_string));
