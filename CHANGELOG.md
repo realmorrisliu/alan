@@ -7,6 +7,17 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-23
+
+### Added
+
+- Add Alan self-iteration loop foundation (#1133): redacted TUI `/issue` and `/bug` intake with tiered submission (`/mnt/github` -> `gh` CLI -> draft fallback), reference `githubfs` aP file server (`alan __fileserver-github`) and `routefs` event dispatcher (`GithubEventDispatcher`) with control-plane `TriggerAllowlist`, Quartermaster `fileserver` package kind with confined OS-sandboxed aP supervision, and bounded `alan workflow init-self-iterate` / `init-release-prep` / `evaluate-trigger` / `check-release-gate` commands plus `alan-self-iterate` and `alan-release-prep` skill packages.
+- Complete Quartermaster plugin lifecycle and onboarding UX (#1134): atomic Companion Skills on non-`skill` packages, durable System Store Root Package Bindings (`SkillsOnly` knowledge-only default on `alan q install` vs explicit `alan q enable`/`disable` runtime activation, preserving existing activation on reinstall, plus `--package` and `--fileserver <id>[:ro|rw][:net]` CLI flags), foreground `ServiceManager` supervision and dual mounting of active fileservers into Root Agent and `LocalEntryService` with atomic rollback on projection collision, explicit foreground `alan workflow watch <id>` with process-group cancellation and reaping on `SIGINT`/`SIGTERM`, and single-package onboarding skills bundled in `github-fileserver`.
+
+### Changed
+
+- Replace raw OS sandbox backend labels in the TUI with clearer permission mode indicators (#1132).
+
 ## [0.1.4] - 2026-11-22
 
 ### Added
