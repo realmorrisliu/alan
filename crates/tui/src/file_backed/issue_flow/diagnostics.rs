@@ -263,11 +263,11 @@ fn collect_recent_failures(app: &FileBackedApp) -> Vec<String> {
                 preview,
                 ..
             } => {
-                let header = match preview.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
-                    Some(prev) => format!("Tool failed ({title}): {prev}"),
-                    None => format!("Tool failed: {title}"),
-                };
-                push_unique(&header);
+                // Only emit allowlisted tool category and static failure metadata so source
+                // snippets (for example `edit_file` search strings or inline `Bash` scripts)
+                // can never enter automatic diagnostics or AI drafting prompts.
+                let summary = allowlisted_tool_failure_summary(title, preview.as_deref());
+                push_unique(&summary);
             }
             _ => {}
         }
@@ -300,6 +300,84 @@ fn collect_recent_failures(app: &FileBackedApp) -> Vec<String> {
         entries.drain(..entries.len() - MAX_RECENT_FAILURES);
     }
     entries
+}
+
+fn allowlisted_tool_kind(title: &str) -> &'static str {
+    match title.split_whitespace().next().unwrap_or("") {
+        "Bash" | "bash" => "bash",
+        "Read" | "read_file" => "read_file",
+        "Write" | "write_file" => "write_file",
+        "Edit" | "edit_file" => "edit_file",
+        "Grep" | "grep" => "grep",
+        "Glob" | "glob" => "glob",
+        "List" | "list_dir" => "list_dir",
+        "cd" => "cd",
+        _ => "tool",
+    }
+}
+
+fn allowlisted_tool_failure_reason(preview: &str) -> Option<&'static str> {
+    let lower = preview.to_ascii_lowercase();
+    const REASONS: &[(&str, &str)] = &[
+        (
+            "absolute path outside host_mount",
+            "sandbox path guard: absolute path outside host_mount",
+        ),
+        (
+            "outside host_mount",
+            "sandbox path guard: path outside host_mount",
+        ),
+        ("protected subpath", "sandbox path guard: protected subpath"),
+        (
+            "sensitive read-deny",
+            "sandbox path guard: sensitive read-deny path",
+        ),
+        (
+            "network access is confined",
+            "sandbox guard: network confined",
+        ),
+        ("search text not found", "search text not found"),
+        ("timed out", "timed out"),
+        ("timeout", "timed out"),
+        ("permission denied", "permission denied"),
+        ("operation not permitted", "permission denied"),
+        ("rejected", "rejected"),
+        ("cancelled", "cancelled"),
+    ];
+    REASONS
+        .iter()
+        .find_map(|(needle, static_label)| lower.contains(needle).then_some(*static_label))
+}
+
+fn parse_tool_exit_code(preview: &str) -> Option<i32> {
+    let lower = preview.to_ascii_lowercase();
+    for prefix in ["exit ", "exit_code: ", "exit_code="] {
+        if let Some(pos) = lower.find(prefix) {
+            let rest = lower[pos + prefix.len()..].trim_start();
+            let digits: String = rest
+                .chars()
+                .enumerate()
+                .take_while(|&(i, c)| c.is_ascii_digit() || (i == 0 && c == '-'))
+                .map(|(_, c)| c)
+                .collect();
+            if let Ok(code) = digits.parse::<i32>() {
+                return Some(code);
+            }
+        }
+    }
+    None
+}
+
+fn allowlisted_tool_failure_summary(title: &str, preview: Option<&str>) -> String {
+    let tool_kind = allowlisted_tool_kind(title);
+    let reason = preview.and_then(allowlisted_tool_failure_reason);
+    let exit_code = preview.and_then(parse_tool_exit_code);
+    match (reason, exit_code) {
+        (Some(r), Some(code)) => format!("tool {tool_kind} failed ({r}, exit {code})"),
+        (Some(r), None) => format!("tool {tool_kind} failed ({r})"),
+        (None, Some(code)) => format!("tool {tool_kind} failed (exit {code})"),
+        (None, None) => format!("tool {tool_kind} failed"),
+    }
 }
 
 fn strip_internal_error_wrappers(mut raw: &str) -> &str {

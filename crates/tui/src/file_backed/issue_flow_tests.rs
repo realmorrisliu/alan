@@ -410,11 +410,19 @@ fn multi_failure_timeline_populates_deterministic_fallback_and_strips_wrappers()
         .push(HistoryCell::User("SECRET_USER_PROMPT_MUST_NOT_LEAK".into()));
     app.transcript.push(HistoryCell::Tool {
         action: None,
-        title: "Bash python3 -c … print(url)".into(),
+        title: "Bash python3 -c … SECRET_INLINE_SCRIPT()".into(),
         status: ToolStatus::Failed,
         preview: Some(
-            "error: Command contains absolute path outside /Users/alice/secret/file: /a".into(),
+            "error: Command contains absolute path outside host_mount: /Users/alice/secret/file"
+                .into(),
         ),
+        presentation: None,
+    });
+    app.transcript.push(HistoryCell::Tool {
+        action: None,
+        title: "Edit src/proprietary.rs".into(),
+        status: ToolStatus::Failed,
+        preview: Some("Search text not found: fn proprietary_algorithm() { return 42; }".into()),
         presentation: None,
     });
     app.transcript.push(HistoryCell::Error(
@@ -435,13 +443,21 @@ fn multi_failure_timeline_populates_deterministic_fallback_and_strips_wrappers()
         "{rendered}"
     );
     assert!(
-        rendered.contains("Tool failed (Bash python3 -c"),
+        rendered
+            .contains("tool bash failed (sandbox path guard: absolute path outside host_mount)"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("tool edit_file failed (search text not found)"),
         "{rendered}"
     );
     assert!(
         !rendered.contains("SECRET_USER_PROMPT_MUST_NOT_LEAK"),
         "{rendered}"
     );
+    assert!(!rendered.contains("SECRET_INLINE_SCRIPT"), "{rendered}");
+    assert!(!rendered.contains("proprietary_algorithm"), "{rendered}");
+    assert!(!rendered.contains("proprietary.rs"), "{rendered}");
     assert!(!rendered.contains("/Users/alice"), "{rendered}");
 }
 
@@ -453,9 +469,9 @@ fn ai_drafting_re_redacts_applies_proposal_and_supports_esc_skip_and_unavailable
     app.issue_available = true;
     app.transcript.push(HistoryCell::Tool {
         action: None,
-        title: "Bash python3 -c …".into(),
+        title: "Bash python3 -c … SECRET_AI_PROMPT_CODE()".into(),
         status: ToolStatus::Failed,
-        preview: Some("exit 1".into()),
+        preview: Some("exit 1 · File \"<string>\", secret_traceback()".into()),
         presentation: None,
     });
     app.expected_terminal_error = Some(
@@ -472,6 +488,15 @@ fn ai_drafting_re_redacts_applies_proposal_and_supports_esc_skip_and_unavailable
     };
     assert!(app.issue.is_drafting());
     assert!(diagnostics_context.contains("stream_error:bad_request"));
+    assert!(diagnostics_context.contains("tool bash failed (exit 1)"));
+    assert!(
+        !diagnostics_context.contains("SECRET_AI_PROMPT_CODE"),
+        "{diagnostics_context}"
+    );
+    assert!(
+        !diagnostics_context.contains("secret_traceback"),
+        "{diagnostics_context}"
+    );
     let drafting_view = render_lines(&app, 100)
         .into_iter()
         .map(|l| l.to_string())
