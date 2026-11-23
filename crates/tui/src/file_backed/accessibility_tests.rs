@@ -67,6 +67,9 @@ fn accessibility_critical_model_status_and_interrupt_use_default_foreground() {
             let row = (0..120)
                 .map(|x| buffer.cell((x, y)).unwrap().symbol())
                 .collect::<String>();
+            if needle == "Esc interrupt" && !row.contains("Working") {
+                continue;
+            }
             if let Some(start) = row.find(needle) {
                 found = true;
                 for x in start..start + needle.len() {

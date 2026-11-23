@@ -34,17 +34,17 @@ fn initial_submission_notice_follows_admission_and_direct_terminal_receipts() {
                     );
                     queue::confirm_local_receipts(&mut app, &pending);
                     assert!(app.local_inputs["q"].acknowledged);
-                    assert!(app.notice.as_deref().unwrap().contains(if paused {
-                        "paused"
+                    if paused {
+                        assert!(app.notice.as_deref().unwrap().contains("paused"));
+                        assert!(
+                            !app.notice
+                                .as_deref()
+                                .unwrap()
+                                .contains("admission unconfirmed")
+                        );
                     } else {
-                        "queued"
-                    }));
-                    assert!(
-                        !app.notice
-                            .as_deref()
-                            .unwrap()
-                            .contains("admission unconfirmed")
-                    );
+                        assert!(app.notice.is_none(), "{:?}", app.notice);
+                    }
                 }
                 app.composer.set_text("new draft 中文😀");
                 interrupt::observe_root_agent_completion(

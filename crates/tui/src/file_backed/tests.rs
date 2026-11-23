@@ -447,7 +447,7 @@ fn paused_activity_prefers_waiting_label_and_notice_none_clears() {
     let mut waiting = UiActivitySnapshot::paused(Some(1));
     waiting.waiting_submission_ids.push("r0".into());
     app.apply_ui_event(UiEvent::Activity { snapshot: waiting });
-    assert_eq!(app.activity_label(), Some("waiting for input"));
+    assert_eq!(app.activity_label(), Some("Input required"));
 
     app.apply_ui_event(UiEvent::Notice {
         snapshot: UiNoticeSnapshot::none(),
@@ -641,16 +641,15 @@ fn pending_yield_cell_updates_in_place_when_fields_arrive() {
     };
     app.set_pending_yield(populated.clone());
 
-    let cells: Vec<_> = app
-        .transcript
-        .iter()
-        .filter_map(|cell| match cell {
-            HistoryCell::PendingYield(pending) => Some(pending),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(cells.len(), 1, "later sync must update the cell in place");
-    assert_eq!(cells[0], &populated);
+    assert!(
+        !app.transcript
+            .iter()
+            .any(|c| matches!(c, HistoryCell::PendingYield(_)))
+    );
+    assert_eq!(
+        app.confirmation.as_ref().map(|c| &c.pending),
+        Some(&populated)
+    );
 }
 
 #[test]
@@ -683,10 +682,9 @@ fn post_yield_cells_do_not_arm_remote_boundary_insertion() {
     app.apply_tape_record(tape_message("user", "next remote turn"));
 
     assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "run this"));
-    assert!(matches!(app.transcript[1], HistoryCell::PendingYield(_)));
-    assert!(matches!(app.transcript[2], HistoryCell::Tool { .. }));
-    assert!(matches!(app.transcript[3], HistoryCell::User(ref text) if text == "next remote turn"));
-    assert_eq!(app.action_cells.get("a1"), Some(&2));
+    assert!(matches!(app.transcript[1], HistoryCell::Tool { .. }));
+    assert!(matches!(app.transcript[2], HistoryCell::User(ref text) if text == "next remote turn"));
+    assert_eq!(app.action_cells.get("a1"), Some(&1));
 }
 
 #[tokio::test]

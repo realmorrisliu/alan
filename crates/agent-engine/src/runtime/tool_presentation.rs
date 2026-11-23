@@ -92,30 +92,11 @@ pub fn tool_presentation(
                 return Some(parsed);
             }
             let path = result_path(result, args)?;
-            let old = args.get("old_string").and_then(Value::as_str).unwrap_or("");
-            let new = args.get("new_string").and_then(Value::as_str).unwrap_or("");
-            Some(ToolResultPresentation::Diff {
-                path,
-                hunks: vec![line_diff(old, new)],
-            })
+            Some(edit_file_diff(path, args))
         }
         "write_file" => {
             let path = result_path(result, args)?;
-            let content = args.get("content").and_then(Value::as_str).unwrap_or("");
-            let mut lines: Vec<DiffLine> = content
-                .lines()
-                .map(|line| DiffLine::Added {
-                    text: line.to_string(),
-                })
-                .collect();
-            cap_diff_lines(&mut lines);
-            Some(ToolResultPresentation::Diff {
-                path,
-                hunks: vec![DiffHunk {
-                    header: Some("(new file)".to_string()),
-                    lines,
-                }],
-            })
+            Some(write_file_diff(path, args))
         }
         // read_file: the `FileContent` form carries only a path + line count, so
         // emitting it would hide the actual contents (the TUI prefers a
@@ -164,6 +145,94 @@ pub fn tool_presentation(
         // Dynamic/MCP/unknown tools: fall back to the flat preview.
         _ => None,
     }
+}
+
+/// Structured presentation derived purely from tool arguments before execution
+/// (for escalation/approval previews), without requiring a tool result.
+pub fn pre_execution_tool_presentation(name: &str, args: &Value) -> Option<ToolResultPresentation> {
+    match name {
+        "edit_file" => {
+            let path = non_empty_str(args.get("path"))?.to_string();
+            Some(edit_file_diff(path, args))
+        }
+        "write_file" => {
+            let path = non_empty_str(args.get("path"))?.to_string();
+            Some(write_file_diff(path, args))
+        }
+        "bash" => {
+            let cmd = args.get("command").and_then(Value::as_str)?;
+            let cmdline = format_bash_preview(cmd)?;
+            Some(ToolResultPresentation::Command {
+                cmdline,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                truncated: false,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn edit_file_diff(path: String, args: &Value) -> ToolResultPresentation {
+    let old = args.get("old_string").and_then(Value::as_str).unwrap_or("");
+    let new = args.get("new_string").and_then(Value::as_str).unwrap_or("");
+    ToolResultPresentation::Diff {
+        path,
+        hunks: vec![line_diff(old, new)],
+    }
+}
+
+fn write_file_diff(path: String, args: &Value) -> ToolResultPresentation {
+    let content = args.get("content").and_then(Value::as_str).unwrap_or("");
+    let mut lines: Vec<DiffLine> = content
+        .lines()
+        .map(|line| DiffLine::Added {
+            text: line.to_string(),
+        })
+        .collect();
+    cap_diff_lines(&mut lines);
+    ToolResultPresentation::Diff {
+        path,
+        hunks: vec![DiffHunk {
+            header: Some("(new file)".to_string()),
+            lines,
+        }],
+    }
+}
+
+fn non_empty_str(value: Option<&Value>) -> Option<&str> {
+    value.and_then(Value::as_str).filter(|s| !s.is_empty())
+}
+
+const PRE_EXEC_BASH_PREVIEW_MAX_LINES: usize = 8;
+const PRE_EXEC_BASH_PREVIEW_MAX_CHARS: usize = 1_000;
+
+fn format_bash_preview(cmd: &str) -> Option<String> {
+    let non_empty: Vec<&str> = cmd
+        .trim()
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if non_empty.is_empty() {
+        return None;
+    }
+    let mut lines: Vec<String> = non_empty
+        .iter()
+        .take(PRE_EXEC_BASH_PREVIEW_MAX_LINES)
+        .map(|line| truncate_chars((*line).to_string(), PRESENTATION_MAX_LINE_CHARS))
+        .collect();
+    if non_empty.len() > PRE_EXEC_BASH_PREVIEW_MAX_LINES {
+        lines.push(format!(
+            "… (+{} more lines)",
+            non_empty.len() - PRE_EXEC_BASH_PREVIEW_MAX_LINES
+        ));
+    }
+    Some(truncate_chars(
+        lines.join("\n"),
+        PRE_EXEC_BASH_PREVIEW_MAX_CHARS,
+    ))
 }
 
 /// Maximum characters carried per text stream in a presentation payload, so a

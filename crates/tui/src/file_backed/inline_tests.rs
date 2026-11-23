@@ -435,7 +435,7 @@ fn model_and_status_remain_visible_across_prompt_widths() {
         reason: None,
         presentation: None,
     });
-    for (width, status) in [(40, "waiting for approval"), (60, "waiting for approval")] {
+    for (width, status) in [(40, "Approval required"), (60, "Approval required")] {
         let line = app.context_line(width);
         let text = line
             .spans
@@ -496,7 +496,7 @@ fn model_and_status_remain_visible_across_prompt_widths() {
                     let attention = super::super::layout::attention_line(&app, 0)
                         .unwrap()
                         .to_string();
-                    assert!(attention.contains("waiting for approval"), "{attention}");
+                    assert!(attention.contains("Approval required"), "{attention}");
                     if selecting {
                         assert!(attention.contains("Selecting project"));
                     }
@@ -977,7 +977,7 @@ fn narrow_prompt_keeps_model_with_paused_deferred_and_uncertain_queue() {
         assert!(!text.starts_with(" · "), "{width}: {text}");
         assert!(text.contains("gpt-6.1-sol"), "{width}: {text}");
         let attention = app.attention_labels().join(" · ");
-        for cue in ["Paused", "uncertain", "deferred", "Queued 1"] {
+        for cue in ["Paused", "uncertain", "deferred", "1 queued"] {
             assert!(attention.contains(cue), "{attention}");
         }
     }

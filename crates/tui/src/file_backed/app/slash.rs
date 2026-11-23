@@ -125,6 +125,9 @@ impl FileBackedApp {
                 self.pending_remote_turn_start = None;
                 self.clear_late_thinking_latch();
                 self.scrollback_front_is_partial = false;
+                if self.confirmation.is_none() {
+                    self.staged_confirmation_outcome = None;
+                }
                 None
             }
             "help" => {

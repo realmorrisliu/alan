@@ -487,6 +487,7 @@ fn pending_response_resets_intent_only_when_it_consumes_the_draft() {
 #[test]
 fn request_response_write_keeps_the_yield_retryable_without_blocking_repeats() {
     use alan_agent_protocol::YieldKind;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     let mut app = FileBackedApp::new("/agent/root".into());
     app.set_pending_yield(crate::history::PendingYieldCell {
@@ -501,30 +502,33 @@ fn request_response_write_keeps_the_yield_retryable_without_blocking_repeats() {
         reason: None,
         presentation: None,
     });
-    app.composer.set_text("approve");
+    assert!(app.confirmation.is_some());
 
+    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
     let Some(FileBackedAction::Resume {
         request_id,
         retry_input,
         ..
-    }) = app.handle_submit()
+    }) = app.handle_key(enter)
     else {
-        panic!("confirmation should produce a response")
+        panic!("confirmation Enter should produce a response")
     };
+    assert!(app.composer.text().is_empty());
     app.begin_resume_write(request_id.clone());
-    assert!(app.handle_submit().is_none());
+    assert!(app.handle_key(enter).is_none());
 
     app.dispatch(FileBackedEvent::ResumeWriteCompleted {
         request_id: request_id.clone(),
         retry_input: retry_input.clone(),
         result: Err("temporarily unavailable".into()),
     });
-    assert_eq!(app.composer.text(), "approve");
+    assert!(app.composer.text().is_empty());
     assert!(app.pending_yield.is_some());
+    assert!(app.confirmation.is_some());
     assert!(app.response_in_flight.is_none());
 
     assert!(matches!(
-        app.handle_submit(),
+        app.handle_key(enter),
         Some(FileBackedAction::Resume { .. })
     ));
     app.begin_resume_write(request_id.clone());
@@ -534,7 +538,13 @@ fn request_response_write_keeps_the_yield_retryable_without_blocking_repeats() {
         result: Ok(()),
     });
     assert!(app.pending_yield.is_none());
-    assert_eq!(app.notice.as_deref(), Some("response sent"));
+    assert!(app.confirmation.is_none());
+    assert!(app.notice.is_none());
+    assert!(
+        app.rendered_history_lines(80)
+            .iter()
+            .any(|line| line.contains("Approved · Approve?"))
+    );
 }
 
 #[test]

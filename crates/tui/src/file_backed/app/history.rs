@@ -255,6 +255,9 @@ impl FileBackedApp {
     /// `Assistant` cell with no user message or yield after it. Interposed
     /// plan/notice cells are scanned over; a boundary stops the scan.
     pub(in crate::file_backed) fn current_assistant_cell(&self) -> Option<usize> {
+        if self.pending_yield.is_some() {
+            return None;
+        }
         for (idx, cell) in self.transcript.iter().enumerate().rev() {
             if self.queued_receipt_at(idx) {
                 continue;
@@ -264,7 +267,8 @@ impl FileBackedApp {
                 HistoryCell::User(_)
                 | HistoryCell::Command(_)
                 | HistoryCell::InputTail { .. }
-                | HistoryCell::PendingYield(_) => {
+                | HistoryCell::PendingYield(_)
+                | HistoryCell::ConfirmationReceipt { .. } => {
                     return None;
                 }
                 _ => {}

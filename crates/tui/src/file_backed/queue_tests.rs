@@ -28,7 +28,7 @@ async fn queue_initial_paused_hydration_is_not_ready() {
         .unwrap();
     let status = app.attention_labels().join(" · ").to_lowercase();
     assert!(
-        status.contains("paused") && status.contains("queued 1"),
+        status.contains("paused") && status.contains("1 queued"),
         "initial authoritative queue must precede Ready: {status}"
     );
     assert!(app.project_boundary_available(false));

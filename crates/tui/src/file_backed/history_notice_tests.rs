@@ -231,7 +231,7 @@ fn paused_status_regression() {
     }
     app.activity = UiActivitySnapshot::running(1);
     let (lines, _) = live_region_lines_at(&app, 120, 5_001);
-    assert!(lines[3].to_string().contains("Paused"));
+    assert!(!lines[3].to_string().contains("Paused"));
     assert!(
         lines[3]
             .to_string()
@@ -334,9 +334,9 @@ fn paused_status_confirmation_and_form_keep_static_controls() {
             presentation: None,
         });
         let cue = if app.form.is_some() {
-            "input form"
+            "Input required"
         } else {
-            "waiting for approval"
+            "Approval required"
         };
         for activity in [
             UiActivitySnapshot::running(1),
@@ -344,7 +344,7 @@ fn paused_status_confirmation_and_form_keep_static_controls() {
             UiActivitySnapshot::idle(),
         ] {
             app.apply_ui_event(UiEvent::Activity { snapshot: activity });
-            assert_eq!(app.activity_label(), Some("waiting for input"));
+            assert_eq!(app.activity_label(), Some(cue));
             assert!(!frame_needs_redraw(false, &app, 5_001, Some(4)));
             assert!(!frame_needs_redraw(false, &app, 6_001, Some(5)));
             assert!(frame_needs_redraw(true, &app, 5_001, Some(5)));

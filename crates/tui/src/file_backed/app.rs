@@ -22,7 +22,7 @@ use super::{ProjectAccess, ProjectControl, ProjectMountReceipt, project_dispatch
 
 pub(in crate::file_backed) mod action_modal;
 mod attachment;
-mod form_control;
+pub(in crate::file_backed) mod form_control;
 mod grouping;
 mod history;
 mod model_control;
@@ -77,8 +77,11 @@ pub(super) struct FileBackedApp {
     pub(super) thinking: UiThinkingSnapshot,
     pub(super) running_tools: Vec<RunningTool>,
     pub(super) pending_yield: Option<PendingYieldCell>,
-    response_in_flight: Option<String>,
+    pub(super) response_in_flight: Option<String>,
     pub(super) form: Option<FormState>,
+    pub(super) confirmation: Option<super::confirmation::ConfirmationState>,
+    pub(super) staged_confirmation_outcome: Option<super::confirmation::ConfirmationOutcomeDraft>,
+    pub(super) viewport_size: (u16, u16),
     pub(super) completion: Option<CompletionState>,
     pub(super) completion_sources: CompletionSources,
     pub(super) project_candidate: Option<std::path::PathBuf>,
@@ -176,6 +179,9 @@ impl FileBackedApp {
             pending_yield: None,
             response_in_flight: None,
             form: None,
+            confirmation: None,
+            staged_confirmation_outcome: None,
+            viewport_size: (80, 24),
             completion: None,
             completion_sources: CompletionSources {
                 commands: default_commands(),
@@ -366,6 +372,7 @@ impl FileBackedApp {
                         .filter(|ch| !ch.is_control())
                         .collect::<String>();
                     self.composer.insert_text(&text);
+                } else if self.handle_confirmation_paste(&text) {
                 } else if let Some(form) = self.form.as_mut() {
                     for ch in text.chars().filter(|ch| !ch.is_control()) {
                         form.insert_char(ch);
@@ -376,7 +383,10 @@ impl FileBackedApp {
                 }
                 None
             }
-            FileBackedEvent::Terminal(TerminalEvent::Resize(_, _)) => None,
+            FileBackedEvent::Terminal(TerminalEvent::Resize(cols, rows)) => {
+                self.viewport_size = (cols.max(1), rows.max(1));
+                None
+            }
             FileBackedEvent::Terminal(_) => None,
             FileBackedEvent::Output(text) => {
                 self.push_output(text);
@@ -539,12 +549,7 @@ impl FileBackedApp {
                 }
                 return None;
             }
-            self.auto_continue_on_empty_cancel = self
-                .queue
-                .snapshot
-                .as_ref()
-                .is_none_or(|q| q.pending_submission_ids.is_empty());
-            return Some(FileBackedAction::Interrupt);
+            return Some(self.interrupt_action());
         }
         if self.project_selection.is_some() {
             return self.handle_project_key(key);
@@ -652,12 +657,7 @@ impl FileBackedApp {
                 code: KeyCode::Esc, ..
             } => {
                 if self.interruptible_work_active(has_pending_submission) {
-                    self.auto_continue_on_empty_cancel = self
-                        .queue
-                        .snapshot
-                        .as_ref()
-                        .is_none_or(|q| q.pending_submission_ids.is_empty());
-                    Some(FileBackedAction::Interrupt)
+                    Some(self.interrupt_action())
                 } else {
                     self.notice = None;
                     None
@@ -799,7 +799,11 @@ impl FileBackedApp {
         }
         self.pending_yield = Some(pending.clone());
         self.sync_form();
+        self.sync_confirmation();
         self.completion = None;
+        if self.confirmation.is_some() {
+            return;
+        }
         // The request watcher can fire on `created:<id>` before the runtime has
         // written kind/prompt/options, so the first sync may insert a sparse
         // cell; later syncs for the same request must update it in place.
@@ -816,8 +820,10 @@ impl FileBackedApp {
     }
 
     pub(super) fn clear_pending_yield(&mut self) {
+        self.settle_confirmation_on_external_clear();
         self.pending_yield = None;
         self.form = None;
+        self.confirmation = None;
         self.refresh_completion();
     }
 

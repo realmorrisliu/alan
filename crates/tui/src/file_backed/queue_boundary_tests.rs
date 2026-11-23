@@ -515,10 +515,10 @@ async fn remaining_typed_queue_refresh_updates_once_only_receipt_hint() {
         app.queue
             .apply(&owner, queue::read_queue(&shell, &owner).await);
         queue::confirm_local_receipts(&mut app, &pending);
-        if state == "active" {
+        if matches!(state, "active" | "queued") {
             assert!(
                 app.notice.is_none(),
-                "active admission should not flash noisy notice: {:?}",
+                "{state} admission should not flash noisy notice: {:?}",
                 app.notice
             );
         } else {

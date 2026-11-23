@@ -878,7 +878,11 @@ fn pty_e2e_m2_ergonomics_multiline_editor_modals_status_and_yield() -> Result<()
         );
         write_master(&master_write, b"2")?;
         screen.wait_for("confirmation answered", Duration::from_secs(4), |s, _| {
-            s.contains("response sent") && s.contains("Ctrl+O details") && s.contains("p: plans")
+            s.contains("Allowed for session")
+                && s.contains("Allow file mutation?")
+                && !s.contains("[1] approve")
+                && s.contains("Ctrl+O details")
+                && s.contains("p: plans")
         })?;
 
         // /new clears earlier tape messages and usage cleanly.
