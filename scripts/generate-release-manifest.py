@@ -19,6 +19,7 @@ SUPPORTED_TARGETS = (
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
 )
+SUPPORTED_CHANNELS = ("stable", "beta")
 
 DEFAULT_REPO = "realmorrisliu/alan"
 DEFAULT_INSTALLER_URL = "https://alanworks.app/install.sh"
@@ -230,20 +231,56 @@ def detect_signing_status(
     return signed, notarized
 
 
-def validate_version_and_tag(version: str, tag: str | None) -> tuple[str, str]:
+def validate_version_and_tag(
+    version: str,
+    tag: str | None,
+    channel: str = "stable",
+) -> tuple[str, str]:
+    if channel not in SUPPORTED_CHANNELS:
+        raise ManifestError(
+            f"Invalid channel {channel!r} (expected one of {', '.join(SUPPORTED_CHANNELS)})"
+        )
     clean_version = version.strip()
     if not clean_version:
         raise ManifestError("version must not be empty")
-    if clean_version.startswith("v"):
+    if clean_version.startswith(("v", "V")):
         raise ManifestError(f"version must not start with 'v': {clean_version!r}")
     if any(ch.isspace() for ch in clean_version):
         raise ManifestError(f"version contains whitespace: {clean_version!r}")
 
-    expected_tag = f"v{clean_version}"
-    resolved_tag = expected_tag if tag is None else tag.strip()
-    if resolved_tag != expected_tag:
-        raise ManifestError(f"tag {resolved_tag!r} does not match version {clean_version!r} (expected {expected_tag!r})")
+    if channel == "stable":
+        expected_tag = f"v{clean_version}"
+        resolved_tag = expected_tag if tag is None else tag.strip()
+        if resolved_tag != expected_tag:
+            raise ManifestError(
+                f"tag {resolved_tag!r} does not match version {clean_version!r} (expected {expected_tag!r})"
+            )
+        return clean_version, resolved_tag
+
+    if "-" not in clean_version:
+        raise ManifestError(
+            f"beta version {clean_version!r} must include a pre-release suffix containing '-'"
+        )
+    _, pre = clean_version.split("-", 1)
+    if not pre:
+        raise ManifestError(f"beta version {clean_version!r} has an empty pre-release suffix")
+    resolved_tag = "beta" if tag is None else tag.strip()
+    if resolved_tag not in ("beta", f"v{clean_version}"):
+        raise ManifestError(
+            f"beta tag {resolved_tag!r} must be 'beta' or 'v{clean_version}'"
+        )
     return clean_version, resolved_tag
+
+
+def validate_commit(commit: str | None) -> str | None:
+    if commit is None:
+        return None
+    clean_commit = commit.strip()
+    if not clean_commit:
+        return None
+    if any(ch.isspace() for ch in clean_commit):
+        raise ManifestError(f"commit contains whitespace: {clean_commit!r}")
+    return clean_commit
 
 
 def validate_published_at(published_at: str | None) -> str:
@@ -264,6 +301,8 @@ def build_release_manifest(
     assets_dir: Path,
     version: str,
     tag: str | None = None,
+    channel: str = "stable",
+    commit: str | None = None,
     repo: str = DEFAULT_REPO,
     published_at: str | None = None,
     installer_url: str = DEFAULT_INSTALLER_URL,
@@ -279,7 +318,8 @@ def build_release_manifest(
     if not assets_dir.is_dir():
         raise ManifestError(f"Assets directory does not exist: {assets_dir}")
 
-    clean_version, resolved_tag = validate_version_and_tag(version, tag)
+    clean_version, resolved_tag = validate_version_and_tag(version, tag, channel)
+    clean_commit = validate_commit(commit)
     resolved_published_at = validate_published_at(published_at)
 
     target_list = list(targets)
@@ -358,14 +398,17 @@ def build_release_manifest(
     manifest = {
         "schema_version": 1,
         "product": "alan",
+        "channel": channel,
         "version": clean_version,
         "tag": resolved_tag,
         "published_at": resolved_published_at,
         "release_url": resolved_release_url,
         "notes_url": resolved_notes_url,
         "installer_url": installer_url,
-        "targets": target_records,
     }
+    if clean_commit is not None:
+        manifest["commit"] = clean_commit
+    manifest["targets"] = target_records
 
     checksum_rows.sort(key=lambda item: item[0])
     checksums_text = "".join(f"{digest}  {asset}\n" for asset, digest in checksum_rows)
@@ -383,7 +426,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assets-dir", type=Path, required=True, help="Directory with built release assets")
     parser.add_argument("--version", required=True, help="Release version without leading 'v' (e.g. 0.1.0)")
-    parser.add_argument("--tag", help="Release tag (defaults to v<version>, must match v<version>)")
+    parser.add_argument("--tag", help="Release tag (defaults to v<version> for stable or 'beta' for beta)")
+    parser.add_argument(
+        "--channel",
+        choices=SUPPORTED_CHANNELS,
+        default="stable",
+        help="Release channel ('stable' or 'beta', default: stable)",
+    )
+    parser.add_argument("--commit", help="Optional short Git commit SHA for the release")
     parser.add_argument("--repo", default=DEFAULT_REPO, help=f"GitHub owner/repo (default: {DEFAULT_REPO})")
     parser.add_argument("--published-at", help="RFC3339 UTC timestamp (default: current UTC time)")
     parser.add_argument(
@@ -442,6 +492,8 @@ def main(argv: list[str] | None = None) -> int:
         assets_dir=args.assets_dir,
         version=args.version,
         tag=args.tag,
+        channel=args.channel,
+        commit=args.commit,
         repo=args.repo,
         published_at=args.published_at,
         installer_url=args.installer_url,

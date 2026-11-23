@@ -8,8 +8,16 @@ lifecycle work, including explicit recovery selection.
 
 ## Install prebuilt release binaries
 
+Stable channel (default, tagged `v*` releases):
+
 ```bash
 curl -fsSL https://alanworks.app/install.sh | sh
+```
+
+Beta channel (rolling pre-release builds from `main`, Apple Developer ID signed & notarized):
+
+```bash
+curl -fsSL https://alanworks.app/install.sh | sh -s -- --channel beta
 ```
 
 The remote installer (`scripts/install.sh`, hosted at `https://alanworks.app/install.sh`)
@@ -35,8 +43,9 @@ Supported release targets:
 Installer flags and environment variables:
 
 - `--version <VER_OR_TAG>` (`ALAN_VERSION`): install a specific version (`0.1.0` or `v0.1.0`).
+- `--channel <stable|beta>` (`ALAN_CHANNEL`): select release channel (default `stable`; `beta` selects `https://alanworks.app/beta.json`).
 - `--install-dir <DIR>` (`ALAN_INSTALL_DIR`): override destination directory (default `~/.local/bin`).
-- `--manifest-url <URL>` (`ALAN_MANIFEST_URL`): override `latest.json` URL (default `https://alanworks.app/latest.json`).
+- `--manifest-url <URL>` (`ALAN_MANIFEST_URL`): override release manifest URL (`latest.json` or `beta.json`).
 - `--force` (`ALAN_INSTALL_FORCE=1`): overwrite an existing unowned or modified `$INSTALL_DIR/alan`.
 - `--dry-run`: validate platform, manifest, and ownership preflight without writing to disk.
 - `--no-modify-path` (`ALAN_NO_MODIFY_PATH=1`): skip adding `$INSTALL_DIR` to shell startup files.
@@ -44,21 +53,31 @@ Installer flags and environment variables:
 
 ## Self-update (`alan update`)
 
-Installed binaries include built-in self-update over the same `latest.json` and
-ownership contract:
+Installed binaries include built-in self-update over `latest.json` (`stable`)
+or `beta.json` (`beta`) and the same `.alan-cli-manifest` ownership contract:
 
 ```bash
-alan update --check             # check whether a newer release is available
+alan update --check             # check whether a newer release is available on the binary's channel
 alan update --check --json      # machine-readable status check
 alan update                     # download, verify SHA-256, and replace atomically
+alan update --channel beta      # switch from stable to rolling beta builds from main
+alan update --channel stable    # switch back from beta to stable releases
 alan update --version 0.1.0     # target a specific release (--force to downgrade)
 ```
 
+Channel and endpoint precedence is:
+`--manifest-url` > `ALAN_MANIFEST_URL` / `ALAN_RELEASE_MANIFEST_URL` > `--version` > `--channel` / `ALAN_CHANNEL` > compiled binary channel (`ALAN_RELEASE_CHANNEL`).
+Explicit `--channel <target>` allows switching back from `beta` (`0.1.6-beta.*`)
+to `stable` (`0.1.5`) without passing `--version` + `--force`; same-channel
+downgrades remain refused unless both `--version` and `--force` are supplied.
+
 Interactive TUI launches also read a cached non-blocking 24-hour release check
-(`services/updater/last-check.json` inside the System Store) and surface a quiet
-notice when a newer version is available. Set `ALAN_NO_UPDATE_CHECK=1` (or
-`CI=1`) to disable startup checks; `--ephemeral` and piped/non-TTY runs skip
-checks automatically.
+(`services/updater/last-check.json` inside the System Store) against the current
+binary's channel endpoint (`latest.json` or `beta.json`), invalidate the cache
+automatically if the binary channel changed, and surface a quiet notice
+(`Update available: ...` or `Beta update available: ...`) when a newer version is
+available. Set `ALAN_NO_UPDATE_CHECK=1` (or `CI=1`) to disable startup checks;
+`--ephemeral` and piped/non-TTY runs skip checks automatically.
 
 ## Ownership and upgrade safety
 
@@ -72,7 +91,7 @@ ownership and locking contract:
 - An unowned or locally modified `$INSTALL_DIR/alan` is refused unless `--force` (`ALAN_INSTALL_FORCE=1`) is passed explicitly.
 - Handled `INT`/`HUP`/`TERM` interruption during publication restores prior executables and receipts. After an unhandled termination, stop any remaining installer and inspect retained `.alan-cli-install.*` recovery files before removing the stale lock directory.
 
-## Apple Developer ID signing and release manifest (`latest.json`)
+## Apple Developer ID signing and release manifests (`latest.json` / `beta.json`)
 
 macOS release executables (`aarch64-apple-darwin` and `x86_64-apple-darwin`) are
 signed with Apple Developer ID Application (`codesign --options runtime --timestamp`)
@@ -81,17 +100,26 @@ support `xcrun stapler staple`, releases verify `codesign --verify --strict --ve
 and publish signing proof and notary submission JSON artifacts alongside each
 release.
 
-`https://alanworks.app/latest.json` proxies the latest GitHub Release manifest
-(`https://github.com/realmorrisliu/alan/releases/latest/download/latest.json`),
-and every `v<version>` release attaches `latest.json`, `checksums.txt`, and
-per-archive `.sha256` files:
+Two release channels share `schema_version: 1`:
+
+- `stable` (`https://alanworks.app/latest.json`, cached `max-age=300`): proxies `https://github.com/realmorrisliu/alan/releases/latest/download/latest.json` for tagged `v<version>` releases.
+- `beta` (`https://alanworks.app/beta.json`, cached `max-age=60`): proxies `https://github.com/realmorrisliu/alan/releases/download/beta/latest.json` for rolling pre-releases built from `main` (`<next_patch>-beta.<YYYYMMDD>.<run_number>`, rolling `beta` tag, retaining the current + 1 previous archive version).
+
+Release builds inject `ALAN_BUILD_VERSION`, `ALAN_BUILD_CHANNEL`, and
+`ALAN_BUILD_COMMIT` at compile time via `crates/alan/build.rs` without mutating
+`Cargo.toml`, so `alan --version` displays channel and commit metadata (for
+example `0.1.6-beta.20261123.42 (beta, 6c1dfd7)`) while `alan update` compares
+pure SemVer (`ALAN_VERSION`). Every release attaches `latest.json`, `checksums.txt`,
+and per-archive `.sha256` files:
 
 ```json
 {
   "schema_version": 1,
   "product": "alan",
+  "channel": "stable",
   "version": "0.1.0",
   "tag": "v0.1.0",
+  "commit": "6c1dfd7",
   "published_at": "2026-11-20T00:00:00Z",
   "release_url": "https://github.com/realmorrisliu/alan/releases/tag/v0.1.0",
   "notes_url": "https://github.com/realmorrisliu/alan/releases/tag/v0.1.0",

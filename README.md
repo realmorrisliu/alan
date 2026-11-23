@@ -152,16 +152,18 @@ because local hooks can be bypassed with `--no-verify`.
 Standalone CLI distribution (prebuilt releases + local source workflow):
 
 ```bash
-curl -fsSL https://alanworks.app/install.sh | sh   # end-user install (macOS notarized / Linux GNU)
-alan update                                        # built-in self-updater via latest.json
+curl -fsSL https://alanworks.app/install.sh | sh                       # stable channel (default)
+curl -fsSL https://alanworks.app/install.sh | sh -s -- --channel beta  # rolling beta from main
+alan update                                        # built-in self-updater (or --channel beta|stable)
 
 just install                                       # developer workflow: build & install from source
 just standalone-distribution-test                  # verify local source installer & archive contract
 bash scripts/test-remote-installer.sh              # verify remote POSIX curl installer contract
 ```
 
-Remote curl installation, `alan update`, Apple Developer ID signing and notarization,
-the `latest.json` release manifest schema, and `.alan-cli-manifest` ownership are documented
+Remote curl installation, `alan update` (`stable` via `latest.json` and `beta` via
+`beta.json`), Apple Developer ID signing and notarization, the release manifest
+schema, and `.alan-cli-manifest` ownership are documented
 [here](docs/standalone_cli_distribution.md). Desktop source has been removed;
 any ordinary terminal hosts Alan.
 

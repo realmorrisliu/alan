@@ -108,10 +108,20 @@ write_manifest() {
     local compact="${3:-0}"
     local override_sha="${4:-}"
     local override_url="${5:-}"
-    python3 - "$version" "$BASE_URL" "$HTTP_ROOT/releases/download/v$version" "$out_path" "$compact" "$override_sha" "$override_url" <<'PY'
+    local channel="${6:-stable}"
+    local tag="${7:-}"
+    local asset_dir="${8:-$HTTP_ROOT/releases/download/v$version}"
+    if [[ -z "$tag" ]]; then
+        if [[ "$channel" == "beta" ]]; then
+            tag="beta"
+        else
+            tag="v$version"
+        fi
+    fi
+    python3 - "$version" "$BASE_URL" "$asset_dir" "$out_path" "$compact" "$override_sha" "$override_url" "$channel" "$tag" <<'PY'
 import hashlib, json, os, sys
 
-version, base_url, asset_dir, out_path, compact, override_sha, override_url = sys.argv[1:]
+version, base_url, asset_dir, out_path, compact, override_sha, override_url, channel, tag = sys.argv[1:]
 targets = {}
 for triple in [
     "aarch64-apple-darwin",
@@ -124,7 +134,7 @@ for triple in [
     with open(path, "rb") as f:
         data = f.read()
     digest = override_sha if override_sha else hashlib.sha256(data).hexdigest()
-    url = override_url if override_url else f"{base_url}/releases/download/v{version}/{asset}"
+    url = override_url if override_url else f"{base_url}/releases/download/{tag}/{asset}"
     targets[triple] = {
         "asset": asset,
         "url": url,
@@ -137,14 +147,17 @@ for triple in [
 payload = {
     "schema_version": 1,
     "product": "alan",
+    "channel": channel,
     "version": version,
-    "tag": f"v{version}",
+    "tag": tag,
     "published_at": "2026-11-20T00:00:00Z",
-    "release_url": f"https://github.com/realmorrisliu/alan/releases/tag/v{version}",
-    "notes_url": f"https://github.com/realmorrisliu/alan/releases/tag/v{version}",
+    "release_url": f"https://github.com/realmorrisliu/alan/releases/tag/{tag}",
+    "notes_url": f"https://github.com/realmorrisliu/alan/releases/tag/{tag}",
     "installer_url": "https://alanworks.app/install.sh",
     "targets": targets,
 }
+if channel == "beta":
+    payload["commit"] = "6c1dfd7"
 with open(out_path, "w", encoding="utf-8") as f:
     if compact == "1":
         json.dump(payload, f, separators=(",", ":"))
@@ -154,10 +167,18 @@ with open(out_path, "w", encoding="utf-8") as f:
 PY
 }
 
+BETA_VERSION="0.2.0-beta.20261123.42"
+mkdir -p "$HTTP_ROOT/releases/download/beta"
+for target in "${TARGETS[@]}"; do
+    build_stub_tarball "$BETA_VERSION" "$target" "$HTTP_ROOT/releases/download/beta"
+done
+
 write_manifest "0.1.0" "$HTTP_ROOT/releases/download/v0.1.0/latest.json" 0
 write_manifest "0.2.0" "$HTTP_ROOT/releases/download/v0.2.0/latest.json" 0
 write_manifest "0.2.0" "$HTTP_ROOT/latest-0.2.0-minified.json" 1
 write_manifest "0.1.0" "$HTTP_ROOT/latest.json" 0
+write_manifest "$BETA_VERSION" "$HTTP_ROOT/beta.json" 0 "" "" "beta" "beta" "$HTTP_ROOT/releases/download/beta"
+write_manifest "$BETA_VERSION" "$HTTP_ROOT/beta-minified.json" 1 "" "" "beta" "beta" "$HTTP_ROOT/releases/download/beta"
 
 # Create corrupt archive & path traversal archive
 printf 'not a gzip archive\n' >"$HTTP_ROOT/corrupt.tar.gz"
@@ -395,4 +416,128 @@ grep -Fq "aarch64-apple-darwin" "$TEST_ROOT/rosetta.out" \
 grep -Fq "Rosetta 2" "$TEST_ROOT/rosetta.err" \
     || fail "Rosetta 2 note missing"
 
-printf 'Remote installer checks passed (13 scenarios).\n'
+# 14. --channel / ALAN_CHANNEL validation & retired ALAN_INSTALL_CHANNEL
+for bad_chan in nightly dev foo; do
+    if HOME="$FRESH_HOME" "$INSTALLER" --channel "$bad_chan" --dry-run >"$TEST_ROOT/bad-chan.out" 2>"$TEST_ROOT/bad-chan.err"; then
+        fail "installer accepted unknown --channel '$bad_chan'"
+    fi
+    grep -Fq "unknown release channel" "$TEST_ROOT/bad-chan.err" \
+        || fail "missing unknown release channel error for --channel '$bad_chan'"
+
+    if ALAN_CHANNEL="$bad_chan" HOME="$FRESH_HOME" "$INSTALLER" --dry-run >"$TEST_ROOT/bad-chan.out" 2>"$TEST_ROOT/bad-chan.err"; then
+        fail "installer accepted unknown ALAN_CHANNEL='$bad_chan'"
+    fi
+    grep -Fq "unknown release channel" "$TEST_ROOT/bad-chan.err" \
+        || fail "missing unknown release channel error for ALAN_CHANNEL='$bad_chan'"
+done
+
+if ALAN_INSTALL_CHANNEL=beta HOME="$FRESH_HOME" "$INSTALLER" --dry-run >"$TEST_ROOT/ret-beta.out" 2>"$TEST_ROOT/ret-beta.err"; then
+    fail "installer accepted retired ALAN_INSTALL_CHANNEL=beta"
+fi
+grep -Fq "ALAN_INSTALL_CHANNEL" "$TEST_ROOT/ret-beta.err" \
+    || fail "missing ALAN_INSTALL_CHANNEL retirement error"
+
+# 15. Beta channel default manifest URL mapping, precedence, and POSIX awk beta parsing
+BETA_MOCK_BIN="$TEST_ROOT/beta-mock-bin"
+mkdir -p "$BETA_MOCK_BIN"
+for cmd in sh awk sed tr grep mkdir rmdir rm mv cp chmod mktemp tar uname wget shasum sha256sum openssl sleep cat python3 jq dirname basename; do
+    if resolved="$(command -v "$cmd" 2>/dev/null)"; then
+        ln -sf "$resolved" "$BETA_MOCK_BIN/$cmd"
+    fi
+done
+REAL_CURL="$(command -v curl)"
+cat >"$BETA_MOCK_BIN/curl" <<EOF
+#!/bin/sh
+out=""
+url=""
+prev=""
+for arg in "\$@"; do
+    case "\$prev" in
+        -o) out="\$arg"; prev=""; continue ;;
+    esac
+    case "\$arg" in
+        -o) prev="-o" ;;
+        https://*|http://*) url="\$arg" ;;
+    esac
+done
+if [ -n "\${ALAN_TEST_CURL_LOG:-}" ]; then
+    printf '%s\n' "\$url" >>"\$ALAN_TEST_CURL_LOG"
+fi
+case "\$url" in
+    https://alanworks.app/beta.json)
+        cp "\${ALAN_TEST_BETA_MANIFEST:-$HTTP_ROOT/beta.json}" "\$out"
+        exit 0
+        ;;
+    https://alanworks.app/latest.json)
+        cp "$HTTP_ROOT/latest.json" "\$out"
+        exit 0
+        ;;
+esac
+exec "$REAL_CURL" "\$@"
+EOF
+chmod +x "$BETA_MOCK_BIN/curl"
+
+BETA_BIN="$TEST_ROOT/beta-bin"
+CURL_LOG="$TEST_ROOT/curl.log"
+PATH="$BETA_MOCK_BIN" ALAN_TEST_CURL_LOG="$CURL_LOG" HOME="$FRESH_HOME" "$INSTALLER" \
+    --channel beta \
+    --install-dir "$BETA_BIN" \
+    --no-modify-path >/dev/null
+[[ "$("$BETA_BIN/alan" --version)" == "alan $BETA_VERSION" ]] \
+    || fail "--channel beta did not install $BETA_VERSION"
+[[ "$(cat "$BETA_BIN/.alan-cli-manifest")" == "alan|$(sha256 "$BETA_BIN/alan")" ]] \
+    || fail "--channel beta did not preserve .alan-cli-manifest ownership format"
+grep -Fq "https://alanworks.app/beta.json" "$CURL_LOG" \
+    || fail "--channel beta did not request https://alanworks.app/beta.json"
+
+: >"$CURL_LOG"
+PATH="$BETA_MOCK_BIN" ALAN_TEST_CURL_LOG="$CURL_LOG" ALAN_CHANNEL=beta HOME="$FRESH_HOME" "$INSTALLER" \
+    --install-dir "$BETA_BIN" \
+    --no-modify-path >/dev/null
+grep -Fq "https://alanworks.app/beta.json" "$CURL_LOG" \
+    || fail "ALAN_CHANNEL=beta did not request https://alanworks.app/beta.json"
+
+# --channel stable overrides ALAN_CHANNEL=beta
+: >"$CURL_LOG"
+PATH="$BETA_MOCK_BIN" ALAN_TEST_CURL_LOG="$CURL_LOG" ALAN_CHANNEL=beta HOME="$FRESH_HOME" "$INSTALLER" \
+    --channel stable \
+    --install-dir "$BETA_BIN" \
+    --dry-run >/dev/null
+grep -Fq "https://alanworks.app/latest.json" "$CURL_LOG" \
+    || fail "--channel stable did not override ALAN_CHANNEL=beta"
+
+# Channel mismatch on default endpoint is rejected
+if PATH="$BETA_MOCK_BIN" ALAN_TEST_BETA_MANIFEST="$HTTP_ROOT/latest.json" HOME="$FRESH_HOME" "$INSTALLER" \
+    --channel beta \
+    --install-dir "$BETA_BIN" \
+    --dry-run >"$TEST_ROOT/mismatch.out" 2>"$TEST_ROOT/mismatch.err"; then
+    fail "installer accepted stable manifest when --channel beta was selected"
+fi
+grep -Fq "does not match requested channel" "$TEST_ROOT/mismatch.err" \
+    || fail "missing channel mismatch error"
+
+# --manifest-url and ALAN_MANIFEST_URL override ALAN_CHANNEL=beta
+ALAN_CHANNEL=beta HOME="$FRESH_HOME" "$INSTALLER" \
+    --manifest-url "$BASE_URL/latest.json" \
+    --install-dir "$BETA_BIN" \
+    --no-modify-path >/dev/null
+[[ "$("$BETA_BIN/alan" --version)" == "alan 0.1.0" ]] \
+    || fail "--manifest-url did not override ALAN_CHANNEL=beta"
+
+ALAN_CHANNEL=beta ALAN_MANIFEST_URL="$BASE_URL/beta.json" HOME="$FRESH_HOME" "$INSTALLER" \
+    --install-dir "$BETA_BIN" \
+    --no-modify-path >/dev/null
+[[ "$("$BETA_BIN/alan" --version)" == "alan $BETA_VERSION" ]] \
+    || fail "ALAN_MANIFEST_URL did not install beta"
+
+# Pure-POSIX awk JSON fallback on minified beta manifest
+AWK_BETA_BIN="$TEST_ROOT/awk-beta-bin"
+PATH="$POSIX_TOOLS" HOME="$FRESH_HOME" "$INSTALLER" \
+    --channel beta \
+    --manifest-url "$BASE_URL/beta-minified.json" \
+    --install-dir "$AWK_BETA_BIN" \
+    --no-modify-path >/dev/null
+[[ "$("$AWK_BETA_BIN/alan" --version)" == "alan $BETA_VERSION" ]] \
+    || fail "POSIX awk fallback failed on minified beta.json"
+
+printf 'Remote installer checks passed (15 scenarios).\n'

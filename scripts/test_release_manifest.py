@@ -167,6 +167,7 @@ class ReleaseManifestTests(unittest.TestCase):
             [
                 "schema_version",
                 "product",
+                "channel",
                 "version",
                 "tag",
                 "published_at",
@@ -178,6 +179,7 @@ class ReleaseManifestTests(unittest.TestCase):
         )
         self.assertEqual(data["schema_version"], 1)
         self.assertEqual(data["product"], "alan")
+        self.assertEqual(data["channel"], "stable")
         self.assertEqual(data["version"], "0.1.0")
         self.assertEqual(data["tag"], "v0.1.0")
         self.assertEqual(data["published_at"], "2026-11-20T00:00:00Z")
@@ -434,6 +436,109 @@ class ReleaseManifestTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(manifest_mod.ManifestError, "Ambiguous duplicate"):
             manifest_mod.build_release_manifest(assets_dir=self.assets_dir, version="0.1.0")
+
+    def test_generates_beta_manifest_with_commit_and_rolling_tag(self) -> None:
+        beta_version = "0.1.6-beta.20261123.42"
+        records = self.populate_all_targets(version=beta_version, nested=True)
+        latest_path = self.root / "out" / "latest.json"
+        checksums_path = self.root / "out" / "checksums.txt"
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--assets-dir",
+                str(self.assets_dir),
+                "--version",
+                beta_version,
+                "--tag",
+                "beta",
+                "--channel",
+                "beta",
+                "--commit",
+                "6c1dfd7",
+                "--published-at",
+                "2026-11-23T00:00:00Z",
+                "--verify-archives",
+                "--require-apple-notarized",
+                "--output-manifest",
+                str(latest_path),
+                "--output-checksums",
+                str(checksums_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        data = json.loads(latest_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["schema_version"], 1)
+        self.assertEqual(data["product"], "alan")
+        self.assertEqual(data["channel"], "beta")
+        self.assertEqual(data["version"], beta_version)
+        self.assertEqual(data["tag"], "beta")
+        self.assertEqual(data["commit"], "6c1dfd7")
+        self.assertEqual(
+            data["release_url"], "https://github.com/realmorrisliu/alan/releases/tag/beta"
+        )
+        for target, (digest, size) in records.items():
+            entry = data["targets"][target]
+            expected_asset = f"alan-{beta_version}-{target}.tar.gz"
+            self.assertEqual(
+                entry["url"],
+                f"https://github.com/realmorrisliu/alan/releases/download/beta/{expected_asset}",
+            )
+            self.assertEqual(entry["sha256"], digest)
+            self.assertEqual(entry["size"], size)
+
+    def test_beta_channel_validation_rules(self) -> None:
+        beta_version = "0.1.6-beta.20261123.42"
+        self.populate_all_targets(version=beta_version, with_apple_proofs=False)
+
+        # Explicit SemVer tag v<version> is also allowed on beta.
+        tagged_manifest, _ = manifest_mod.build_release_manifest(
+            assets_dir=self.assets_dir,
+            version=beta_version,
+            tag=f"v{beta_version}",
+            channel="beta",
+        )
+        self.assertEqual(tagged_manifest["tag"], f"v{beta_version}")
+        self.assertNotIn("commit", tagged_manifest)
+
+        # Default tag for beta is "beta".
+        default_beta, _ = manifest_mod.build_release_manifest(
+            assets_dir=self.assets_dir,
+            version=beta_version,
+            channel="beta",
+        )
+        self.assertEqual(default_beta["tag"], "beta")
+
+        # Unknown channel rejected.
+        with self.assertRaisesRegex(manifest_mod.ManifestError, "Invalid channel"):
+            manifest_mod.build_release_manifest(
+                assets_dir=self.assets_dir,
+                version=beta_version,
+                channel="nightly",
+            )
+
+        # Mismatched beta tag rejected.
+        with self.assertRaisesRegex(manifest_mod.ManifestError, "must be 'beta' or"):
+            manifest_mod.build_release_manifest(
+                assets_dir=self.assets_dir,
+                version=beta_version,
+                tag="v0.1.5",
+                channel="beta",
+            )
+
+        # Beta version without '-' pre-release suffix rejected.
+        self.populate_all_targets(version="0.1.6", with_apple_proofs=False)
+        with self.assertRaisesRegex(manifest_mod.ManifestError, "pre-release suffix"):
+            manifest_mod.build_release_manifest(
+                assets_dir=self.assets_dir,
+                version="0.1.6",
+                tag="beta",
+                channel="beta",
+            )
 
 
 if __name__ == "__main__":

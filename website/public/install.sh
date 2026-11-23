@@ -7,7 +7,10 @@ set -eu
 # and installs the standalone `alan` executable.
 
 DEFAULT_MANIFEST_URL="https://alanworks.app/latest.json"
+DEFAULT_BETA_MANIFEST_URL="https://alanworks.app/beta.json"
 DEFAULT_RELEASE_BASE_URL="https://github.com/realmorrisliu/alan/releases/download"
+
+CHANNEL="${ALAN_CHANNEL:-stable}"
 
 MANIFEST_URL="${ALAN_MANIFEST_URL:-${ALAN_RELEASE_MANIFEST_URL:-$DEFAULT_MANIFEST_URL}}"
 MANIFEST_URL_EXPLICIT=0
@@ -60,8 +63,9 @@ Install the standalone Alan CLI (`alan`) from verified release artifacts.
 
 Options:
   --version <VER_OR_TAG>   Install a specific version (e.g. 0.1.0 or v0.1.0)
+  --channel <CHANNEL>      Select release channel: stable or beta (default: stable)
   --install-dir <DIR>      Target directory (default: ~/.local/bin)
-  --manifest-url <URL>     Override latest.json manifest URL
+  --manifest-url <URL>     Override release manifest URL
   --force                  Overwrite an unowned or modified existing `alan` binary
   --dry-run                Validate target and manifest without changing the filesystem
   --no-modify-path         Do not add the install directory to shell startup files
@@ -69,6 +73,7 @@ Options:
 
 Environment variables:
   ALAN_VERSION             Same as --version
+  ALAN_CHANNEL             Same as --channel (stable or beta; beta uses https://alanworks.app/beta.json)
   ALAN_INSTALL_DIR         Same as --install-dir
   ALAN_MANIFEST_URL        Same as --manifest-url (default: https://alanworks.app/latest.json)
   ALAN_RELEASE_BASE_URL    Release download base URL for --version lookups
@@ -76,6 +81,13 @@ Environment variables:
   ALAN_NO_MODIFY_PATH=1    Same as --no-modify-path
   ALAN_TARGET              Explicit Rust target triple override
 EOF
+}
+
+validate_channel() {
+    case "$1" in
+        stable|beta) ;;
+        *) fail "unknown release channel '$1' (expected 'stable' or 'beta')" ;;
+    esac
 }
 
 parse_args() {
@@ -89,6 +101,16 @@ parse_args() {
             --version=*)
                 REQUESTED_VERSION="${1#--version=}"
                 [ -n "$REQUESTED_VERSION" ] || fail "--version requires a non-empty value"
+                shift
+                ;;
+            --channel)
+                [ "$#" -ge 2 ] || fail "--channel requires a value"
+                CHANNEL="$2"
+                shift 2
+                ;;
+            --channel=*)
+                CHANNEL="${1#--channel=}"
+                [ -n "$CHANNEL" ] || fail "--channel requires a non-empty value"
                 shift
                 ;;
             --install-dir)
@@ -134,6 +156,15 @@ parse_args() {
                 ;;
         esac
     done
+
+    validate_channel "$CHANNEL"
+    if [ "$MANIFEST_URL_EXPLICIT" = "0" ]; then
+        if [ "$CHANNEL" = "beta" ]; then
+            MANIFEST_URL="$DEFAULT_BETA_MANIFEST_URL"
+        else
+            MANIFEST_URL="$DEFAULT_MANIFEST_URL"
+        fi
+    fi
 
     if [ -z "$INSTALL_DIR" ]; then
         [ -n "${HOME:-}" ] || fail "HOME is unset; pass --install-dir <DIR>"
@@ -329,8 +360,8 @@ normalize_version() {
     esac
 }
 
-# Extract fields from latest.json using python3, jq, or pure POSIX awk fallback.
-# Prints 6 tab-free lines: schema_version, product, version, tag, target_url, target_sha256, signed, notarized.
+# Extract fields from latest.json/beta.json using python3, jq, or pure POSIX awk fallback.
+# Prints 9 lines: schema_version, product, version, tag, target_url, target_sha256, signed, notarized, channel.
 parse_manifest_fields() {
     _pm_file="$1"
     _pm_target="$2"
@@ -352,6 +383,7 @@ schema = data.get("schema_version", "")
 product = data.get("product", "")
 version = data.get("version", "")
 tag = data.get("tag", "")
+channel = data.get("channel") or "stable"
 targets = data.get("targets") or {}
 entry = targets.get(target) if isinstance(targets, dict) else None
 if not isinstance(entry, dict):
@@ -362,7 +394,7 @@ sha256 = entry.get("sha256", "")
 signed = "true" if entry.get("signed") is True else "false"
 notarized = "true" if entry.get("notarized") is True else "false"
 
-fields = [str(schema), str(product), str(version), str(tag), str(url), str(sha256), signed, notarized]
+fields = [str(schema), str(product), str(version), str(tag), str(url), str(sha256), signed, notarized, str(channel)]
 for val in fields:
     if "\n" in val or "\r" in val:
         sys.stderr.write("error: invalid control character in release manifest\n")
@@ -382,7 +414,8 @@ PY
           (.targets[$t].url | clean),
           (.targets[$t].sha256 | clean),
           ((.targets[$t].signed == true) | tostring),
-          ((.targets[$t].notarized == true) | tostring)
+          ((.targets[$t].notarized == true) | tostring),
+          ((.channel // "stable") | clean)
         ' "$_pm_file"
         return $?
     fi
@@ -529,6 +562,7 @@ PY
         print kv["targets." target ".sha256"]
         print (kv["targets." target ".signed"] == "true" ? "true" : "false")
         print (kv["targets." target ".notarized"] == "true" ? "true" : "false")
+        print (kv["channel"] != "" ? kv["channel"] : "stable")
     }
     ' "$_pm_file"
 }
@@ -546,12 +580,19 @@ load_manifest_vars() {
     ARCHIVE_SHA256="$(printf '%s\n' "$_lm_out" | sed -n '6p' | tr 'A-F' 'a-f')"
     TARGET_SIGNED="$(printf '%s\n' "$_lm_out" | sed -n '7p')"
     TARGET_NOTARIZED="$(printf '%s\n' "$_lm_out" | sed -n '8p')"
+    MANIFEST_CHANNEL="$(printf '%s\n' "$_lm_out" | sed -n '9p')"
 
     if [ -n "$MANIFEST_SCHEMA" ] && [ "$MANIFEST_SCHEMA" != "1" ]; then
         fail "unsupported release manifest schema_version '$MANIFEST_SCHEMA'"
     fi
     if [ -n "$MANIFEST_PRODUCT" ] && [ "$MANIFEST_PRODUCT" != "alan" ]; then
         fail "unexpected release manifest product '$MANIFEST_PRODUCT'"
+    fi
+    if [ -n "$MANIFEST_CHANNEL" ] && [ "$MANIFEST_CHANNEL" != "stable" ] && [ "$MANIFEST_CHANNEL" != "beta" ]; then
+        fail "unexpected release manifest channel '$MANIFEST_CHANNEL'"
+    fi
+    if [ "$MANIFEST_URL_EXPLICIT" = "0" ] && [ -z "$REQUESTED_VERSION" ] && [ -n "$MANIFEST_CHANNEL" ] && [ "$MANIFEST_CHANNEL" != "$CHANNEL" ]; then
+        fail "release manifest channel '$MANIFEST_CHANNEL' does not match requested channel '$CHANNEL'"
     fi
 }
 
@@ -892,8 +933,10 @@ main() {
         STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/alan-install-dryrun.XXXXXX")"
         resolve_release_artifact "$DOWNLOADER" "$STAGE_DIR" "$TARGET"
         preflight_all_install_paths
+        info "[dry-run] Channel:       $CHANNEL"
         info "[dry-run] Target:        $TARGET"
         info "[dry-run] Version:       $RESOLVED_VERSION"
+        info "[dry-run] Manifest URL:  $MANIFEST_URL"
         info "[dry-run] Archive URL:   $ARCHIVE_URL"
         info "[dry-run] SHA-256:       $ARCHIVE_SHA256"
         info "[dry-run] Install dir:   $INSTALL_DIR"
