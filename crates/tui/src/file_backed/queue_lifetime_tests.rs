@@ -174,7 +174,7 @@ fn lifetime_active_admission_is_not_execution() {
     }));
     app.refresh_local_input_hint("q", "/agent/42");
     assert_eq!(app.activity.state, UiActivityState::Paused);
-    assert_eq!(app.activity_label(), Some("waiting for input"));
+    assert_eq!(app.activity_label(), None);
     assert!(app.notice.is_none());
     model_tests::install_header_model(&mut app, "gpt-6.1-sol");
     for state in [UiActivityState::Idle, UiActivityState::Paused] {
@@ -182,15 +182,15 @@ fn lifetime_active_admission_is_not_execution() {
         for width in 16..=80 {
             let line = app.context_line(width);
             let text = super::layout::attention_line(&app, 0)
-                .unwrap()
-                .to_string()
-                .to_lowercase();
+                .map(|line| line.to_string().to_lowercase())
+                .unwrap_or_default();
             assert!(line.width() <= width);
-            assert!(
-                text.split_whitespace()
-                    .any(|word| matches!(word, "active" | "act")),
-                "{width}: {text}"
-            );
+            if state == UiActivityState::Paused {
+                assert!(text.contains("paused"), "{width}: {text}");
+            } else {
+                assert!(text.is_empty(), "{width}: {text}");
+            }
+            assert!(!text.contains("input active"), "{width}: {text}");
             assert!(!text.contains("working"), "{width}: {text}");
         }
     }
@@ -239,7 +239,7 @@ fn lifetime_queue_admission_and_execution_remain_visible_in_narrow_headers() {
                 active_submission_ids: vec!["active".into()],
                 ..Default::default()
             }),
-            &["active", "act"],
+            &[],
         ),
         (
             Some(UiQueueSnapshot {
@@ -264,12 +264,15 @@ fn lifetime_queue_admission_and_execution_remain_visible_in_narrow_headers() {
             for width in 16..=80 {
                 let line = app.context_line(width);
                 let text = super::layout::attention_line(&app, 0)
-                    .unwrap()
-                    .to_string()
-                    .to_lowercase();
+                    .map(|line| line.to_string().to_lowercase())
+                    .unwrap_or_default();
                 assert!(line.width() <= width);
+                assert!(!text.contains("input active"), "{width}: {text}");
                 if state == UiActivityState::Idle && !failed {
                     assert!(!text.contains("ready"), "{text}");
+                    if cues.is_empty() {
+                        assert!(text.is_empty(), "{width}: {text}");
+                    }
                 } else {
                     assert!(
                         states
@@ -278,7 +281,9 @@ fn lifetime_queue_admission_and_execution_remain_visible_in_narrow_headers() {
                         "{width}: {text}"
                     );
                 }
-                if !(state == UiActivityState::Running && cues.contains(&"active")) {
+                if !cues.is_empty()
+                    && !(state == UiActivityState::Running && cues.contains(&"paused"))
+                {
                     assert!(cues.iter().any(|cue| text.contains(cue)), "{width}: {text}");
                 }
                 if state != UiActivityState::Running {

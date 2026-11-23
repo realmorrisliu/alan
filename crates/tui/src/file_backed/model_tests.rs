@@ -431,7 +431,8 @@ fn active_binding_difference_is_exceptional_not_idle_clutter() {
         .unwrap()
         .to_string();
     assert!(status.contains("Working · 8s · Esc interrupt"), "{status}");
-    assert!(status.contains("Queued 1"), "{status}");
+    assert!(status.contains("1 queued"), "{status}");
+    assert!(!status.contains("Paused"), "{status}");
 }
 
 #[test]

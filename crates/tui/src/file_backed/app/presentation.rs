@@ -28,30 +28,32 @@ impl FileBackedApp {
                     .and_then(|p| p.file_name().and_then(|n| n.to_str()))
                     .map(str::to_string)
             });
-        let state = self.activity_label().unwrap_or("ready");
+        let state = self.activity_label().unwrap_or_else(|| {
+            let queue_paused = self
+                .queue
+                .snapshot
+                .as_ref()
+                .is_some_and(|q| q.known && q.paused);
+            if self.activity.state == UiActivityState::Paused || queue_paused {
+                "paused"
+            } else {
+                "ready"
+            }
+        });
         crate::terminal::format_osc_title(project.as_deref(), state)
     }
 
     pub(in crate::file_backed) fn activity_label(&self) -> Option<&str> {
+        if self.pending_yield.as_ref().is_some_and(|pending| {
+            matches!(pending.kind, alan_agent_protocol::YieldKind::Confirmation)
+        }) {
+            return Some("Approval required");
+        }
         if self.has_pending_response() {
-            return Some("waiting for input");
+            return Some("Input required");
         }
         match self.activity.state {
-            UiActivityState::Idle => None,
-            UiActivityState::Paused
-                if self.activity.waiting_submission_ids.is_empty()
-                    && self.pending_yield.is_none()
-                    && self.form.is_none()
-                    && self.running_tools.is_empty()
-                    && !self
-                        .queue
-                        .snapshot
-                        .as_ref()
-                        .is_some_and(|q| !q.active_submission_ids.is_empty()) =>
-            {
-                None
-            }
-            UiActivityState::Paused => Some("waiting for input"),
+            UiActivityState::Idle | UiActivityState::Paused => None,
             UiActivityState::Running
                 if matches!(self.thinking.state, UiThinkingState::Streaming) =>
             {
@@ -367,30 +369,29 @@ impl FileBackedApp {
         } else if self.model_chooser.pending.is_some() {
             labels.push("Selecting model".into());
         }
-        if self.activity.state == UiActivityState::Idle && self.last_input_failed {
+        if self.activity.state == UiActivityState::Idle
+            && self.last_input_failed
+            && !self.has_pending_response()
+        {
             labels.push("Failed".into());
         }
         let queue = self.queue.snapshot.as_ref().filter(|q| q.known);
         if !self.has_pending_response()
             && !self.auto_continue_on_empty_cancel
+            && self.activity.state != UiActivityState::Running
             && (self.activity.state == UiActivityState::Paused || queue.is_some_and(|q| q.paused))
         {
             labels.push("Paused · /continue".into());
         }
         if let Some(q) = queue {
             if !q.pending_submission_ids.is_empty() {
-                labels.push(format!("Queued {}", q.pending_submission_ids.len()));
+                labels.push(format!("{} queued", q.pending_submission_ids.len()));
             }
             if !q.uncertain_submission_ids.is_empty() {
                 labels.push("Input outcome uncertain · /status".into());
             }
             if q.deferred {
                 labels.push("Input deferred · /status".into());
-            }
-            if !q.active_submission_ids.is_empty()
-                && self.activity.state != UiActivityState::Running
-            {
-                labels.push("Input active".into());
             }
         } else if !self.queue.owner.is_empty() && !self.queue.is_fresh_unknown() {
             labels.push("Queue unavailable · /status".into());

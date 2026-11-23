@@ -481,6 +481,7 @@ fn ctrl_s_steers_running_turn_and_empty_cancel_auto_continues() {
             ..Default::default()
         }),
     );
+    app.activity = UiActivitySnapshot::paused(Some(20));
     assert!(
         app.attention_labels()
             .iter()

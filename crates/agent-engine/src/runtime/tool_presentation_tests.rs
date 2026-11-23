@@ -240,3 +240,93 @@ fn large_diff_is_capped() {
         _ => panic!("expected diff"),
     }
 }
+
+#[test]
+fn pre_execution_presentation_supports_bash_edit_and_write_while_failed_post_exec_stays_none() {
+    let bash = pre_execution_tool_presentation(
+        "bash",
+        &json!({"command": "git push --force origin main"}),
+    )
+    .expect("bash pre-execution presentation");
+    assert_eq!(
+        bash,
+        ToolResultPresentation::Command {
+            cmdline: "git push --force origin main".to_string(),
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            truncated: false,
+        }
+    );
+
+    let multiline = pre_execution_tool_presentation(
+        "bash",
+        &json!({"command": (1..=12).map(|i| format!("echo {i}")).collect::<Vec<_>>().join("\n")}),
+    )
+    .expect("multiline bash pre-execution presentation");
+    match multiline {
+        ToolResultPresentation::Command {
+            cmdline,
+            exit_code,
+            stdout,
+            stderr,
+            truncated,
+        } => {
+            assert!(cmdline.contains("echo 1"));
+            assert!(cmdline.contains("echo 8"));
+            assert!(cmdline.contains("+4 more lines"));
+            assert!(exit_code.is_none());
+            assert!(stdout.is_empty());
+            assert!(stderr.is_empty());
+            assert!(!truncated);
+        }
+        other => panic!("expected Command, got {other:?}"),
+    }
+    assert!(pre_execution_tool_presentation("bash", &json!({"command": "   "})).is_none());
+
+    let edit = pre_execution_tool_presentation(
+        "edit_file",
+        &json!({"path": "src/lib.rs", "old_string": "old()", "new_string": "new()"}),
+    )
+    .expect("edit_file pre-execution presentation");
+    match edit {
+        ToolResultPresentation::Diff { path, hunks } => {
+            assert_eq!(path, "src/lib.rs");
+            assert_eq!(hunks[0].lines.len(), 2);
+        }
+        other => panic!("expected Diff, got {other:?}"),
+    }
+
+    let write = pre_execution_tool_presentation(
+        "write_file",
+        &json!({"path": "src/new.rs", "content": "fn main() {}\n"}),
+    )
+    .expect("write_file pre-execution presentation");
+    match write {
+        ToolResultPresentation::Diff { path, hunks } => {
+            assert_eq!(path, "src/new.rs");
+            assert_eq!(hunks[0].header.as_deref(), Some("(new file)"));
+            assert_eq!(hunks[0].lines.len(), 1);
+        }
+        other => panic!("expected Diff, got {other:?}"),
+    }
+
+    // Post-execution `tool_presentation` must still return `None` when edit/write fails or result is Null.
+    assert!(
+        tool_presentation(
+            "edit_file",
+            &json!({"path": "a.rs", "old_string": "a", "new_string": "b"}),
+            &Value::Null,
+        )
+        .is_none()
+    );
+    assert!(
+        tool_presentation(
+            "write_file",
+            &json!({"path": "a.rs", "content": "x"}),
+            &json!({"success": false, "error": "permission denied"}),
+        )
+        .is_none()
+    );
+    assert!(tool_presentation("bash", &json!({"command": "ls"}), &Value::Null).is_none());
+}

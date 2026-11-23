@@ -117,6 +117,9 @@ impl FileBackedApp {
         &mut self,
         key: KeyEvent,
     ) -> ConfirmationKeyResult {
+        if let Some(res) = self.handle_confirmation_overlay_key(key) {
+            return res;
+        }
         if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
             return ConfirmationKeyResult::Ignored;
         }

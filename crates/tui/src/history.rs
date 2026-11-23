@@ -7,8 +7,10 @@ mod yield_validation;
 #[cfg(test)]
 pub(crate) use action_summary::action_summary;
 pub(crate) use action_summary::{
-    action_summary_with_theme, group_summary_header_with_theme, group_summary_member_with_theme,
+    action_summary_with_theme, clamp_text_width, group_summary_header_with_theme,
+    group_summary_member_with_theme,
 };
+pub use yield_validation::ConfirmationOutcome;
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -99,6 +101,13 @@ pub enum HistoryCell {
         revision: usize,
     },
     PendingYield(PendingYieldCell),
+    /// Calm single-line transcript receipt emitted when a confirmation settles.
+    ConfirmationReceipt {
+        outcome: ConfirmationOutcome,
+        choice: String,
+        summary: String,
+        note: Option<String>,
+    },
     /// A fatal (non-recoverable) error.
     Error(String),
     /// Scrollable empty-session welcome header.
@@ -231,6 +240,7 @@ impl HistoryCell {
                 | Self::InputTail { .. }
                 | Self::Thinking { .. }
                 | Self::Welcome(_)
+                | Self::ConfirmationReceipt { .. }
         ) {
             return self
                 .render_styled_lines(opts)
@@ -285,6 +295,7 @@ impl HistoryCell {
             | Self::Plan { .. }
             | Self::Thinking { .. }
             | Self::Welcome(_)
+            | Self::ConfirmationReceipt { .. }
             | Self::User(_)
             | Self::Command(_)
             | Self::Assistant(_) => {
@@ -445,6 +456,19 @@ impl HistoryCell {
                 rows
             }
             Self::PendingYield(pending) => render_pending_yield_styled_lines(pending, width, theme),
+            Self::ConfirmationReceipt {
+                outcome,
+                choice,
+                summary,
+                note,
+            } => vec![yield_validation::render_confirmation_receipt_line(
+                *outcome,
+                choice,
+                summary,
+                note.as_deref(),
+                width,
+                theme,
+            )],
             _ => {
                 let style = match self {
                     Self::Tool { status, .. } => status.style(theme),
@@ -525,7 +549,7 @@ fn format_thinking_duration(duration_secs: u64) -> String {
     }
 }
 
-fn metadata_style(theme: Theme) -> Style {
+pub(crate) fn metadata_style(theme: Theme) -> Style {
     if theme.is_dumb {
         Style::default()
     } else {
@@ -752,7 +776,7 @@ fn presentation_lines(presentation: &ToolResultPresentation) -> Vec<String> {
         .collect()
 }
 
-fn presentation_rows_with_theme(
+pub(crate) fn presentation_rows_with_theme(
     presentation: &ToolResultPresentation,
     detail: bool,
     theme: Theme,
@@ -807,7 +831,14 @@ fn presentation_rows_with_theme(
             stderr,
             truncated,
         } => {
-            let mut lines = vec![format!("$ {cmdline}")];
+            let mut lines = Vec::new();
+            let mut cmd_lines = cmdline.lines().filter(|line| !line.trim().is_empty());
+            if let Some(first) = cmd_lines.next() {
+                lines.push(format!("$ {first}"));
+                for rest in cmd_lines {
+                    lines.push(format!("  {rest}"));
+                }
+            }
             if detail {
                 lines.push("stdout".into());
             }

@@ -307,7 +307,9 @@ impl FileBackedApp {
                     .iter()
                     .any(|candidate| candidate == id) =>
             {
-                ("input queued".to_string(), false)
+                clear_own_notice(self);
+                self.queue.hint = Some(id.into());
+                return;
             }
             _ if self.queue.is_fresh_unknown() => {
                 clear_own_notice(self);

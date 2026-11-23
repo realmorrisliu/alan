@@ -151,21 +151,53 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
             wrapped_line_count(&[Line::from(form.focused_input_line()?)], width),
         ))
     });
+    let conf_cursor = app.confirmation.as_ref().and_then(|conf| {
+        confirmation_cursor_position(
+            conf,
+            app.theme,
+            width,
+            app.response_in_flight.is_some(),
+            history_height,
+            &live_lines,
+        )
+    });
+    let conf_end_y = app
+        .confirmation
+        .as_ref()
+        .map(|_| history_height + wrapped_line_count(&live_lines, width));
     lines.extend(live_lines);
 
+    let overlay_active = app.form.is_some() || app.confirmation.is_some();
     // Menu growth never changes the base input viewport or its scroll offset.
     let base_height = base_region_height(app, width)
-        .saturating_sub(usize::from(app.form.is_none()))
+        .saturating_sub(usize::from(!overlay_active))
         .saturating_add(history_height)
         .min(
             area.height
-                .saturating_sub(u16::from(app.form.is_none() && area.height >= 3))
+                .saturating_sub(u16::from(!overlay_active && area.height >= 3))
                 as usize,
         ) as u16;
     let base_area = Rect::new(area.x, area.y, area.width, base_height);
-    let cursor_position = prompt_start.map(|start| composer_cursor_position(app, width, start));
-    let scroll_y = cursor_position
-        .map(|(_, y)| y.saturating_add(1).saturating_sub(base_height))
+    let cursor_position = prompt_start
+        .map(|start| composer_cursor_position(app, width, start))
+        .or(conf_cursor);
+    let scroll_y = conf_cursor
+        .map(|(_, y)| {
+            let bottom = conf_end_y
+                .map(|end| end.min(u16::MAX as usize) as u16)
+                .unwrap_or(u16::MAX);
+            y.saturating_add(2)
+                .min(bottom)
+                .saturating_sub(base_height)
+                .min(y)
+        })
+        .or_else(|| {
+            conf_end_y.map(|end| {
+                end.saturating_sub(base_height as usize)
+                    .min(u16::MAX as usize) as u16
+            })
+        })
+        .or_else(|| cursor_position.map(|(_, y)| y.saturating_add(1).saturating_sub(base_height)))
         .or_else(|| {
             // Forms have no composer cursor. Keep the focused field visible,
             // scrolling decoration/history away before response controls.
@@ -369,7 +401,14 @@ pub(super) fn live_region_lines_at(
             lines.push(Line::styled(text, style));
         }
         (lines, None)
+    } else if let Some(conf) = &app.confirmation {
+        let rendered = conf.render(app.theme, width, app.response_in_flight.is_some());
+        lines.extend(rendered.lines);
+        (lines, None)
     } else {
+        if !app.login.is_entering_input() && app.project_selection.is_none() {
+            lines.extend(queued_preview_lines(app, width));
+        }
         let prompt_start = lines.len();
         lines.extend(app.composer_lines());
         if let Some(state) = &app.completion {
@@ -444,15 +483,29 @@ pub(super) fn live_region_lines_at(
         if app.completion.is_none()
             && app.project_selection.is_none()
             && app.pending_yield.is_none()
-            && (!app.projected_actions.is_empty() || !app.plan_owners.is_empty())
+            && !app.login.is_entering_input()
         {
             // Reuse the stable row below the composer; completion keeps priority.
-            let hint = if width >= 40 {
-                "Ctrl+O details (p: plans, t: tape)"
-            } else {
-                "Ctrl+O details (p: plans)"
-            };
-            lines.push(Line::styled(hint, app.theme.muted_style()));
+            if matches!(app.activity.state, super::UiActivityState::Running) {
+                let hint = if width >= 52 {
+                    "Enter queue next · Ctrl+S steer now · Esc interrupt"
+                } else if width >= 38 {
+                    "Enter queue · Ctrl+S steer · Esc stop"
+                } else {
+                    "Ctrl+S steer · Esc stop"
+                };
+                lines.push(Line::styled(
+                    crate::history::clamp_text_width(hint, width),
+                    app.theme.muted_style(),
+                ));
+            } else if !app.projected_actions.is_empty() || !app.plan_owners.is_empty() {
+                let hint = if width >= 40 {
+                    "Ctrl+O details (p: plans, t: tape)"
+                } else {
+                    "Ctrl+O details (p: plans)"
+                };
+                lines.push(Line::styled(hint, app.theme.muted_style()));
+            }
         }
         (lines, Some(prompt_start))
     }
@@ -562,8 +615,39 @@ fn composer_cursor_position(app: &FileBackedApp, width: usize, prompt_start: usi
         .take(line_index)
         .map(|line| wrapped_line_count(std::slice::from_ref(line), width))
         .sum::<usize>();
-    let mut line = composer_lines.get(line_index).cloned().unwrap_or_default();
-    let cursor_column = mark_cursor_in_line(&mut line, cursor_in_line).unwrap_or_default();
+    let line = composer_lines.get(line_index).cloned().unwrap_or_default();
+    line_cursor_position(line, cursor_in_line, width, prompt_start + preceding_lines)
+}
+
+fn confirmation_cursor_position(
+    conf: &super::confirmation::ConfirmationState,
+    theme: crate::theme::Theme,
+    width: usize,
+    in_flight: bool,
+    history_height: usize,
+    live_lines: &[Line<'static>],
+) -> Option<(u16, u16)> {
+    let rendered = conf.render(theme, width, in_flight);
+    let rel_idx = rendered.note_line_index?;
+    let conf_start = live_lines.len().checked_sub(rendered.lines.len())?;
+    let line_index = conf_start + rel_idx;
+    let line = live_lines.get(line_index)?.clone();
+    let preceding = history_height + wrapped_line_count(&live_lines[..line_index], width);
+    Some(line_cursor_position(
+        line,
+        rendered.note_cursor_bytes,
+        width,
+        preceding,
+    ))
+}
+
+fn line_cursor_position(
+    mut line: Line<'static>,
+    cursor: usize,
+    width: usize,
+    line_start_y: usize,
+) -> (u16, u16) {
+    let cursor_column = mark_cursor_in_line(&mut line, cursor).unwrap_or_default();
     let width = width.max(1).min(u16::MAX as usize) as u16;
     let height = wrapped_line_count(std::slice::from_ref(&line), width as usize)
         .max(1)
@@ -582,8 +666,52 @@ fn composer_cursor_position(app: &FileBackedApp, width: usize, prompt_start: usi
     let cursor_column = marker_position.0 + cursor_column;
     let row_offset = cursor_column / width as usize;
     let x = cursor_column % width as usize;
-    let y = prompt_start + preceding_lines + marker_position.1 + row_offset;
+    let y = line_start_y + marker_position.1 + row_offset;
     (x as u16, y.min(u16::MAX as usize) as u16)
+}
+
+fn queued_preview_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
+    let Some(queue) = app.queue.snapshot.as_ref().filter(|q| q.known) else {
+        return Vec::new();
+    };
+    if queue.pending_submission_ids.is_empty() {
+        return Vec::new();
+    }
+    let arrow = if app.theme.is_dumb { "> " } else { "↳ " };
+    let prefix = format!("  {arrow}Queued: ");
+    let prefix_width = unicode_width::UnicodeWidthStr::width(prefix.as_str());
+    let body_budget = width.saturating_sub(prefix_width).max(4);
+    let mut lines = Vec::new();
+    for id in queue.pending_submission_ids.iter().take(2) {
+        let preview_raw = app
+            .local_inputs
+            .get(id)
+            .filter(|input| !input.body.trim().is_empty())
+            .map(|input| {
+                input
+                    .body
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_else(|| "queued input".to_string());
+        let cleaned = crate::history::clean_text(&preview_raw);
+        let truncated = crate::history::clamp_text_width(&cleaned, body_budget);
+        lines.push(Line::from(vec![
+            Span::styled(prefix.clone(), app.theme.muted_style()),
+            Span::styled(truncated, app.theme.muted_style()),
+        ]));
+    }
+    let extra = queue.pending_submission_ids.len().saturating_sub(2);
+    if extra > 0 {
+        lines.push(Line::styled(
+            format!("  +{extra} more queued"),
+            app.theme.muted_style(),
+        ));
+    }
+    lines
 }
 
 fn mark_cursor_in_line(line: &mut Line<'static>, cursor: usize) -> Option<usize> {
@@ -669,7 +797,7 @@ fn attention_line_at_width(
         "Input required"
     } else if let Some(pending) = &app.pending_yield {
         if matches!(pending.kind, alan_agent_protocol::YieldKind::Confirmation) {
-            "Approval"
+            "Approval required"
         } else {
             "Input required"
         }
@@ -699,13 +827,12 @@ fn attention_line_at_width(
     } else {
         match queue {
             Some(q) if !q.uncertain_submission_ids.is_empty() => "uncertain".into(),
-            Some(q) if q.paused && primary != "Paused /continue" => "paused".into(),
+            Some(q) if q.paused && !app.has_pending_response() && primary != "Paused /continue" => {
+                "paused".into()
+            }
             Some(q) if q.deferred => "deferred".into(),
             Some(q) if !q.pending_submission_ids.is_empty() => {
-                format!("queued {}", q.pending_submission_ids.len())
-            }
-            Some(q) if !q.active_submission_ids.is_empty() && primary != "Run Esc stop" => {
-                "active".into()
+                format!("{} queued", q.pending_submission_ids.len())
             }
             None if !app.queue.owner.is_empty() && !app.queue.is_fresh_unknown() => {
                 "q unknown".into()
@@ -770,15 +897,7 @@ pub(super) fn attention_line(app: &FileBackedApp, now_ms: u64) -> Option<Line<'s
 fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
     if app.has_pending_response() || !matches!(app.activity.state, super::UiActivityState::Running)
     {
-        let cue = if app.form.is_some() {
-            "input form"
-        } else if app.pending_yield.as_ref().is_some_and(|pending| {
-            matches!(pending.kind, alan_agent_protocol::YieldKind::Confirmation)
-        }) {
-            "waiting for approval"
-        } else {
-            app.activity_label().unwrap_or("waiting for input")
-        };
+        let cue = app.activity_label().unwrap_or("Input required");
         let (dot, style) = app.theme.status_dot(DotState::Wait);
         return Line::styled(format!("{dot} {cue}"), style);
     }

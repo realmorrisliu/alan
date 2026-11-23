@@ -229,7 +229,7 @@ pub(crate) fn group_summary_member_with_theme(
     summary_row(&text, width, ToolStatus::Complete.style(theme))
 }
 
-fn clamp_text_width(text: &str, max_width: usize) -> String {
+pub(crate) fn clamp_text_width(text: &str, max_width: usize) -> String {
     if unicode_width::UnicodeWidthStr::width(text) <= max_width {
         return text.to_string();
     }
@@ -253,7 +253,7 @@ fn clamp_text_width(text: &str, max_width: usize) -> String {
     out
 }
 
-fn fit_line_to_width(line: Line<'static>, width: usize) -> Line<'static> {
+pub(crate) fn fit_line_to_width(line: Line<'static>, width: usize) -> Line<'static> {
     let width = width.max(1);
     if line.width() <= width {
         return line;

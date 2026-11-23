@@ -15,6 +15,7 @@ use anyhow::{Context, Result, bail};
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 mod action_detail_io;
 mod app;
+mod confirmation;
 mod doctor;
 mod file_surface;
 mod fork_picker;
@@ -955,6 +956,9 @@ mod shadow_admission_tests;
 
 #[cfg(test)]
 mod budget_confirmation_tests;
+#[cfg(test)]
+#[path = "file_backed/confirmation_tests.rs"]
+mod confirmation_tests;
 #[cfg(test)]
 #[path = "file_backed/stdio_idle_tests.rs"]
 mod stdio_idle_tests;

@@ -1,21 +1,110 @@
 use alan_agent_protocol::{ContentPart, StructuredInputKind, StructuredInputQuestion, YieldKind};
+use ratatui::text::{Line, Span};
 use serde_json::{Map, Value};
+use unicode_width::UnicodeWidthStr;
 
-use super::PendingYieldCell;
+use super::{PendingYieldCell, action_summary, clean_text, metadata_style};
+use crate::theme::Theme;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmationOutcome {
+    Approved,
+    AllowedForSession,
+    Rejected,
+    Other,
+    Closed,
+}
+
+impl ConfirmationOutcome {
+    pub fn from_choice(choice: &str) -> Self {
+        match choice {
+            "approve" => Self::Approved,
+            "allow_session" => Self::AllowedForSession,
+            "reject" => Self::Rejected,
+            _ => Self::Other,
+        }
+    }
+
+    pub fn label(self, choice: &str) -> String {
+        match self {
+            Self::Approved => "Approved".to_string(),
+            Self::AllowedForSession => "Allowed for session".to_string(),
+            Self::Rejected => "Rejected".to_string(),
+            Self::Other => clean_text(choice),
+            Self::Closed => "Approval closed".to_string(),
+        }
+    }
+}
+
+pub(super) fn render_confirmation_receipt_line(
+    outcome: ConfirmationOutcome,
+    choice: &str,
+    summary: &str,
+    note: Option<&str>,
+    width: usize,
+    theme: Theme,
+) -> Line<'static> {
+    let (icon, label_style) = match outcome {
+        ConfirmationOutcome::Approved | ConfirmationOutcome::AllowedForSession => {
+            (if theme.is_dumb { "+ " } else { "✓ " }, theme.run_style())
+        }
+        ConfirmationOutcome::Rejected => {
+            (if theme.is_dumb { "x " } else { "✕ " }, theme.block_style())
+        }
+        ConfirmationOutcome::Other => (
+            if theme.is_dumb { "+ " } else { "✓ " },
+            theme.accent_style(),
+        ),
+        ConfirmationOutcome::Closed => ("· ", theme.muted_style()),
+    };
+    let label = outcome.label(choice);
+    let prefix_width = UnicodeWidthStr::width(icon) + UnicodeWidthStr::width(label.as_str()) + 3;
+    let clean_summary = clean_text(summary)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let clean_note = note
+        .map(|raw| {
+            clean_text(raw)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|text| !text.is_empty());
+
+    let detail_budget = width.saturating_sub(prefix_width);
+    let (shown_summary, shown_note) = if let Some(note_text) = clean_note {
+        let note_width = UnicodeWidthStr::width(note_text.as_str());
+        let note_budget = (detail_budget / 2).max(16).min(note_width);
+        let clamped_note = action_summary::clamp_text_width(&note_text, note_budget);
+        let note_suffix_w = UnicodeWidthStr::width(clamped_note.as_str()) + 3;
+        let summary_budget = detail_budget.saturating_sub(note_suffix_w).max(8);
+        (
+            action_summary::clamp_text_width(&clean_summary, summary_budget),
+            Some(clamped_note),
+        )
+    } else {
+        (
+            action_summary::clamp_text_width(&clean_summary, detail_budget.max(8)),
+            None,
+        )
+    };
+
+    let mut spans = vec![
+        Span::styled(icon, label_style),
+        Span::styled(label, label_style),
+        Span::styled(format!(" · {shown_summary}"), metadata_style(theme)),
+    ];
+    if let Some(note_text) = shown_note {
+        spans.push(Span::styled(format!(" ({note_text})"), theme.muted_style()));
+    }
+    action_summary::fit_line_to_width(Line::from(spans), width)
+}
 
 impl PendingYieldCell {
     pub fn resume_content(&self, input: &str) -> Result<Vec<ContentPart>, String> {
         match self.kind {
-            YieldKind::Confirmation => {
-                let choice = normalize_confirmation_choice(
-                    input,
-                    &self.options,
-                    self.default_option.as_deref(),
-                )?;
-                Ok(vec![ContentPart::structured(serde_json::json!({
-                    "choice": choice
-                }))])
-            }
+            YieldKind::Confirmation => self.resume_confirmation_with_note(input, None),
             YieldKind::StructuredInput => {
                 if self.questions.is_empty() {
                     return Ok(vec![ContentPart::text(input.to_string())]);
@@ -25,6 +114,26 @@ impl PendingYieldCell {
             }
             YieldKind::Custom(_) => Ok(vec![ContentPart::text(input.to_string())]),
         }
+    }
+
+    pub fn resume_confirmation_with_note(
+        &self,
+        choice_input: &str,
+        note: Option<&str>,
+    ) -> Result<Vec<ContentPart>, String> {
+        if !matches!(self.kind, YieldKind::Confirmation) {
+            return self.resume_content(choice_input);
+        }
+        let choice = normalize_confirmation_choice(
+            choice_input,
+            &self.options,
+            self.default_option.as_deref(),
+        )?;
+        let mut payload = serde_json::json!({ "choice": choice });
+        if let Some(trimmed) = note.map(str::trim).filter(|text| !text.is_empty()) {
+            payload["modifications"] = Value::String(trimmed.to_string());
+        }
+        Ok(vec![ContentPart::structured(payload)])
     }
 
     fn validate_structured_answers(&self, input: &str) -> Result<Map<String, Value>, String> {

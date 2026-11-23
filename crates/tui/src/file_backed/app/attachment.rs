@@ -67,6 +67,8 @@ impl FileBackedApp {
         self.running_tools.clear();
         self.pending_yield = None;
         self.form = None;
+        self.confirmation = None;
+        self.staged_confirmation_outcome = None;
         self.completion = None;
         let model_notice =
             self.model_chooser.uncertain.as_ref().map(|_| {

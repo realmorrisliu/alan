@@ -61,11 +61,15 @@ impl FileBackedApp {
                 access: self.project_selection.unwrap_or(ProjectAccess::ReadWrite),
             }));
         }
+        if self.confirmation.is_some() {
+            return None;
+        }
         if let Some(pending) = self.pending_yield.clone() {
             let text = self.composer.text().trim().to_string();
             self.completion = None;
             match pending.resume_content(&text) {
                 Ok(content) => {
+                    self.stage_fallback_confirmation_outcome(&pending, &text);
                     self.composer.set_text("");
                     self.input_intent = InputIntent::Agent;
                     self.history_draft_intent = None;
@@ -115,7 +119,18 @@ impl FileBackedApp {
 
     pub(in crate::file_backed) fn begin_resume_write(&mut self, request_id: String) {
         self.response_in_flight = Some(request_id);
-        self.notice = Some("sending response…".into());
+        if let Some(conf) = self.confirmation.as_mut() {
+            conf.error = None;
+            if self
+                .notice
+                .as_deref()
+                .is_some_and(|text| text.starts_with("resume failed:"))
+            {
+                self.notice = None;
+            }
+        } else {
+            self.notice = Some("sending response…".into());
+        }
     }
 
     pub(super) fn finish_resume_write(
@@ -130,6 +145,7 @@ impl FileBackedApp {
         self.response_in_flight = None;
         match result {
             Ok(()) => {
+                let settled_conf = self.settle_confirmation_on_resume_ok(request_id);
                 if self
                     .pending_yield
                     .as_ref()
@@ -137,15 +153,25 @@ impl FileBackedApp {
                 {
                     self.clear_pending_yield();
                 }
-                self.notice = Some("response sent".into());
+                if settled_conf {
+                    if self.notice.as_deref().is_some_and(|text| {
+                        text == "sending response…" || text.starts_with("resume failed:")
+                    }) {
+                        self.notice = None;
+                    }
+                } else {
+                    self.notice = Some("response sent".into());
+                }
             }
             Err(error) => {
+                self.staged_confirmation_outcome = None;
                 self.notice = Some(Notice::error(format!("resume failed: {error}")));
                 if self
                     .pending_yield
                     .as_ref()
                     .is_some_and(|pending| pending.request_id == request_id)
                     && self.form.is_none()
+                    && self.confirmation.is_none()
                 {
                     self.composer.set_text(retry_input);
                 }

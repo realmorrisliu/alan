@@ -835,3 +835,78 @@ fn governed_git_push_delegation_allows_scoped_push_and_escalates_destructive_alw
     );
     assert!(matches!(out_of_scope, ToolPolicyDecision::Escalate { .. }));
 }
+
+#[test]
+fn escalated_bash_edit_and_write_emit_non_null_pre_execution_presentation() {
+    let tmp = TempDir::new().unwrap();
+    let policy_dir = tmp.path().join("definition");
+    std::fs::create_dir_all(&policy_dir).unwrap();
+    std::fs::write(
+        policy_dir.join("policy.yaml"),
+        r#"
+rules:
+  - id: review-all-writes
+    tool: "*"
+    capability: write
+    action: escalate
+    reason: explicit approval required for writes
+default_action: escalate
+"#,
+    )
+    .unwrap();
+    let policy =
+        crate::policy::PolicyEngine::load_or_default(Some(&policy_dir.join("policy.yaml")));
+    let governance = alan_agent_protocol::GovernanceConfig::default();
+
+    let bash = evaluate_tool_policy(
+        &policy,
+        &governance,
+        "bash",
+        &json!({"command": "rm -rf build"}),
+        alan_agent_protocol::ToolCapability::Write,
+        None,
+        SandboxConfinement::os_enforced(),
+    );
+    match bash {
+        ToolPolicyDecision::Escalate { details, .. } => {
+            assert_eq!(details["presentation"]["form"], "command");
+            assert_eq!(details["presentation"]["cmdline"], "rm -rf build");
+            assert!(details["presentation"].get("exit_code").is_none());
+        }
+        other => panic!("expected bash escalation, got {other:?}"),
+    }
+
+    let edit = evaluate_tool_policy(
+        &policy,
+        &governance,
+        "edit_file",
+        &json!({"path": "src/lib.rs", "old_string": "a", "new_string": "b"}),
+        alan_agent_protocol::ToolCapability::Write,
+        None,
+        SandboxConfinement::os_enforced(),
+    );
+    match edit {
+        ToolPolicyDecision::Escalate { details, .. } => {
+            assert_eq!(details["presentation"]["form"], "diff");
+            assert_eq!(details["presentation"]["path"], "src/lib.rs");
+        }
+        other => panic!("expected edit_file escalation, got {other:?}"),
+    }
+
+    let write = evaluate_tool_policy(
+        &policy,
+        &governance,
+        "write_file",
+        &json!({"path": "src/new.rs", "content": "pub fn x() {}\n"}),
+        alan_agent_protocol::ToolCapability::Write,
+        None,
+        SandboxConfinement::os_enforced(),
+    );
+    match write {
+        ToolPolicyDecision::Escalate { details, .. } => {
+            assert_eq!(details["presentation"]["form"], "diff");
+            assert_eq!(details["presentation"]["path"], "src/new.rs");
+        }
+        other => panic!("expected write_file escalation, got {other:?}"),
+    }
+}

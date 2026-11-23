@@ -482,10 +482,9 @@ pub(super) fn evaluate_tool_policy_with_posture(
                 "capability": capability_label(capability),
                 // Derived from arguments alone (pre-execution) so the approval
                 // surface can show the diff/command being approved.
-                "presentation": super::tool_presentation::tool_presentation(
+                "presentation": super::tool_presentation::pre_execution_tool_presentation(
                     tool_name,
                     arguments,
-                    &serde_json::Value::Null,
                 )
                 .and_then(|p| serde_json::to_value(p).ok()),
                 "governance": governance,

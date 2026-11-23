@@ -92,6 +92,25 @@ pub(in crate::file_backed) fn build_tape_lines_from_app(app: &FileBackedApp) -> 
                     single_line_summary(&pending.title)
                 ),
             )),
+            HistoryCell::ConfirmationReceipt {
+                outcome,
+                choice,
+                summary,
+                note,
+            } => {
+                let note_suffix = note
+                    .as_deref()
+                    .map(|n| format!(" ({})", single_line_summary(n)))
+                    .unwrap_or_default();
+                entries.push((
+                    "[transition]",
+                    format!(
+                        "{} · {}{note_suffix}",
+                        outcome.label(choice),
+                        single_line_summary(summary)
+                    ),
+                ));
+            }
             HistoryCell::Error(msg) => entries.push(("[error]", single_line_summary(msg))),
             HistoryCell::Assistant(text) | HistoryCell::AssistantTail { text, .. } => {
                 entries.push(("[out]", format!("{:?}", single_line_summary(text))))
