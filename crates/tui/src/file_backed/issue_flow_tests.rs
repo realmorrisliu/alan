@@ -250,7 +250,7 @@ async fn tiered_submission_prefers_writable_githubfs_then_gh_then_web_url() {
         Access::ReadWrite,
     );
     let shell = alan_shell::Shell::new(alan_ap::InProcessTransport::new(mount));
-    let out = submit_issue_tiered(&shell, None, "realmorrisliu/alan", "Bug", "Body")
+    let out = submit_issue_tiered(&shell, None, "realmorrisliu/alan", "Bug", "Body", &[])
         .await
         .unwrap();
     assert_eq!(
@@ -284,6 +284,7 @@ async fn tiered_submission_prefers_writable_githubfs_then_gh_then_web_url() {
         "realmorrisliu/alan",
         "Bug",
         "Body",
+        &[],
     )
     .await
     .unwrap();
@@ -310,6 +311,7 @@ async fn tiered_submission_prefers_writable_githubfs_then_gh_then_web_url() {
         "realmorrisliu/alan",
         "Bug 1",
         &long_body,
+        &[],
     )
     .await
     .unwrap();
@@ -397,4 +399,246 @@ fn failed_issue_submission_preserves_draft_and_allows_retry() {
     );
     assert!(!app.issue.is_active());
     assert!(app.transcript.len() > transcript_len);
+}
+
+#[test]
+fn multi_failure_timeline_populates_deterministic_fallback_and_strips_wrappers() {
+    use crate::history::ToolStatus;
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.transcript
+        .push(HistoryCell::User("SECRET_USER_PROMPT_MUST_NOT_LEAK".into()));
+    app.transcript.push(HistoryCell::Tool {
+        action: None,
+        title: "Bash python3 -c … SECRET_INLINE_SCRIPT()".into(),
+        status: ToolStatus::Failed,
+        preview: Some(
+            "error: Command contains absolute path outside host_mount: /Users/alice/secret/file"
+                .into(),
+        ),
+        presentation: None,
+    });
+    app.transcript.push(HistoryCell::Tool {
+        action: None,
+        title: "Edit src/proprietary.rs".into(),
+        status: ToolStatus::Failed,
+        preview: Some("Search text not found: fn proprietary_algorithm() { return 42; }".into()),
+        presentation: None,
+    });
+    app.transcript.push(HistoryCell::Error(
+        "Error handling submission: Namespace LLM request failed: llmfs generation failed: stream_error:bad_request".into(),
+    ));
+
+    // When issue_available is false, /issue opens Editing pre-filled deterministically.
+    assert!(app.handle_command("/issue").is_none());
+    assert!(app.issue.is_editing());
+    let rendered = render_lines(&app, 110)
+        .into_iter()
+        .map(|l| l.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("stream_error:bad_request"), "{rendered}");
+    assert!(
+        rendered.contains("Recent failures (redacted):"),
+        "{rendered}"
+    );
+    assert!(
+        rendered
+            .contains("tool bash failed (sandbox path guard: absolute path outside host_mount)"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("tool edit_file failed (search text not found)"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("SECRET_USER_PROMPT_MUST_NOT_LEAK"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("SECRET_INLINE_SCRIPT"), "{rendered}");
+    assert!(!rendered.contains("proprietary_algorithm"), "{rendered}");
+    assert!(!rendered.contains("proprietary.rs"), "{rendered}");
+    assert!(!rendered.contains("/Users/alice"), "{rendered}");
+}
+
+#[test]
+fn ai_drafting_re_redacts_applies_proposal_and_supports_esc_skip_and_unavailable_fallback() {
+    use crate::history::ToolStatus;
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.issue_available = true;
+    app.transcript.push(HistoryCell::Tool {
+        action: None,
+        title: "Bash python3 -c … SECRET_AI_PROMPT_CODE()".into(),
+        status: ToolStatus::Failed,
+        preview: Some("exit 1 · File \"<string>\", secret_traceback()".into()),
+        presentation: None,
+    });
+    app.expected_terminal_error = Some(
+        "Namespace LLM request failed: llmfs generation failed: stream_error:bad_request".into(),
+    );
+
+    let Some(FileBackedAction::DraftIssue {
+        generation: g1,
+        diagnostics_context,
+        ..
+    }) = app.handle_command("/issue")
+    else {
+        panic!("expected DraftIssue when issue_available is true");
+    };
+    assert!(app.issue.is_drafting());
+    assert!(diagnostics_context.contains("stream_error:bad_request"));
+    assert!(diagnostics_context.contains("tool bash failed (exit 1)"));
+    assert!(
+        !diagnostics_context.contains("SECRET_AI_PROMPT_CODE"),
+        "{diagnostics_context}"
+    );
+    assert!(
+        !diagnostics_context.contains("secret_traceback"),
+        "{diagnostics_context}"
+    );
+    let drafting_view = render_lines(&app, 100)
+        .into_iter()
+        .map(|l| l.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(drafting_view.contains("Drafting Issue"), "{drafting_view}");
+    assert!(
+        drafting_view.contains("Summarizing redacted diagnostics with AI"),
+        "{drafting_view}"
+    );
+
+    // Late completion with secrets returned by AI must be strictly re-redacted.
+    app.apply_issue_draft_result(
+        g1,
+        Ok(IssueSubmitResult::Drafted {
+            title: "Gemini HTTP 400 sk-proj-shouldredact999 at /Users/alice/app.rs".into(),
+            summary: "- Failed after Bearer ghp_secret999\n- Occurred in ~/repo".into(),
+        }),
+    );
+    assert!(app.issue.is_editing());
+    let rendered = render_lines(&app, 100)
+        .into_iter()
+        .map(|l| l.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("AI drafted from redacted diagnostics"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("sk-proj-shouldredact999"), "{rendered}");
+    assert!(!rendered.contains("ghp_secret999"), "{rendered}");
+    assert!(!rendered.contains("/Users/alice"), "{rendered}");
+
+    // Close and verify Esc during Drafting jumps straight to Editing with deterministic fallback.
+    app.handle_key(test_key(KeyCode::Esc));
+    assert!(!app.issue.is_active());
+
+    let Some(FileBackedAction::DraftIssue { generation: g2, .. }) = app.handle_command("/issue")
+    else {
+        panic!("expected second DraftIssue");
+    };
+    assert!(app.issue.is_drafting());
+    assert!(matches!(
+        app.handle_key(test_key(KeyCode::Esc)),
+        Some(FileBackedAction::CancelIssue)
+    ));
+    assert!(app.issue.is_editing());
+    // Stale draft completion for g2 must be ignored after Esc skipped it.
+    app.apply_issue_draft_result(
+        g2,
+        Ok(IssueSubmitResult::Drafted {
+            title: "STALE_TITLE".into(),
+            summary: "STALE_SUMMARY".into(),
+        }),
+    );
+    let after_skip = render_lines(&app, 100)
+        .into_iter()
+        .map(|l| l.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!after_skip.contains("STALE_TITLE"), "{after_skip}");
+
+    // Unavailable draft falls back cleanly into Editing with deterministic summary.
+    app.handle_key(test_key(KeyCode::Esc));
+    let Some(FileBackedAction::DraftIssue { generation: g3, .. }) =
+        app.handle_command("/bug User hint")
+    else {
+        panic!("expected third DraftIssue");
+    };
+    app.apply_issue_draft_result(
+        g3,
+        Ok(IssueSubmitResult::DraftUnavailable {
+            reason: "not connected".into(),
+        }),
+    );
+    assert!(app.issue.is_editing());
+    let fallback_view = render_lines(&app, 100)
+        .into_iter()
+        .map(|l| l.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(fallback_view.contains("User hint"), "{fallback_view}");
+    assert!(
+        fallback_view.contains("Pre-filled from redacted diagnostics"),
+        "{fallback_view}"
+    );
+}
+
+#[tokio::test]
+async fn ctrl_l_toggles_auto_label_and_forwards_across_all_submission_tiers() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.handle_command("/issue Auto triage check");
+    assert!(app.issue.is_editing());
+    // Toggle alan:auto ON via Ctrl+L.
+    assert!(
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL))
+            .is_none()
+    );
+    let view = render_lines(&app, 100)
+        .into_iter()
+        .map(|l| l.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(view.contains("[x] alan:auto"), "{view}");
+
+    let Some(FileBackedAction::SubmitIssue { labels, .. }) =
+        app.handle_key(test_key(KeyCode::Enter))
+    else {
+        panic!("expected SubmitIssue");
+    };
+    assert_eq!(labels, vec!["alan:auto".to_string()]);
+
+    // Tier 1 (/mnt/github) includes labels array when non-empty.
+    let ghfs = Arc::new(MockGithubFs {
+        writable: true,
+        writes: Mutex::new(Vec::new()),
+        receipt: br#"{"number":12,"url":"https://github.com/realmorrisliu/alan/issues/12"}"#
+            .to_vec(),
+    });
+    let mount = Arc::new(MountFs::new(Namespace::new()));
+    mount.live_namespace().mount(
+        "/mnt/github",
+        alan_ap::InProcessTransport::new(ghfs.clone()),
+        Access::ReadWrite,
+    );
+    let shell = alan_shell::Shell::new(alan_ap::InProcessTransport::new(mount));
+    submit_issue_tiered(&shell, None, "realmorrisliu/alan", "Bug", "Body", &labels)
+        .await
+        .unwrap();
+    let payload: serde_json::Value =
+        serde_json::from_slice(&ghfs.writes.lock().unwrap()[0]).unwrap();
+    assert_eq!(payload["labels"], serde_json::json!(["alan:auto"]));
+
+    // Tier 3 web URL includes encoded labels when non-empty and omits when empty.
+    let url_with_labels = build_prefilled_issue_url("realmorrisliu/alan", "Bug", "Body", &labels);
+    assert!(
+        url_with_labels.contains("&labels=alan%3Aauto&body="),
+        "{url_with_labels}"
+    );
+    let url_without_labels = build_prefilled_issue_url("realmorrisliu/alan", "Bug", "Body", &[]);
+    assert_eq!(
+        url_without_labels,
+        "https://github.com/realmorrisliu/alan/issues/new?title=Bug&body=Body"
+    );
 }

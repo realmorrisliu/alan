@@ -10,6 +10,7 @@ pub mod host_mounts;
 pub mod installation;
 mod legacy_connections;
 mod local;
+mod one_shot;
 pub mod paths;
 pub mod reset;
 mod secret_store;
@@ -31,6 +32,7 @@ pub use local::{
     HostProjectMount, HostReadiness, HostStatus, LocalAttachment, ProjectMountRejected,
     UnsupportedProcesslessAttachment, request_host_stop, run_host_process,
 };
+pub use one_shot::complete_one_shot_prompt;
 pub use paths::{AgentRuntimeStorePaths, HostStorePaths, SystemStorePaths};
 pub use reset::{ResetReport, ResetScope, reset_alan_stores};
 pub use secret_store::{SecretStore, apply_profile_to_config};

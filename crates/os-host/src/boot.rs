@@ -71,7 +71,7 @@ impl LlmProvider for UnconfiguredLlmProvider {
 }
 
 impl ProductLlmClientFactory {
-    fn resolve(
+    pub(crate) fn resolve(
         &self,
         base_config: &Config,
         selected_profile: Option<&str>,
