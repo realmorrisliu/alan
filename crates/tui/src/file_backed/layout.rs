@@ -129,7 +129,7 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
         return;
     }
     if app.issue.is_active() {
-        super::issue_flow::draw(frame, app);
+        super::issue_flow::draw(frame, app, now_ms);
         return;
     }
     let mut lines = history_lines(app, width);
@@ -641,6 +641,7 @@ pub(super) fn frame_needs_redraw(
 ) -> bool {
     // Only Running work without a pending response advances quietly; dirty events always draw.
     dirty
+        || app.issue.is_drafting()
         || (matches!(app.activity.state, super::UiActivityState::Running)
             && !app.has_pending_response()
             && last_drawn_second != Some(activity_elapsed_second(app, now_ms)))

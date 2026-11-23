@@ -49,6 +49,7 @@ pub(super) struct FileBackedApp {
     pub(super) settings: super::settings_flow::SettingsFlowState,
     pub(super) settings_available: bool,
     pub(super) issue: super::issue_flow::IssueFlowState,
+    pub(super) issue_available: bool,
     pub(super) issue_repo: String,
     pub(super) pending_login_submission: Option<super::login::LoginSubmission>,
     pub(super) connection_configured: Option<bool>,
@@ -146,6 +147,7 @@ impl FileBackedApp {
             settings: super::settings_flow::SettingsFlowState::default(),
             settings_available: false,
             issue: super::issue_flow::IssueFlowState::default(),
+            issue_available: false,
             issue_repo: super::issue_flow::DEFAULT_ISSUE_REPO.to_string(),
             pending_login_submission: None,
             connection_configured: None,
@@ -296,6 +298,10 @@ impl FileBackedApp {
             FileBackedEvent::SettingsCompleted { generation, result } => {
                 let (_, next_action) = self.apply_settings_result(generation, result);
                 next_action
+            }
+            FileBackedEvent::IssueDrafted { generation, result } => {
+                self.apply_issue_draft_result(generation, result);
+                None
             }
             FileBackedEvent::IssueSubmitted { generation, result } => {
                 self.apply_issue_submit_result(generation, result);

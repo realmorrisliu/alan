@@ -245,6 +245,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     app.trust_posture_label = config.trust_posture_label.clone();
     app.login_available = config.login_control.is_some();
     app.settings_available = config.settings_control.is_some();
+    app.issue_available = config.issue_control.is_some();
     app.connection_configured = config.connection_configured;
     app.update_notice = config.update_notice.clone();
     app.set_issue_repo(config.issue_repo.clone());
@@ -461,6 +462,14 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             &mut active_login_task,
                             &mut pending_root_agent_turns,
                             &model_reads,
+                        );
+                    }
+                    FileBackedEvent::IssueDrafted { generation, result } => {
+                        issue_flow::handle_issue_drafted(
+                            &mut app,
+                            generation,
+                            result,
+                            &mut active_issue_task,
                         );
                     }
                     FileBackedEvent::IssueSubmitted { generation, result } => {
@@ -708,8 +717,11 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                 FileBackedAction::SettingsControl { generation, control } => {
                                     settings::dispatch_settings_action(&config, &mut app, &tx, generation, control, &mut active_settings_task);
                                 }
-                                FileBackedAction::SubmitIssue { generation, repo, title, body } => {
-                                    issue_flow::dispatch_issue_action(&shell, config.issue_control.clone(), &tx, generation, repo, title, body, &mut active_issue_task);
+                                FileBackedAction::DraftIssue { generation, repo, user_hint, diagnostics_context, profile } => {
+                                    issue_flow::dispatch_issue_draft(config.issue_control.clone(), &tx, generation, repo, user_hint, diagnostics_context, profile, &mut active_issue_task);
+                                }
+                                FileBackedAction::SubmitIssue { generation, repo, title, body, labels } => {
+                                    issue_flow::dispatch_issue_action(&shell, config.issue_control.clone(), &tx, generation, repo, title, body, labels, &mut active_issue_task);
                                 }
                                 FileBackedAction::CancelIssue => {
                                     if let Some((_, prev)) = active_issue_task.take() { prev.abort(); }

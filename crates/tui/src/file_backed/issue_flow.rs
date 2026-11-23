@@ -6,9 +6,7 @@ use std::sync::Arc;
 
 use alan_ap::ErrorCode;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::Frame;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::text::Line;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -18,18 +16,37 @@ use super::app::{FileBackedAction, FileBackedEvent, Notice};
 use crate::history::{HistoryCell, clean_text};
 
 mod diagnostics;
+mod render;
+
+pub(in crate::file_backed) use render::draw;
+#[cfg(test)]
+use render::render_lines;
 
 use diagnostics::{
-    RedactedDiagnostics, build_prefilled_issue_url, is_valid_repo_slug, sanitize_multiline,
-    sanitize_single_line,
+    RedactedDiagnostics, build_prefilled_issue_url, is_valid_repo_slug,
+    redact_diagnostic_multiline, redact_diagnostic_text, sanitize_multiline, sanitize_single_line,
 };
 
 /// Default target repository used by `/issue` and `/bug` when no override is configured.
 pub(in crate::file_backed) const DEFAULT_ISSUE_REPO: &str = "realmorrisliu/alan";
+const AUTO_ISSUE_LABEL: &str = "alan:auto";
+const MAX_AI_TITLE_CHARS: usize = 120;
+const MAX_AI_SUMMARY_CHARS: usize = 900;
 
-/// Control request sent from `/issue` to the Host adapter when `/mnt/github` is unavailable.
+/// Control request sent from `/issue` to the Host adapter.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IssueControl {
+    /// Ask the host adapter for a stateless one-shot redacted issue draft.
+    Draft {
+        /// Target repository in `owner/repo` form.
+        repo: String,
+        /// Optional one-line hint passed by the user after `/issue` or `/bug`.
+        user_hint: Option<String>,
+        /// Strictly redacted diagnostics context collected in the TUI.
+        diagnostics_context: String,
+        /// Active or configured profile hint when known.
+        profile: Option<String>,
+    },
     /// Check authenticated `gh` CLI availability and create an issue in `repo`.
     Submit {
         /// Target repository in `owner/repo` form.
@@ -38,12 +55,26 @@ pub enum IssueControl {
         title: String,
         /// Issue body confirmed by the user.
         body: String,
+        /// Optional GitHub labels requested by the user (for example `["alan:auto"]`).
+        labels: Vec<String>,
     },
 }
 
-/// Outcome returned by [`IssueControlHandler`] for Tier 2 (`gh` CLI) or Tier 3 fallback.
+/// Outcome returned by [`IssueControlHandler`] for `/issue` drafting and submission.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IssueSubmitResult {
+    /// One-shot AI drafting produced a redacted title + summary proposal.
+    Drafted {
+        /// Concise proposed issue title.
+        title: String,
+        /// Concise markdown issue summary.
+        summary: String,
+    },
+    /// One-shot AI drafting was unavailable or failed; TUI should keep deterministic fallback.
+    DraftUnavailable {
+        /// Human-readable reason AI drafting could not be completed.
+        reason: String,
+    },
     /// Issue was created via authenticated `gh issue create`.
     CreatedGhCli {
         /// Created GitHub issue number when parsed from the returned URL.
@@ -84,6 +115,14 @@ pub(in crate::file_backed) enum IssueFieldFocus {
     Body,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(in crate::file_backed) enum IssueDraftSource {
+    #[default]
+    Manual,
+    AiDrafted,
+    DeterministicFallback,
+}
+
 #[derive(Clone, Default)]
 pub(in crate::file_backed) struct IssueFlowState {
     pub generation: u64,
@@ -98,6 +137,9 @@ struct IssueDraft {
     body: String,
     body_cursor: usize,
     focus: IssueFieldFocus,
+    auto_label: bool,
+    draft_source: IssueDraftSource,
+    diagnostics: RedactedDiagnostics,
     warning: Option<String>,
 }
 
@@ -105,6 +147,11 @@ struct IssueDraft {
 enum IssuePhase {
     #[default]
     Idle,
+    Drafting {
+        repo: String,
+        fallback: IssueDraft,
+        started_at_ms: u64,
+    },
     Editing(IssueDraft),
     Submitting {
         draft: IssueDraft,
@@ -115,6 +162,10 @@ enum IssuePhase {
 impl IssueFlowState {
     pub(in crate::file_backed) fn is_active(&self) -> bool {
         !matches!(self.phase, IssuePhase::Idle)
+    }
+
+    pub(in crate::file_backed) fn is_drafting(&self) -> bool {
+        matches!(self.phase, IssuePhase::Drafting { .. })
     }
 
     pub(in crate::file_backed) fn is_editing(&self) -> bool {
@@ -163,32 +214,71 @@ impl FileBackedApp {
         self.pending_login_submission = None;
         self.completion = None;
 
-        let initial_title = sanitize_single_line(argument);
-        let (body, body_cursor) = diagnostics.format_issue_body();
-        let focus = if initial_title.is_empty() {
+        let clean_arg = sanitize_single_line(argument);
+        let user_hint = (!clean_arg.is_empty()).then_some(clean_arg);
+        let try_ai_draft = self.issue_available && !self.is_connection_unconfigured();
+        let fallback_title = user_hint
+            .clone()
+            .unwrap_or_else(|| diagnostics.default_title());
+        let fallback_summary = if user_hint.is_some() && !self.issue_available {
+            String::new()
+        } else {
+            diagnostics.default_summary()
+        };
+        let (body, body_cursor) = diagnostics.format_issue_body_with_summary(&fallback_summary);
+        let focus = if fallback_title.is_empty() {
             IssueFieldFocus::Title
         } else {
             IssueFieldFocus::Body
         };
-        let title_cursor = initial_title.len();
+        let title_cursor = fallback_title.len();
         let repo = if is_valid_repo_slug(&self.issue_repo) {
             self.issue_repo.clone()
         } else {
             DEFAULT_ISSUE_REPO.to_string()
         };
+        let draft_source = if self.issue_available && diagnostics.has_real_failure() {
+            IssueDraftSource::DeterministicFallback
+        } else {
+            IssueDraftSource::Manual
+        };
 
-        self.issue.next_generation();
-        self.issue.phase = IssuePhase::Editing(IssueDraft {
-            repo,
-            title: initial_title,
+        let fallback = IssueDraft {
+            repo: repo.clone(),
+            title: fallback_title,
             title_cursor,
             body,
             body_cursor,
             focus,
+            auto_label: false,
+            draft_source,
+            diagnostics: diagnostics.clone(),
             warning: None,
-        });
+        };
+
+        let generation = self.issue.next_generation();
         self.notice = None;
-        None
+        if try_ai_draft {
+            let redacted_hint = user_hint
+                .as_deref()
+                .map(|hint| sanitize_single_line(&redact_diagnostic_text(hint)))
+                .filter(|hint| !hint.is_empty());
+            self.issue.phase = IssuePhase::Drafting {
+                repo: repo.clone(),
+                fallback,
+                started_at_ms: super::unix_time_ms(),
+            };
+            Some(FileBackedAction::DraftIssue {
+                generation,
+                repo,
+                user_hint: redacted_hint,
+                diagnostics_context: diagnostics.to_draft_prompt_context(),
+                profile: diagnostics.active_profile,
+            })
+        } else {
+            self.issue.phase = IssuePhase::Editing(fallback);
+            None
+        }
     }
 
     pub(in crate::file_backed) fn issue_paste(&mut self, text: &str) {
@@ -228,16 +318,28 @@ impl FileBackedApp {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let is_ctrl_c = ctrl && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'));
 
-        if key.code == KeyCode::Esc || (ctrl && key.code == KeyCode::Char('c')) {
+        if key.code == KeyCode::Esc || is_ctrl_c {
+            if matches!(self.issue.phase, IssuePhase::Drafting { .. }) && !is_ctrl_c {
+                let IssuePhase::Drafting { fallback, .. } = std::mem::take(&mut self.issue.phase)
+                else {
+                    unreachable!("checked Drafting phase above");
+                };
+                self.issue.next_generation();
+                self.issue.phase = IssuePhase::Editing(fallback);
+                self.notice = Some("Skipped AI draft — review redacted draft below.".into());
+                return Some(FileBackedAction::CancelIssue);
+            }
             let was_submitting = matches!(self.issue.phase, IssuePhase::Submitting { .. });
+            let was_drafting = matches!(self.issue.phase, IssuePhase::Drafting { .. });
             self.issue.close();
             self.notice = Some(if was_submitting {
                 "Issue submission cancelled.".into()
             } else {
                 "Issue draft cancelled.".into()
             });
-            return was_submitting.then_some(FileBackedAction::CancelIssue);
+            return (was_submitting || was_drafting).then_some(FileBackedAction::CancelIssue);
         }
 
         let IssuePhase::Editing(IssueDraft {
@@ -247,7 +349,9 @@ impl FileBackedApp {
             body,
             body_cursor,
             focus,
+            auto_label,
             warning,
+            ..
         }) = &mut self.issue.phase
         else {
             return None;
@@ -261,6 +365,10 @@ impl FileBackedApp {
                 };
                 *warning = None;
             }
+            KeyCode::Char('l' | 'L') if ctrl && !alt => {
+                *auto_label = !*auto_label;
+                *warning = None;
+            }
             KeyCode::Enter if !shift && !alt && !ctrl => {
                 let trimmed_title = title.trim().to_string();
                 if trimmed_title.is_empty() {
@@ -271,6 +379,11 @@ impl FileBackedApp {
                 *warning = None;
                 let repo = repo.clone();
                 let submitted_body = body.trim_end().to_string();
+                let labels = if *auto_label {
+                    vec![AUTO_ISSUE_LABEL.to_string()]
+                } else {
+                    Vec::new()
+                };
                 let IssuePhase::Editing(draft) = std::mem::take(&mut self.issue.phase) else {
                     unreachable!("checked Editing phase above");
                 };
@@ -284,6 +397,7 @@ impl FileBackedApp {
                     repo,
                     title: trimmed_title,
                     body: submitted_body,
+                    labels,
                 });
             }
             KeyCode::Enter if shift || alt => {
@@ -327,6 +441,60 @@ impl FileBackedApp {
             }
         }
         None
+    }
+
+    pub(in crate::file_backed) fn apply_issue_draft_result(
+        &mut self,
+        generation: u64,
+        result: Result<IssueSubmitResult, String>,
+    ) {
+        if generation != self.issue.generation
+            || !matches!(self.issue.phase, IssuePhase::Drafting { .. })
+        {
+            return;
+        }
+        let IssuePhase::Drafting { mut fallback, .. } = std::mem::take(&mut self.issue.phase)
+        else {
+            unreachable!("checked Drafting phase above");
+        };
+        if let Ok(IssueSubmitResult::Drafted { title, summary }) = result {
+            let clean_title: String = sanitize_single_line(&redact_diagnostic_text(&title))
+                .chars()
+                .take(MAX_AI_TITLE_CHARS)
+                .collect();
+            let final_title = if clean_title.trim().is_empty() {
+                fallback.title.clone()
+            } else {
+                clean_title
+            };
+            let clean_summary = redact_diagnostic_multiline(&summary, MAX_AI_SUMMARY_CHARS);
+            let effective_summary = if clean_summary.trim().is_empty() {
+                fallback.diagnostics.default_summary()
+            } else {
+                clean_summary
+            };
+            let (body, body_cursor) = fallback
+                .diagnostics
+                .format_issue_body_with_summary(&effective_summary);
+            fallback.title_cursor = final_title.len();
+            fallback.title = final_title;
+            fallback.body = body;
+            fallback.body_cursor = body_cursor;
+            fallback.focus = if fallback.title.is_empty() {
+                IssueFieldFocus::Title
+            } else {
+                IssueFieldFocus::Body
+            };
+            fallback.draft_source = IssueDraftSource::AiDrafted;
+        } else {
+            fallback.draft_source =
+                if !fallback.title.is_empty() || fallback.diagnostics.has_real_failure() {
+                    IssueDraftSource::DeterministicFallback
+                } else {
+                    IssueDraftSource::Manual
+                };
+        }
+        self.issue.phase = IssuePhase::Editing(fallback);
     }
 
     pub(in crate::file_backed) fn apply_issue_submit_result(
@@ -405,6 +573,52 @@ impl FileBackedApp {
     clippy::too_many_arguments,
     reason = "forwards file-backed event loop refs out of file_backed.rs"
 )]
+pub(in crate::file_backed) fn dispatch_issue_draft(
+    handler: Option<IssueControlHandler>,
+    tx: &mpsc::Sender<FileBackedEvent>,
+    generation: u64,
+    repo: String,
+    user_hint: Option<String>,
+    diagnostics_context: String,
+    profile: Option<String>,
+    active_issue_task: &mut Option<(u64, tokio::task::AbortHandle)>,
+) {
+    if let Some((_, prev)) = active_issue_task.take() {
+        prev.abort();
+    }
+    *active_issue_task = Some((
+        generation,
+        spawn_draft(
+            handler,
+            tx,
+            generation,
+            repo,
+            user_hint,
+            diagnostics_context,
+            profile,
+        ),
+    ));
+}
+
+pub(in crate::file_backed) fn handle_issue_drafted(
+    app: &mut FileBackedApp,
+    generation: u64,
+    result: Result<IssueSubmitResult, String>,
+    active_issue_task: &mut Option<(u64, tokio::task::AbortHandle)>,
+) {
+    if active_issue_task
+        .as_ref()
+        .is_some_and(|(task_gen, _)| *task_gen == generation)
+    {
+        *active_issue_task = None;
+    }
+    app.apply_issue_draft_result(generation, result);
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "forwards file-backed event loop refs out of file_backed.rs"
+)]
 pub(in crate::file_backed) fn dispatch_issue_action(
     shell: &alan_shell::Shell,
     handler: Option<IssueControlHandler>,
@@ -413,6 +627,7 @@ pub(in crate::file_backed) fn dispatch_issue_action(
     repo: String,
     title: String,
     body: String,
+    labels: Vec<String>,
     active_issue_task: &mut Option<(u64, tokio::task::AbortHandle)>,
 ) {
     if let Some((_, prev)) = active_issue_task.take() {
@@ -420,7 +635,7 @@ pub(in crate::file_backed) fn dispatch_issue_action(
     }
     *active_issue_task = Some((
         generation,
-        spawn_submit(shell, handler, tx, generation, repo, title, body),
+        spawn_submit(shell, handler, tx, generation, repo, title, body, labels),
     ));
 }
 
@@ -439,6 +654,41 @@ pub(in crate::file_backed) fn handle_issue_completed(
     app.apply_issue_submit_result(generation, result);
 }
 
+fn spawn_draft(
+    handler: Option<IssueControlHandler>,
+    tx: &mpsc::Sender<FileBackedEvent>,
+    generation: u64,
+    repo: String,
+    user_hint: Option<String>,
+    diagnostics_context: String,
+    profile: Option<String>,
+) -> tokio::task::AbortHandle {
+    let tx = tx.clone();
+    let handle = tokio::spawn(async move {
+        let result = match handler {
+            Some(handler) => handler(IssueControl::Draft {
+                repo,
+                user_hint,
+                diagnostics_context,
+                profile,
+            })
+            .await
+            .map_err(|err| format!("{err:#}")),
+            None => Ok(IssueSubmitResult::DraftUnavailable {
+                reason: "issue host adapter unavailable".to_string(),
+            }),
+        };
+        let _ = tx
+            .send(FileBackedEvent::IssueDrafted { generation, result })
+            .await;
+    });
+    handle.abort_handle()
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "spawns background tiered submission task with labels"
+)]
 fn spawn_submit(
     shell: &alan_shell::Shell,
     handler: Option<IssueControlHandler>,
@@ -447,11 +697,12 @@ fn spawn_submit(
     repo: String,
     title: String,
     body: String,
+    labels: Vec<String>,
 ) -> tokio::task::AbortHandle {
     let shell = shell.clone();
     let tx = tx.clone();
     let handle = tokio::spawn(async move {
-        let result = submit_issue_tiered(&shell, handler, &repo, &title, &body).await;
+        let result = submit_issue_tiered(&shell, handler, &repo, &title, &body, &labels).await;
         let _ = tx
             .send(FileBackedEvent::IssueSubmitted { generation, result })
             .await;
@@ -465,6 +716,7 @@ pub(in crate::file_backed) async fn submit_issue_tiered(
     repo: &str,
     title: &str,
     body: &str,
+    labels: &[String],
 ) -> Result<IssueSubmissionOutcome, String> {
     if !is_valid_repo_slug(repo) {
         return Err(format!("invalid repository slug `{repo}`"));
@@ -473,7 +725,11 @@ pub(in crate::file_backed) async fn submit_issue_tiered(
     if let Ok(stat) = shell.stat(&issues_new_path).await
         && stat.writable
     {
-        let payload = serde_json::json!({ "title": title, "body": body });
+        let payload = if labels.is_empty() {
+            serde_json::json!({ "title": title, "body": body })
+        } else {
+            serde_json::json!({ "title": title, "body": body, "labels": labels })
+        };
         let payload_bytes = serde_json::to_vec(&payload).map_err(|err| err.to_string())?;
         match shell.write(&issues_new_path, &payload_bytes).await {
             Ok(()) => {
@@ -508,13 +764,18 @@ pub(in crate::file_backed) async fn submit_issue_tiered(
             repo: repo.to_string(),
             title: title.to_string(),
             body: body.to_string(),
+            labels: labels.to_vec(),
         })
         .await
         {
             Ok(IssueSubmitResult::CreatedGhCli { number, url }) => {
                 return Ok(IssueSubmissionOutcome::GhCli { number, url });
             }
-            Ok(IssueSubmitResult::GhUnavailable { reason }) => reason,
+            Ok(IssueSubmitResult::GhUnavailable { reason })
+            | Ok(IssueSubmitResult::DraftUnavailable { reason }) => reason,
+            Ok(IssueSubmitResult::Drafted { .. }) => {
+                "unexpected draft response during issue submission".to_string()
+            }
             Err(err) => return Err(format!("{err:#}")),
         }
     } else {
@@ -522,7 +783,7 @@ pub(in crate::file_backed) async fn submit_issue_tiered(
     };
 
     Ok(IssueSubmissionOutcome::WebFallback {
-        url: build_prefilled_issue_url(repo, title, body),
+        url: build_prefilled_issue_url(repo, title, body, labels),
         reason: fallback_reason,
     })
 }
@@ -643,219 +904,6 @@ fn byte_for_col(line: &str, target_col: usize) -> usize {
         used += w;
     }
     line.len()
-}
-
-pub(in crate::file_backed) fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
-    let area = frame.area();
-    let width = area.width as usize;
-    let height = area.height as usize;
-    let (lines, cursor, body_start_row) = build_view(app, width);
-    let skip = if height == 0 || lines.len() <= height {
-        0
-    } else if let Some((_, cy)) = cursor {
-        let cy = cy as usize;
-        if cy >= height {
-            (cy + 1)
-                .saturating_sub(height)
-                .min(body_start_row.max(cy + 1 - height))
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-    let visible: Vec<Line<'static>> = lines.into_iter().skip(skip).take(height).collect();
-    frame.render_widget(Paragraph::new(visible), area);
-    if let Some((cx, cy)) = cursor
-        && height > 0
-        && (cy as usize) >= skip
-        && (cy as usize) < skip + height
-    {
-        frame.set_cursor_position((
-            area.x + cx.min(area.width.saturating_sub(1)),
-            area.y + (cy - skip as u16).min(area.height - 1),
-        ));
-    }
-}
-
-#[cfg(test)]
-pub(in crate::file_backed) fn render_lines(
-    app: &FileBackedApp,
-    width: usize,
-) -> Vec<Line<'static>> {
-    build_view(app, width).0
-}
-
-fn build_view(
-    app: &FileBackedApp,
-    width: usize,
-) -> (Vec<Line<'static>>, Option<(u16, u16)>, usize) {
-    let theme = app.theme;
-    let width = width.max(16);
-    match &app.issue.phase {
-        IssuePhase::Idle => (Vec::new(), None, 0),
-        IssuePhase::Submitting {
-            draft,
-            submitted_title,
-        } => {
-            let lines = vec![
-                Line::styled(
-                    format!("Submitting Issue · {}", clean_text(&draft.repo)),
-                    theme.accent_bold(),
-                ),
-                Line::styled("Please wait… (Esc to close)", theme.muted_style()),
-                Line::default(),
-                Line::from(format!("Title: {}", clean_text(submitted_title))),
-            ];
-            (lines, None, 0)
-        }
-        IssuePhase::Editing(IssueDraft {
-            repo,
-            title,
-            title_cursor,
-            body,
-            body_cursor,
-            focus,
-            warning,
-        }) => {
-            let hint = if width >= 68 {
-                "Tab switch field · Enter submit · Shift+Enter/Ctrl+J newline · Esc cancel"
-            } else {
-                "Tab field · Enter submit · Esc cancel"
-            };
-            let mut rows = vec![
-                Line::styled(
-                    format!("New Issue · {}", clean_text(repo)),
-                    theme.accent_bold(),
-                ),
-                Line::styled(hint, theme.muted_style()),
-                Line::styled(
-                    "Redacted diagnostics only (no transcript, project code, or secrets)",
-                    theme.muted_style(),
-                ),
-                Line::styled(
-                    if theme.is_dumb { "-" } else { "─" }.repeat(width),
-                    theme.rule_style(),
-                ),
-            ];
-            if let Some(warn) = warning {
-                rows.push(Line::styled(format!("! {warn}"), theme.wait_style()));
-            }
-            let title_focused = *focus == IssueFieldFocus::Title;
-            let title_prefix = if title_focused {
-                "▶ Title: "
-            } else {
-                "  Title: "
-            };
-            let title_style = if title_focused {
-                theme.accent_bold()
-            } else {
-                theme.muted_style()
-            };
-            let mut cursor_pos = None;
-            let wrapped_title =
-                wrap_logical_line(title, width.saturating_sub(title_prefix.width()).max(1));
-            for (idx, seg) in wrapped_title.iter().enumerate() {
-                let prefix = if idx == 0 { title_prefix } else { "         " };
-                let row_y = rows.len();
-                if title_focused
-                    && cursor_pos.is_none()
-                    && *title_cursor >= seg.start
-                    && *title_cursor <= seg.end
-                {
-                    let col = seg.text[..(*title_cursor - seg.start).min(seg.text.len())].width();
-                    cursor_pos = Some(((prefix.width() + col) as u16, row_y as u16));
-                }
-                let content_span = if title.is_empty() && !title_focused && idx == 0 {
-                    Span::styled("(enter issue title)", theme.muted_style())
-                } else {
-                    Span::raw(seg.text.clone())
-                };
-                rows.push(Line::from(vec![
-                    Span::styled(prefix, title_style),
-                    content_span,
-                ]));
-            }
-            let body_focused = *focus == IssueFieldFocus::Body;
-            let body_header = if body_focused { "▶ Body:" } else { "  Body:" };
-            let body_style = if body_focused {
-                theme.accent_bold()
-            } else {
-                theme.muted_style()
-            };
-            rows.push(Line::styled(body_header, body_style));
-            let body_start_row = rows.len();
-            let gutter = if theme.is_dumb { "  | " } else { "  │ " };
-            let gutter_w = gutter.width();
-            let body_avail = width.saturating_sub(gutter_w).max(1);
-            let mut offset = 0usize;
-            let mut lines_iter = body.split('\n').peekable();
-            while let Some(logical) = lines_iter.next() {
-                let line_start = offset;
-                let line_end = line_start + logical.len();
-                for seg in wrap_logical_line(logical, body_avail) {
-                    let row_y = rows.len();
-                    let abs_start = line_start + seg.start;
-                    let abs_end = line_start + seg.end;
-                    if body_focused
-                        && cursor_pos.is_none()
-                        && *body_cursor >= abs_start
-                        && *body_cursor <= abs_end
-                    {
-                        let col =
-                            seg.text[..(*body_cursor - abs_start).min(seg.text.len())].width();
-                        cursor_pos = Some(((gutter_w + col) as u16, row_y as u16));
-                    }
-                    rows.push(Line::from(vec![
-                        Span::styled(gutter, theme.rule_style()),
-                        Span::raw(seg.text),
-                    ]));
-                }
-                offset = line_end + usize::from(lines_iter.peek().is_some());
-            }
-            (rows, cursor_pos, body_start_row)
-        }
-    }
-}
-
-struct WrappedSeg {
-    text: String,
-    start: usize,
-    end: usize,
-}
-
-fn wrap_logical_line(line: &str, max_width: usize) -> Vec<WrappedSeg> {
-    if line.is_empty() {
-        return vec![WrappedSeg {
-            text: String::new(),
-            start: 0,
-            end: 0,
-        }];
-    }
-    let max_width = max_width.max(1);
-    let mut segs = Vec::new();
-    let mut seg_start = 0usize;
-    let mut used = 0usize;
-    for (idx, ch) in line.char_indices() {
-        let w = ch.width().unwrap_or(0);
-        if used + w > max_width && idx > seg_start {
-            segs.push(WrappedSeg {
-                text: line[seg_start..idx].to_string(),
-                start: seg_start,
-                end: idx,
-            });
-            seg_start = idx;
-            used = w;
-        } else {
-            used += w;
-        }
-    }
-    segs.push(WrappedSeg {
-        text: line[seg_start..].to_string(),
-        start: seg_start,
-        end: line.len(),
-    });
-    segs
 }
 
 #[cfg(test)]
