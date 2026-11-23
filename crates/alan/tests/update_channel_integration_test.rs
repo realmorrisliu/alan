@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use alan::cli::update::passive_check::{
-    evaluate_cache_for_notice_for_channel, passive_check_cache_path, refresh_passive_cache,
+    evaluate_cache_for_notice_with_target, passive_check_cache_path, refresh_passive_cache,
 };
-use alan::cli::update::{ReleaseChannel, UpdateArgs, run_with_options_and_env};
+use alan::cli::update::{ReleaseChannel, UpdateArgs, run_with_options_and_configured_channel};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -563,8 +563,9 @@ async fn beta_binary_avoids_loop_reinstall_and_allows_explicit_switch_back_to_st
     let manifest_server = MockHttpServer::start(manifest_routes).await;
 
     // 1. Beta binary matching beta.json version reports up_to_date without re-downloading.
-    let same_report = run_with_options_and_env(
+    let same_report = run_with_options_and_configured_channel(
         UpdateArgs {
+            command: None,
             check: false,
             json: true,
             version: None,
@@ -576,6 +577,7 @@ async fn beta_binary_avoids_loop_reinstall_and_allows_explicit_switch_back_to_st
         },
         current_beta,
         ReleaseChannel::Beta,
+        None,
         target,
         None,
         Some(&home),
@@ -592,8 +594,9 @@ async fn beta_binary_avoids_loop_reinstall_and_allows_explicit_switch_back_to_st
     assert_eq!(archive_server.archive_requests(), 0);
 
     // 2. Beta binary refuses same-channel downgrade without --version + --force.
-    let older_err = run_with_options_and_env(
+    let older_err = run_with_options_and_configured_channel(
         UpdateArgs {
+            command: None,
             check: false,
             json: true,
             version: None,
@@ -605,6 +608,7 @@ async fn beta_binary_avoids_loop_reinstall_and_allows_explicit_switch_back_to_st
         },
         current_beta,
         ReleaseChannel::Beta,
+        None,
         target,
         None,
         Some(&home),
@@ -619,8 +623,9 @@ async fn beta_binary_avoids_loop_reinstall_and_allows_explicit_switch_back_to_st
 
     // 3. Switching back beta -> stable (0.1.6-beta.* -> 0.1.5) via --channel stable works
     //    without --version + --force!
-    let check_switch = run_with_options_and_env(
+    let check_switch = run_with_options_and_configured_channel(
         UpdateArgs {
+            command: None,
             check: true,
             json: true,
             version: None,
@@ -632,6 +637,7 @@ async fn beta_binary_avoids_loop_reinstall_and_allows_explicit_switch_back_to_st
         },
         current_beta,
         ReleaseChannel::Beta,
+        None,
         target,
         None,
         Some(&home),
@@ -648,8 +654,9 @@ async fn beta_binary_avoids_loop_reinstall_and_allows_explicit_switch_back_to_st
     assert!(!check_switch.update_available);
     assert_eq!(archive_server.archive_requests(), 0);
 
-    let applied_switch = run_with_options_and_env(
+    let applied_switch = run_with_options_and_configured_channel(
         UpdateArgs {
+            command: None,
             check: false,
             json: true,
             version: None,
@@ -661,6 +668,7 @@ async fn beta_binary_avoids_loop_reinstall_and_allows_explicit_switch_back_to_st
         },
         current_beta,
         ReleaseChannel::Beta,
+        None,
         target,
         None,
         Some(&home),
@@ -695,9 +703,10 @@ async fn beta_binary_avoids_loop_reinstall_and_allows_explicit_switch_back_to_st
     assert_eq!(cached.channel, "beta");
     assert_eq!(cached.latest_version, newer_beta);
 
-    let (beta_notice, beta_stale) = evaluate_cache_for_notice_for_channel(
+    let (beta_notice, beta_stale) = evaluate_cache_for_notice_with_target(
         &cache_path,
         current_beta,
+        ReleaseChannel::Beta,
         ReleaseChannel::Beta,
         chrono::Utc::now(),
     );
@@ -707,12 +716,192 @@ async fn beta_binary_avoids_loop_reinstall_and_allows_explicit_switch_back_to_st
     );
     assert!(!beta_stale);
 
-    let (stable_notice, stable_stale) = evaluate_cache_for_notice_for_channel(
+    let (stable_notice, stable_stale) = evaluate_cache_for_notice_with_target(
         &cache_path,
         "0.1.5",
+        ReleaseChannel::Stable,
         ReleaseChannel::Stable,
         chrono::Utc::now(),
     );
     assert_eq!(stable_notice, None);
     assert!(stable_stale);
+
+    // 5. Persisted configured channel (without --channel/--force) switches beta -> stable cleanly.
+    std::fs::write(install_dir.join("alan"), current_bin).unwrap();
+    std::fs::write(
+        install_dir.join(".alan-cli-manifest"),
+        format!("alan|{current_sha}\n"),
+    )
+    .unwrap();
+    let configured_switch = run_with_options_and_configured_channel(
+        UpdateArgs {
+            command: None,
+            check: false,
+            json: true,
+            version: None,
+            channel: None,
+            force: false,
+            install_dir: Some(install_dir.clone()),
+            manifest_url: Some(manifest_server.url("/latest.json")),
+            quiet: true,
+        },
+        current_beta,
+        ReleaseChannel::Beta,
+        Some(ReleaseChannel::Stable),
+        target,
+        None,
+        Some(&home),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(configured_switch.status, "updated");
+    assert_eq!(configured_switch.channel, "stable");
+    assert_eq!(configured_switch.previous_channel.as_deref(), Some("beta"));
+    assert!(configured_switch.updated);
+    assert_eq!(std::fs::read(install_dir.join("alan")).unwrap(), stable_bin);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_channel_subcommand_persists_preference_and_drives_update() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = temp.path().join("home");
+    let install_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&install_dir).unwrap();
+
+    let old_bin = b"#!/bin/sh\necho 'alan 0.1.5'\n";
+    let old_sha = sha256_hex(old_bin);
+    std::fs::write(install_dir.join("alan"), old_bin).unwrap();
+    std::fs::write(
+        install_dir.join(".alan-cli-manifest"),
+        format!("alan|{old_sha}\n"),
+    )
+    .unwrap();
+
+    // Default channel status reflects binary default before channel.json exists.
+    let initial = run_alan_update(&home, &["channel".into(), "--json".into()], &[]).await;
+    assert!(
+        initial.status.success(),
+        "{}",
+        String::from_utf8_lossy(&initial.stderr)
+    );
+    let initial_json: serde_json::Value = serde_json::from_slice(&initial.stdout).unwrap();
+    assert_eq!(initial_json["channel"], env!("ALAN_RELEASE_CHANNEL"));
+    assert_eq!(initial_json["source"], "binary_default");
+    assert_eq!(initial_json["switch_pending"], false);
+
+    // Select `beta` via `alan update channel beta --json`.
+    let set_beta = run_alan_update(
+        &home,
+        &["channel".into(), "beta".into(), "--json".into()],
+        &[],
+    )
+    .await;
+    assert!(
+        set_beta.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set_beta.stderr)
+    );
+    let set_json: serde_json::Value = serde_json::from_slice(&set_beta.stdout).unwrap();
+    assert_eq!(set_json["channel"], "beta");
+    assert_eq!(set_json["source"], "configured");
+    assert_eq!(
+        set_json["switch_pending"],
+        env!("ALAN_RELEASE_CHANNEL") != "beta"
+    );
+
+    // Showing channel again reports `configured`.
+    let shown = run_alan_update(&home, &["channel".into(), "--json".into()], &[]).await;
+    assert!(shown.status.success());
+    let shown_json: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert_eq!(shown_json["channel"], "beta");
+    assert_eq!(shown_json["source"], "configured");
+
+    // Plain `alan update --check --json` respects persisted `beta` preference against manifest URL.
+    let beta_version = "9.9.9-beta.20261123.50";
+    let target = current_target();
+    let asset = format!("alan-{beta_version}-{target}.tar.gz");
+    let archive_bytes = build_tar_gz(b"#!/bin/sh\necho 'alan beta'\n");
+    let archive_sha = sha256_hex(&archive_bytes);
+    let stable_manifest = manifest_bytes(ManifestSpec {
+        channel: "stable",
+        version: "9.9.9",
+        tag: "v9.9.9",
+        commit: None,
+        target,
+        asset: &format!("alan-9.9.9-{target}.tar.gz"),
+        archive_url: "http://127.0.0.1:9/unused.tar.gz",
+        archive_sha256: &archive_sha,
+        archive_size: archive_bytes.len(),
+    });
+    let mut routes = HashMap::new();
+    routes.insert(
+        "/latest.json".to_string(),
+        MockResponse {
+            status: 200,
+            content_type: "application/json",
+            body: stable_manifest,
+        },
+    );
+    let beta_manifest = manifest_bytes(ManifestSpec {
+        channel: "beta",
+        version: beta_version,
+        tag: "beta",
+        commit: Some("abc1234"),
+        target,
+        asset: &asset,
+        archive_url: "http://127.0.0.1:9/unused-beta.tar.gz",
+        archive_sha256: &archive_sha,
+        archive_size: archive_bytes.len(),
+    });
+    routes.insert(
+        "/beta.json".to_string(),
+        MockResponse {
+            status: 200,
+            content_type: "application/json",
+            body: beta_manifest,
+        },
+    );
+    let server = MockHttpServer::start(routes).await;
+
+    let mismatch = run_alan_update(
+        &home,
+        &[
+            "--check".into(),
+            "--install-dir".into(),
+            install_dir.display().to_string(),
+            "--manifest-url".into(),
+            server.url("/latest.json"),
+        ],
+        &[],
+    )
+    .await;
+    // Direct --manifest-url omits channel enforcement; check plain beta.json succeeds cleanly.
+    assert!(mismatch.status.success());
+
+    let check_beta = run_alan_update(
+        &home,
+        &[
+            "--check".into(),
+            "--json".into(),
+            "--install-dir".into(),
+            install_dir.display().to_string(),
+            "--manifest-url".into(),
+            server.url("/beta.json"),
+        ],
+        &[],
+    )
+    .await;
+    assert!(
+        check_beta.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check_beta.stderr)
+    );
+    let check_json: serde_json::Value = serde_json::from_slice(&check_beta.stdout).unwrap();
+    assert_eq!(check_json["channel"], "beta");
+    assert_eq!(check_json["target_version"], beta_version);
 }

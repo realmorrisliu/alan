@@ -10,7 +10,7 @@ use super::FileBackedApp;
 use super::app::{FileBackedAction, Notice};
 use super::settings::{SettingsControl, SettingsResetScope, SettingsResult};
 
-const SETTINGS_MENU_ITEMS: [(&str, &str); 5] = [
+const SETTINGS_MENU_ITEMS: [(&str, &str); 6] = [
     (
         "Connections & Login",
         "connect or switch model providers (/login)",
@@ -23,6 +23,7 @@ const SETTINGS_MENU_ITEMS: [(&str, &str); 5] = [
         "Trust Posture",
         "cycle governed vs auto-approve (/permissions)",
     ),
+    ("Release Channel", "select stable or beta updates"),
     (
         "Reset connections & settings",
         "clear providers, secrets, grants, history (keeps rollouts & memory)",
@@ -31,6 +32,11 @@ const SETTINGS_MENU_ITEMS: [(&str, &str); 5] = [
         "Reset ALL Alan data (factory reset)",
         "wipe all Alan services, memory, and rollouts (keeps user files & gcloud)",
     ),
+];
+
+const CHANNEL_OPTIONS: [(&str, &str); 2] = [
+    ("stable", "Tagged semantic releases"),
+    ("beta", "Rolling pre-release builds from main"),
 ];
 
 #[derive(Clone, Default)]
@@ -44,6 +50,9 @@ enum SettingsPhase {
     #[default]
     Idle,
     Menu {
+        selected: usize,
+    },
+    SelectChannel {
         selected: usize,
     },
     ConfirmReset {
@@ -71,7 +80,7 @@ impl SettingsFlowState {
 }
 
 impl FileBackedApp {
-    /// Entry point for `/settings [reset [--all]]`.
+    /// Entry point for `/settings [channel [stable|beta] | reset [--all]]`.
     pub(in crate::file_backed) fn settings_command(
         &mut self,
         argument: &str,
@@ -90,8 +99,20 @@ impl FileBackedApp {
         }
 
         let trimmed = argument.trim();
+        let mut direct_channel: Option<&str> = None;
         let initial_phase = match trimmed {
             "" => SettingsPhase::Menu { selected: 0 },
+            "channel" => SettingsPhase::SelectChannel {
+                selected: usize::from(self.release_channel.as_deref() == Some("beta")),
+            },
+            "channel stable" => {
+                direct_channel = Some("stable");
+                SettingsPhase::Idle
+            }
+            "channel beta" => {
+                direct_channel = Some("beta");
+                SettingsPhase::Idle
+            }
             "reset" => SettingsPhase::ConfirmReset {
                 scope: SettingsResetScope::Settings,
                 selected: 1,
@@ -102,7 +123,7 @@ impl FileBackedApp {
             },
             _ => {
                 self.notice = Some(Notice::warning(
-                    "usage: /settings | /settings reset | /settings reset --all",
+                    "usage: /settings | /settings channel [stable|beta] | /settings reset [--all]",
                 ));
                 return None;
             }
@@ -116,10 +137,35 @@ impl FileBackedApp {
         self.pending_login_submission = None;
         self.completion = None;
 
+        if let Some(channel) = direct_channel {
+            return self.trigger_release_channel_update(channel);
+        }
+
         self.settings.next_generation();
         self.settings.phase = initial_phase;
         self.refresh_settings_view();
         None
+    }
+
+    fn trigger_release_channel_update(&mut self, channel: &str) -> Option<FileBackedAction> {
+        if !self.settings_available {
+            self.settings.close();
+            self.completion = None;
+            self.notice = Some(Notice::warning(
+                "In-TUI channel switching is unavailable in this Host; run `alan update channel` from your terminal.",
+            ));
+            return None;
+        }
+        let generation = self.settings.next_generation();
+        self.settings.phase = SettingsPhase::Applying;
+        self.completion = None;
+        self.notice = Some(format!("Saving release channel ({channel})…").into());
+        Some(FileBackedAction::SettingsControl {
+            generation,
+            control: SettingsControl::SetReleaseChannel {
+                channel: channel.to_string(),
+            },
+        })
     }
 
     pub(in crate::file_backed) fn settings_key(
@@ -181,6 +227,15 @@ impl FileBackedApp {
                             self.toggle_trust_posture()
                         }
                         3 => {
+                            self.settings.phase = SettingsPhase::SelectChannel {
+                                selected: usize::from(
+                                    self.release_channel.as_deref() == Some("beta"),
+                                ),
+                            };
+                            self.refresh_settings_view();
+                            None
+                        }
+                        4 => {
                             self.settings.phase = SettingsPhase::ConfirmReset {
                                 scope: SettingsResetScope::Settings,
                                 selected: 1,
@@ -188,7 +243,7 @@ impl FileBackedApp {
                             self.refresh_settings_view();
                             None
                         }
-                        4 => {
+                        5 => {
                             self.settings.phase = SettingsPhase::ConfirmReset {
                                 scope: SettingsResetScope::All,
                                 selected: 1,
@@ -198,6 +253,25 @@ impl FileBackedApp {
                         }
                         _ => None,
                     }
+                }
+                _ => None,
+            },
+            SettingsPhase::SelectChannel { selected } => match key.code {
+                KeyCode::Esc | KeyCode::Char('c') if key.code == KeyCode::Esc || ctrl => {
+                    self.settings.phase = SettingsPhase::Menu { selected: 3 };
+                    self.refresh_settings_view();
+                    None
+                }
+                KeyCode::Up | KeyCode::Down => {
+                    *selected = (*selected + 1) % CHANNEL_OPTIONS.len();
+                    self.refresh_settings_view();
+                    None
+                }
+                KeyCode::Enter => {
+                    let chosen = CHANNEL_OPTIONS
+                        .get(*selected)
+                        .map_or("stable", |(name, _)| *name);
+                    self.trigger_release_channel_update(chosen)
                 }
                 _ => None,
             },
@@ -276,8 +350,25 @@ impl FileBackedApp {
                 );
                 (true, None)
             }
+            Ok(SettingsResult::ReleaseChannelUpdated {
+                channel,
+                matches_binary,
+            }) => {
+                self.release_channel = Some(channel.clone());
+                self.notice = Some(
+                    if matches_binary {
+                        format!("Release channel set to {channel} (active).")
+                    } else {
+                        format!(
+                            "Release channel set to {channel}. Run 'alan update' in your shell to switch."
+                        )
+                    }
+                    .into(),
+                );
+                (false, None)
+            }
             Err(error) => {
-                self.notice = Some(Notice::error(format!("Settings reset failed: {error}")));
+                self.notice = Some(Notice::error(format!("Settings action failed: {error}")));
                 (false, None)
             }
         }
@@ -303,6 +394,7 @@ impl FileBackedApp {
         self.input_intent = InputIntent::Agent;
         self.history_draft_intent = None;
         self.effective_model = None;
+        self.release_channel = None;
         self.connection_configured = Some(false);
         self.model.snapshot = None;
         self.model_chooser = Default::default();
@@ -314,8 +406,17 @@ impl FileBackedApp {
             SettingsPhase::Menu { selected } => {
                 let matches = SETTINGS_MENU_ITEMS
                     .iter()
-                    .map(|(label, detail)| {
-                        CompletionCandidate::new(*label, Some((*detail).to_string()))
+                    .enumerate()
+                    .map(|(idx, (label, detail))| {
+                        let resolved_detail = if idx == 3 {
+                            match self.release_channel.as_deref() {
+                                Some(ch) => format!("{detail} (current: {ch})"),
+                                None => (*detail).to_string(),
+                            }
+                        } else {
+                            (*detail).to_string()
+                        };
+                        CompletionCandidate::new(*label, Some(resolved_detail))
                     })
                     .collect();
                 self.completion = Some(CompletionState {
@@ -326,6 +427,28 @@ impl FileBackedApp {
                     selected: *selected,
                 });
                 self.notice = Some("Settings · ↑↓ move · Enter select · Esc close".into());
+            }
+            SettingsPhase::SelectChannel { selected } => {
+                let current = self.release_channel.as_deref();
+                let matches = CHANNEL_OPTIONS
+                    .iter()
+                    .map(|(name, detail)| {
+                        let resolved_detail = if current == Some(*name) {
+                            format!("{detail} (current)")
+                        } else {
+                            (*detail).to_string()
+                        };
+                        CompletionCandidate::new(*name, Some(resolved_detail))
+                    })
+                    .collect();
+                self.completion = Some(CompletionState {
+                    kind: CompletionKind::Command,
+                    token_start: 0,
+                    query: String::new(),
+                    matches,
+                    selected: *selected,
+                });
+                self.notice = Some("Release Channel · ↑↓ choose · Enter save · Esc back".into());
             }
             SettingsPhase::ConfirmReset { scope, selected } => {
                 let (title, detail, confirm_label) = match scope {
@@ -400,10 +523,10 @@ mod tests {
 
         app.handle_command("/settings");
         assert!(app.settings.is_active());
-        assert_eq!(app.completion.as_ref().unwrap().matches.len(), 5);
+        assert_eq!(app.completion.as_ref().unwrap().matches.len(), 6);
 
-        // Move to "Reset connections & settings" (index 3) and press Enter.
-        for _ in 0..3 {
+        // Move to "Reset connections & settings" (index 4) and press Enter.
+        for _ in 0..4 {
             app.handle_key(test_key(KeyCode::Down));
         }
         assert!(app.handle_key(test_key(KeyCode::Enter)).is_none());
@@ -477,6 +600,98 @@ mod tests {
             app.notice
                 .as_ref()
                 .is_some_and(|n| n.contains("Setup skipped"))
+        );
+    }
+
+    #[test]
+    fn settings_release_channel_picker_saves_selection_and_updates_notice() {
+        let mut app = FileBackedApp::new("/agent/1".into());
+        app.settings_available = true;
+        app.release_channel = Some("stable".to_string());
+
+        app.handle_command("/settings");
+        assert!(app.settings.is_active());
+        for _ in 0..3 {
+            app.handle_key(test_key(KeyCode::Down));
+        }
+        assert!(app.handle_key(test_key(KeyCode::Enter)).is_none());
+        let completion = app.completion.as_ref().expect("channel picker candidates");
+        assert_eq!(completion.selected, 0);
+        assert_eq!(completion.matches[0].label, "stable");
+        assert_eq!(completion.matches[1].label, "beta");
+
+        app.handle_key(test_key(KeyCode::Down));
+        assert_eq!(app.completion.as_ref().unwrap().selected, 1);
+
+        let Some(FileBackedAction::SettingsControl {
+            generation,
+            control: SettingsControl::SetReleaseChannel { channel },
+        }) = app.handle_key(test_key(KeyCode::Enter))
+        else {
+            panic!("expected SetReleaseChannel action");
+        };
+        assert_eq!(channel, "beta");
+
+        let (was_reset, next_action) = app.apply_settings_result(
+            generation,
+            Ok(SettingsResult::ReleaseChannelUpdated {
+                channel: "beta".to_string(),
+                matches_binary: false,
+            }),
+        );
+        assert!(!was_reset);
+        assert!(next_action.is_none());
+        assert_eq!(app.release_channel.as_deref(), Some("beta"));
+        assert!(!app.settings.is_active());
+        assert!(app.notice.as_ref().is_some_and(
+            |n| n.contains("Release channel set to beta") && n.contains("alan update")
+        ));
+    }
+
+    #[test]
+    fn settings_channel_shortcut_saves_or_warns_when_unavailable() {
+        let mut unavailable = FileBackedApp::new("/agent/1".into());
+        assert!(
+            unavailable
+                .handle_command("/settings channel beta")
+                .is_none()
+        );
+        assert!(!unavailable.settings.is_active());
+        assert!(
+            unavailable
+                .notice
+                .as_ref()
+                .is_some_and(|n| n.contains("alan update channel"))
+        );
+
+        let mut app = FileBackedApp::new("/agent/1".into());
+        app.settings_available = true;
+        app.release_channel = Some("beta".to_string());
+        app.handle_command("/settings channel");
+        assert_eq!(app.completion.as_ref().unwrap().selected, 1);
+        app.handle_key(test_key(KeyCode::Esc));
+        assert_eq!(app.completion.as_ref().unwrap().selected, 3);
+
+        let Some(FileBackedAction::SettingsControl {
+            generation,
+            control: SettingsControl::SetReleaseChannel { channel },
+        }) = app.handle_command("/settings channel stable")
+        else {
+            panic!("expected direct SetReleaseChannel action");
+        };
+        assert_eq!(channel, "stable");
+        let (was_reset, _) = app.apply_settings_result(
+            generation,
+            Ok(SettingsResult::ReleaseChannelUpdated {
+                channel: "stable".to_string(),
+                matches_binary: true,
+            }),
+        );
+        assert!(!was_reset);
+        assert!(
+            app.notice
+                .as_ref()
+                .is_some_and(|n| n.contains("Release channel set to stable (active)."))
         );
     }
 }

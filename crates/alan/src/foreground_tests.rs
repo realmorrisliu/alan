@@ -100,9 +100,16 @@ fn interactive_config_defaults_update_notice_to_none_and_passive_check_uses_syst
     let product = alan_os_host::SystemStorePaths::from_data_dir(dir.path()).unwrap();
     let cfg = config(&product);
     assert!(cfg.update_notice.is_none());
+    assert_eq!(
+        cfg.release_channel.as_deref(),
+        Some(cli::update::current_binary_channel().as_str())
+    );
     assert!(cli::update::prepare_passive_tui_update_notice(&product, false).is_none());
     assert_eq!(
         cli::update::passive_check::passive_check_cache_path(&product).unwrap(),
         product.service("updater").unwrap().join("last-check.json")
     );
+
+    cli::update::write_configured_channel(&product, cli::update::ReleaseChannel::Beta).unwrap();
+    assert_eq!(config(&product).release_channel.as_deref(), Some("beta"));
 }

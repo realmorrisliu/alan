@@ -43,6 +43,12 @@ fn interactive_config_with_posture(
         alan_agent_engine::tools::active_backend_name().to_string()
     });
     config.trust_posture_label = trust_posture.tui_badge_label().map(str::to_string);
+    config.release_channel = Some(
+        cli::update::effective_channel(Some(store))
+            .0
+            .as_str()
+            .to_string(),
+    );
     Ok(config)
 }
 
@@ -207,6 +213,16 @@ pub(super) async fn run_bare_in_foreground_instance(
                                     Ok(alan_tui::SettingsResult::ResetCompleted {
                                         scope,
                                         removed_count: report.removed_paths.len(),
+                                    })
+                                }
+                                alan_tui::SettingsControl::SetReleaseChannel { channel } => {
+                                    let parsed = cli::update::ReleaseChannel::parse(&channel)?;
+                                    let system = alan_os_host::SystemStorePaths::detect()?;
+                                    let matches_binary =
+                                        cli::update::set_configured_channel(&system, parsed)?;
+                                    Ok(alan_tui::SettingsResult::ReleaseChannelUpdated {
+                                        channel: parsed.as_str().to_string(),
+                                        matches_binary,
                                     })
                                 }
                             }

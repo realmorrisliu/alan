@@ -1,6 +1,7 @@
 //! Self-update CLI (`alan update`) and non-blocking 24h TUI startup update check.
 
 mod archive;
+pub mod channel;
 mod ownership;
 pub mod passive_check;
 mod progress;
@@ -26,6 +27,10 @@ use std::io::{BufWriter, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub use channel::{
+    UpdateCommand, effective_channel, read_configured_channel, set_configured_channel,
+    write_configured_channel,
+};
 pub use passive_check::prepare_passive_tui_update_notice;
 
 /// Default canonical stable release metadata endpoint.
@@ -98,6 +103,9 @@ pub(crate) fn default_channel() -> String {
 /// Arguments for `alan update`.
 #[derive(Debug, Clone, Args)]
 pub struct UpdateArgs {
+    /// Subcommand for persisted update configuration (such as `channel`)
+    #[command(subcommand)]
+    pub command: Option<UpdateCommand>,
     /// Check for an available update without downloading or installing anything
     #[arg(long)]
     pub check: bool,
@@ -107,7 +115,7 @@ pub struct UpdateArgs {
     /// Install or check a specific release version or tag (e.g. `0.1.0` or `v0.1.0`)
     #[arg(long, value_name = "VER_OR_TAG")]
     pub version: Option<String>,
-    /// Select release channel (`stable` or `beta`; defaults to the current binary's channel)
+    /// Select release channel for this run (`stable` or `beta`; defaults to configured or binary channel)
     #[arg(long, value_enum)]
     pub channel: Option<ReleaseChannel>,
     /// Allow overwriting unowned/modified binaries, reinstalling, or downgrading with `--version`
@@ -241,25 +249,47 @@ pub async fn run(args: UpdateArgs) -> Result<()> {
         "ALAN_INSTALL_CHANNEL is retired; unset it and run `alan update`"
     );
 
+    if let Some(UpdateCommand::Channel { channel, json }) = args.command {
+        return channel::run_channel_command(channel, args.json || json);
+    }
+
     let current_exe = std::env::current_exe().ok();
     let home_dir = dirs::home_dir();
     let target_triple = current_target_triple()?;
     let json_output = args.json;
     let quiet = args.quiet;
+    let explicit_channel_override = args.channel.is_some()
+        || std::env::var("ALAN_CHANNEL")
+            .ok()
+            .is_some_and(|v| !v.trim().is_empty());
+    let system_store = alan_os_host::SystemStorePaths::detect().ok();
+    let configured_channel = system_store.as_ref().and_then(read_configured_channel);
+    let had_configured_channel = configured_channel.is_some();
 
-    let report = run_with_options(
+    let report = run_with_configured_channel(
         args,
         env!("ALAN_VERSION"),
+        current_binary_channel(),
+        configured_channel,
         target_triple,
         current_exe.as_deref(),
         home_dir.as_deref(),
     )
     .await?;
 
+    if report.updated
+        && explicit_channel_override
+        && had_configured_channel
+        && let Some(store) = system_store.as_ref()
+        && let Ok(installed_channel) = ReleaseChannel::parse(&report.channel)
+    {
+        let _ = write_configured_channel(store, installed_channel);
+    }
+
     if json_output {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else if !quiet {
-        print_human_report(&report);
+        channel::print_human_report(&report);
     }
     Ok(())
 }
@@ -288,6 +318,7 @@ pub fn parse_channel_env(raw: Option<&str>) -> Result<Option<ReleaseChannel>> {
 }
 
 /// Pure manifest URL resolver taking explicit environment values for deterministic testing.
+#[cfg(test)]
 #[expect(
     clippy::too_many_arguments,
     reason = "pure test helper accepts explicit env inputs for deterministic resolution"
@@ -300,6 +331,35 @@ pub fn resolve_manifest_url_with(
     release_manifest_env: Option<&str>,
     release_base_env: Option<&str>,
     channel_env: Option<&str>,
+    current_channel: ReleaseChannel,
+) -> Result<String> {
+    resolve_manifest_url_with_configured(
+        explicit_url,
+        requested_version,
+        requested_channel,
+        manifest_env,
+        release_manifest_env,
+        release_base_env,
+        channel_env,
+        None,
+        current_channel,
+    )
+}
+
+/// Pure manifest URL resolver including persisted `channel.json` preference.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "pure test helper accepts explicit env and persisted channel inputs"
+)]
+pub fn resolve_manifest_url_with_configured(
+    explicit_url: Option<&str>,
+    requested_version: Option<&str>,
+    requested_channel: Option<ReleaseChannel>,
+    manifest_env: Option<&str>,
+    release_manifest_env: Option<&str>,
+    release_base_env: Option<&str>,
+    channel_env: Option<&str>,
+    configured_channel: Option<ReleaseChannel>,
     current_channel: ReleaseChannel,
 ) -> Result<String> {
     let parsed_channel_env = parse_channel_env(channel_env)?;
@@ -334,6 +394,7 @@ pub fn resolve_manifest_url_with(
 
     let effective_channel = requested_channel
         .or(parsed_channel_env)
+        .or(configured_channel)
         .unwrap_or(current_channel);
     Ok(effective_channel.default_manifest_url().to_string())
 }
@@ -346,10 +407,11 @@ fn validate_http_url(label: &str, url: &str) -> Result<()> {
     Ok(())
 }
 
-/// Core testable implementation of `alan update`.
-pub async fn run_with_options(
+async fn run_with_configured_channel(
     args: UpdateArgs,
     current_version: &str,
+    current_channel: ReleaseChannel,
+    configured_channel: Option<ReleaseChannel>,
     target_triple: &str,
     current_exe: Option<&Path>,
     home_dir: Option<&Path>,
@@ -358,10 +420,11 @@ pub async fn run_with_options(
     let release_manifest_env = std::env::var("ALAN_RELEASE_MANIFEST_URL").ok();
     let release_base_env = std::env::var("ALAN_RELEASE_BASE_URL").ok();
     let channel_env = std::env::var("ALAN_CHANNEL").ok();
-    run_with_options_and_env(
+    run_with_options_and_configured_channel(
         args,
         current_version,
-        current_binary_channel(),
+        current_channel,
+        configured_channel,
         target_triple,
         current_exe,
         home_dir,
@@ -373,15 +436,16 @@ pub async fn run_with_options(
     .await
 }
 
-/// Pure testable implementation of `alan update` accepting explicit channel and environment inputs.
+/// Pure testable implementation of `alan update` with explicit persisted channel input.
 #[expect(
     clippy::too_many_arguments,
-    reason = "pure test helper accepts explicit channel and env inputs for deterministic testing"
+    reason = "pure test helper accepts explicit channel, persisted preference, and env inputs"
 )]
-pub async fn run_with_options_and_env(
+pub async fn run_with_options_and_configured_channel(
     args: UpdateArgs,
     current_version: &str,
     current_channel: ReleaseChannel,
+    configured_channel: Option<ReleaseChannel>,
     target_triple: &str,
     current_exe: Option<&Path>,
     home_dir: Option<&Path>,
@@ -402,7 +466,7 @@ pub async fn run_with_options_and_env(
 
     let install_dir = resolve_install_dir(args.install_dir.as_deref(), current_exe, home_dir)?;
     let installed_binary = install_dir.join("alan");
-    let manifest_url = resolve_manifest_url_with(
+    let manifest_url = resolve_manifest_url_with_configured(
         args.manifest_url.as_deref(),
         args.version.as_deref(),
         args.channel,
@@ -410,11 +474,14 @@ pub async fn run_with_options_and_env(
         release_manifest_env,
         release_base_env,
         channel_env,
+        configured_channel,
         current_channel,
     )?;
 
     let explicit_channel_arg = args.channel;
-    let selected_channel = explicit_channel_arg.or(parsed_channel_env);
+    let selected_channel = explicit_channel_arg
+        .or(parsed_channel_env)
+        .or(configured_channel);
     let has_url_override = args
         .manifest_url
         .as_deref()
@@ -830,95 +897,5 @@ fn existing_regular_file_sha256(path: &Path) -> Option<String> {
         sha256_file(path).ok()
     } else {
         None
-    }
-}
-
-fn print_human_report(report: &UpdateReport) {
-    if report.checked_only {
-        if report.update_available {
-            if let Some(prev) = &report.previous_channel {
-                println!(
-                    "Update available (channel switch {prev} -> {}): {} -> {} ({})",
-                    report.channel,
-                    display_tag(&report.current_version),
-                    display_tag(&report.target_version),
-                    report.target
-                );
-                println!(
-                    "Run `alan update --channel {}` to install into {}.",
-                    report.channel, report.install_dir
-                );
-            } else {
-                println!(
-                    "Update available ({} channel): {} -> {} ({})",
-                    report.channel,
-                    display_tag(&report.current_version),
-                    display_tag(&report.target_version),
-                    report.target
-                );
-                println!("Run `alan update` to install into {}.", report.install_dir);
-            }
-        } else if report.status == "channel_switch" {
-            let prev = report.previous_channel.as_deref().unwrap_or("current");
-            println!(
-                "Channel switch available ({prev} -> {}): {} -> {} ({})",
-                report.channel,
-                display_tag(&report.current_version),
-                display_tag(&report.target_version),
-                report.target
-            );
-            println!(
-                "Run `alan update --channel {}` to install into {}.",
-                report.channel, report.install_dir
-            );
-        } else if report.status == "downgrade_selected" {
-            println!(
-                "Selected version {} is older than installed {}.",
-                display_tag(&report.target_version),
-                display_tag(&report.current_version)
-            );
-        } else {
-            println!(
-                "alan is up to date ({}, {} channel).",
-                display_tag(&report.current_version),
-                report.channel
-            );
-        }
-        return;
-    }
-
-    if !report.updated {
-        println!(
-            "alan is already up to date ({}, {} channel).",
-            display_tag(&report.current_version),
-            report.channel
-        );
-        return;
-    }
-
-    if let Some(prev) = &report.previous_channel {
-        println!(
-            "Updated alan {} -> {} ({}, switched {prev} -> {} channel) at {}.",
-            display_tag(&report.current_version),
-            display_tag(&report.target_version),
-            report.target,
-            report.channel,
-            report.installed_binary
-        );
-    } else {
-        println!(
-            "Updated alan {} -> {} ({}, {} channel) at {}.",
-            display_tag(&report.current_version),
-            display_tag(&report.target_version),
-            report.target,
-            report.channel,
-            report.installed_binary
-        );
-    }
-    if !report.retired_legacy.is_empty() {
-        println!(
-            "Retired legacy installation files: {}.",
-            report.retired_legacy.join(", ")
-        );
     }
 }

@@ -199,6 +199,8 @@ pub struct FileBackedRunConfig {
     pub connection_configured: Option<bool>,
     /// Optional passive update notice shown in the initial welcome header.
     pub update_notice: Option<String>,
+    /// Effective persisted or binary release channel (`"stable"` or `"beta"`).
+    pub release_channel: Option<String>,
 }
 
 impl FileBackedRunConfig {
@@ -225,6 +227,7 @@ impl FileBackedRunConfig {
             initial_project_mount: None,
             connection_configured: None,
             update_notice: None,
+            release_channel: None,
         }
     }
 }
@@ -249,6 +252,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     app.issue_available = config.issue_control.is_some();
     app.connection_configured = config.connection_configured;
     app.update_notice = config.update_notice.clone();
+    app.release_channel = config.release_channel.clone();
     app.set_issue_repo(config.issue_repo.clone());
     if !config.initial_attachments.is_empty() {
         app.pending_attachments = config.initial_attachments.clone();
