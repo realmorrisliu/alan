@@ -7,6 +7,20 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-23
+
+### Added
+
+- Add dual `stable` and `beta` release channels with build-time version/channel metadata injection (`crates/alan/build.rs`), rolling `main` beta pre-release builds (`release-beta.yml`), `alan update --channel`, `alanworks.app/beta.json`, and `install.sh --channel` (#1147).
+- Add persisted release channel selection (`services/updater/channel.json`) via `alan update channel [stable|beta]` and interactive TUI `/settings -> Release Channel` picker alongside `/beta.json` Cloudflare Worker asset routing (#1150).
+- Automate AI-native redacted `/issue` and `/bug` drafting with interruptible progress, allowlisted tool failure context, `Ctrl+L` `alan:auto` label toggling, and deterministic fallback (#1146).
+- Upgrade TUI approval and queue UX with pre-execution `bash`/`edit_file`/`write_file` previews, a dedicated bottom confirmation selector (keyboard navigation, `Reject with note…`, `d` detail expand/collapse, viewport-aware overflow scrolling, key swallowing, and settled single-line receipts), compact queued input previews, and context-sensitive footer hints (#1148).
+
+### Changed
+
+- Harden Vertex/Gemini `GenerateContent` projection and HTTP 4xx diagnostics, add Seatbelt `ProtectedOnly` inline interpreter code allowlist support, improve multiline `Bash` title summaries, and resolve TUI confirmation keypress leakage and queue/status consistency (#1145).
+- Update Cargo and GitHub Actions dependencies in batch Dependabot maintenance (#1149).
+
 ## [0.1.5] - 2026-11-23
 
 ### Added
