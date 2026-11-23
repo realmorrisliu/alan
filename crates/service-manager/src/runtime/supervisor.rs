@@ -5,10 +5,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use alan_agent_engine::ToolRegistry;
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat,
 };
-use alan_kernel::{Access, Credentials, LiveNamespace, Pid, Status};
+use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid, Status};
 use anyhow::{Context, Result, ensure};
 use async_trait::async_trait;
 
@@ -17,6 +18,7 @@ use crate::{
     PackageService, RestartDecision,
     agent_runtime::{AgentRuntimeService, RootAgentProcess, RootAgentTemplate},
     process_spawn::spawn_unit_process,
+    quartermaster::QUARTERMASTER_EXECUTABLE,
 };
 
 /// A stable namespace mount whose backing File-Server exists only while its
@@ -145,6 +147,7 @@ pub(super) struct SupervisorEnvironment {
     pub(super) active_units: BTreeMap<String, ActiveUnit>,
     pub(super) manager_pid: Pid,
     pub(super) local_entry: Arc<LocalEntryService>,
+    pub(super) fileserver_manager: Arc<crate::FileserverManager>,
 }
 
 pub(super) struct SupervisorRuntime {
@@ -737,5 +740,80 @@ pub(super) async fn wait_unit_ready(
     })
     .await
     .with_context(|| format!("unit `{}` publication timed out", unit.name))??;
+    Ok(())
+}
+
+pub(super) fn mount_standard_namespace_roots(namespace: &mut Namespace) {
+    for path in ["/bin", "/lib", "/mnt"] {
+        namespace.mount(
+            path,
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+            Access::ReadOnly,
+        );
+    }
+    namespace.mount(
+        "/man",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_tree(
+            crate::manpages::tree_entries(),
+        ))),
+        Access::ReadOnly,
+    );
+}
+
+pub(super) fn mount_boot_units(namespace: &mut Namespace) {
+    namespace.mount(
+        "/lib/boot",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_files(
+            BootManifest::documents()
+                .into_iter()
+                .map(|(name, document)| (name.to_string(), document.as_bytes().to_vec())),
+        ))),
+        Access::ReadOnly,
+    );
+}
+
+pub(super) fn mount_system_executables(namespace: &mut Namespace, manifest: &BootManifest) {
+    for executable in manifest
+        .ordered()
+        .map(|unit| unit.executable.as_str())
+        .chain([
+            super::SERVICE_MANAGER_EXECUTABLE,
+            "/bin/alan-shell",
+            QUARTERMASTER_EXECUTABLE,
+            crate::agent_work::EXECUTABLE,
+        ])
+    {
+        namespace.mount(
+            executable,
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+            Access::ReadOnly,
+        );
+    }
+}
+
+pub(super) fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistry) -> Result<()> {
+    namespace.mount(
+        "/lib/exec/agent_work",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "manifest",
+            crate::agent_work::manifest(),
+        ))),
+        Access::ReadOnly,
+    );
+    for name in tools.list_tools() {
+        namespace.mount(
+            &format!("/bin/{name}"),
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+            Access::ReadOnly,
+        );
+        namespace.mount(
+            &format!("/lib/exec/{name}"),
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+                "manifest",
+                tools.package_manifest_bytes(name)?,
+            ))),
+            Access::ReadOnly,
+        );
+    }
     Ok(())
 }

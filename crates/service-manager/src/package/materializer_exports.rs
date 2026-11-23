@@ -65,6 +65,12 @@ pub(super) fn build_content_exports(
             })
         }
         PackageExportKind::Tool => {
+            let exports = materialize_companion_skills_in_map(
+                snapshot,
+                content_files,
+                generated_files,
+                max_source_file_bytes,
+            )?;
             let mut tools = parsed_manifest
                 .expect("tool kind requires parsed manifest")
                 .tools;
@@ -110,7 +116,7 @@ pub(super) fn build_content_exports(
                 export_kind: PackageExportKind::Tool,
                 manifest_version,
                 description,
-                exports: Vec::new(),
+                exports,
                 tool_exports: tools,
                 mcp_exports: Vec::new(),
                 provider_export: None,
@@ -118,6 +124,12 @@ pub(super) fn build_content_exports(
             })
         }
         PackageExportKind::Mcp => {
+            let exports = materialize_companion_skills_in_map(
+                snapshot,
+                content_files,
+                generated_files,
+                max_source_file_bytes,
+            )?;
             let mut mcps = parsed_manifest
                 .expect("mcp kind requires parsed manifest")
                 .mcps;
@@ -149,7 +161,7 @@ pub(super) fn build_content_exports(
                 export_kind: PackageExportKind::Mcp,
                 manifest_version,
                 description,
-                exports: Vec::new(),
+                exports,
                 tool_exports: Vec::new(),
                 mcp_exports: mcps,
                 provider_export: None,
@@ -157,6 +169,12 @@ pub(super) fn build_content_exports(
             })
         }
         PackageExportKind::Provider => {
+            let exports = materialize_companion_skills_in_map(
+                snapshot,
+                content_files,
+                generated_files,
+                max_source_file_bytes,
+            )?;
             let provider = parsed_manifest
                 .expect("provider kind requires parsed manifest")
                 .provider
@@ -172,7 +190,7 @@ pub(super) fn build_content_exports(
                 export_kind: PackageExportKind::Provider,
                 manifest_version,
                 description,
-                exports: Vec::new(),
+                exports,
                 tool_exports: Vec::new(),
                 mcp_exports: Vec::new(),
                 provider_export: Some(provider),
@@ -180,6 +198,12 @@ pub(super) fn build_content_exports(
             })
         }
         PackageExportKind::Fileserver => {
+            let exports = materialize_companion_skills_in_map(
+                snapshot,
+                content_files,
+                generated_files,
+                max_source_file_bytes,
+            )?;
             let mut fileserver = parsed_manifest
                 .expect("fileserver kind requires parsed manifest")
                 .fileserver
@@ -213,7 +237,7 @@ pub(super) fn build_content_exports(
                 export_kind: PackageExportKind::Fileserver,
                 manifest_version,
                 description,
-                exports: Vec::new(),
+                exports,
                 tool_exports: Vec::new(),
                 mcp_exports: Vec::new(),
                 provider_export: None,
@@ -233,6 +257,7 @@ pub(super) fn verify_materialized_exports(
     provider_export: Option<&ProviderPackageExport>,
     fileserver_export: Option<&FileserverPackageExport>,
 ) -> Result<()> {
+    verify_skill_exports(content_root, exports)?;
     match export_kind {
         PackageExportKind::Skill => {
             ensure!(
@@ -242,20 +267,10 @@ pub(super) fn verify_materialized_exports(
                     && fileserver_export.is_none(),
                 "skill materialization contains non-skill exports"
             );
-            for export in exports {
-                validate_package_id(&export.skill_id)?;
-                let export_root = content_root.join(&export.root);
-                ensure!(
-                    export.root == format!("skills/{}", export.skill_id)
-                        && export_root.join("SKILL.md").is_file(),
-                    "materialization manifest contains an invalid Skill export"
-                );
-            }
         }
         PackageExportKind::Tool => {
             ensure!(
-                exports.is_empty()
-                    && !tool_exports.is_empty()
+                !tool_exports.is_empty()
                     && mcp_exports.is_empty()
                     && provider_export.is_none()
                     && fileserver_export.is_none(),
@@ -281,8 +296,7 @@ pub(super) fn verify_materialized_exports(
         }
         PackageExportKind::Mcp => {
             ensure!(
-                exports.is_empty()
-                    && tool_exports.is_empty()
+                tool_exports.is_empty()
                     && !mcp_exports.is_empty()
                     && provider_export.is_none()
                     && fileserver_export.is_none(),
@@ -310,10 +324,7 @@ pub(super) fn verify_materialized_exports(
         }
         PackageExportKind::Provider => {
             ensure!(
-                exports.is_empty()
-                    && tool_exports.is_empty()
-                    && mcp_exports.is_empty()
-                    && fileserver_export.is_none(),
+                tool_exports.is_empty() && mcp_exports.is_empty() && fileserver_export.is_none(),
                 "provider materialization contains non-provider exports"
             );
             let provider =
@@ -332,10 +343,7 @@ pub(super) fn verify_materialized_exports(
         }
         PackageExportKind::Fileserver => {
             ensure!(
-                exports.is_empty()
-                    && tool_exports.is_empty()
-                    && mcp_exports.is_empty()
-                    && provider_export.is_none(),
+                tool_exports.is_empty() && mcp_exports.is_empty() && provider_export.is_none(),
                 "fileserver materialization contains non-fileserver exports"
             );
             let fileserver = fileserver_export
@@ -371,15 +379,74 @@ pub(super) fn verify_materialized_exports(
     Ok(())
 }
 
+fn verify_skill_exports(content_root: &Path, exports: &[PackageExport]) -> Result<()> {
+    let mut seen_skill_ids = BTreeSet::new();
+    for export in exports {
+        validate_package_id(&export.skill_id)?;
+        ensure!(
+            seen_skill_ids.insert(export.skill_id.as_str()),
+            "materialization manifest contains duplicate Skill id `{}`",
+            export.skill_id
+        );
+        let export_root = content_root.join(&export.root);
+        ensure!(
+            export.root == format!("skills/{}", export.skill_id)
+                && export_root.join("SKILL.md").is_file(),
+            "materialization manifest contains an invalid Skill export"
+        );
+    }
+    Ok(())
+}
+
+fn materialize_companion_skills_in_map(
+    snapshot: &PackageSnapshot,
+    content_files: &mut BTreeMap<String, (Vec<u8>, bool)>,
+    generated_files: &mut BTreeSet<String>,
+    max_source_file_bytes: usize,
+) -> Result<Vec<PackageExport>> {
+    let roots = companion_skill_roots(snapshot)?;
+    materialize_skill_roots_and_commands(
+        snapshot,
+        roots,
+        true,
+        content_files,
+        generated_files,
+        max_source_file_bytes,
+    )
+}
+
 fn materialize_skill_exports_in_map(
     snapshot: &PackageSnapshot,
     content_files: &mut BTreeMap<String, (Vec<u8>, bool)>,
     generated_files: &mut BTreeSet<String>,
     max_source_file_bytes: usize,
 ) -> Result<Vec<PackageExport>> {
+    let roots = native_skill_roots(snapshot)?;
+    let include_command_md = !snapshot
+        .entries
+        .iter()
+        .any(|entry| entry.path == "SKILL.md");
+    materialize_skill_roots_and_commands(
+        snapshot,
+        roots,
+        include_command_md,
+        content_files,
+        generated_files,
+        max_source_file_bytes,
+    )
+}
+
+fn materialize_skill_roots_and_commands(
+    snapshot: &PackageSnapshot,
+    roots: Vec<PathBuf>,
+    include_command_md: bool,
+    content_files: &mut BTreeMap<String, (Vec<u8>, bool)>,
+    generated_files: &mut BTreeSet<String>,
+    max_source_file_bytes: usize,
+) -> Result<Vec<PackageExport>> {
     let mut exports = Vec::new();
     let mut skill_ids = BTreeSet::new();
-    for native_root in native_skill_roots(snapshot)? {
+    for native_root in roots {
         let skill_md_path = native_root.join("SKILL.md");
         let skill_document = snapshot
             .entries
@@ -418,11 +485,7 @@ fn materialize_skill_exports_in_map(
         });
     }
 
-    if !snapshot
-        .entries
-        .iter()
-        .any(|entry| entry.path == "SKILL.md")
-    {
+    if include_command_md {
         for entry in &snapshot.entries {
             let path = Path::new(&entry.path);
             if path.components().count() != 2
@@ -546,17 +609,10 @@ fn command_skill_document(
     document
 }
 
-fn native_skill_roots(snapshot: &PackageSnapshot) -> Result<Vec<PathBuf>> {
-    if snapshot
-        .entries
-        .iter()
-        .any(|entry| entry.path == "SKILL.md")
-    {
-        return Ok(vec![PathBuf::new()]);
-    }
-    let mut roots = snapshot
-        .entries
-        .iter()
+fn collect_nested_skill_roots<'a>(
+    entries: impl Iterator<Item = &'a super::types::PackageSnapshotEntry>,
+) -> Result<Vec<PathBuf>> {
+    let mut roots = entries
         .filter(|entry| entry.path.ends_with("/SKILL.md"))
         .map(|entry| {
             Path::new(&entry.path)
@@ -578,6 +634,26 @@ fn native_skill_roots(snapshot: &PackageSnapshot) -> Result<Vec<PathBuf>> {
         );
     }
     Ok(roots)
+}
+
+fn native_skill_roots(snapshot: &PackageSnapshot) -> Result<Vec<PathBuf>> {
+    if snapshot
+        .entries
+        .iter()
+        .any(|entry| entry.path == "SKILL.md")
+    {
+        return Ok(vec![PathBuf::new()]);
+    }
+    collect_nested_skill_roots(snapshot.entries.iter())
+}
+
+fn companion_skill_roots(snapshot: &PackageSnapshot) -> Result<Vec<PathBuf>> {
+    collect_nested_skill_roots(
+        snapshot
+            .entries
+            .iter()
+            .filter(|entry| entry.path.starts_with("skills/") && entry.path != "skills/SKILL.md"),
+    )
 }
 
 fn skill_id_for_native_root(snapshot: &PackageSnapshot, root: &Path) -> Result<String> {

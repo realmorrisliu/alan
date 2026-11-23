@@ -27,6 +27,8 @@ fn manifest_validation_enforces_ids_explicit_mounts_and_defaults() {
         prompt: "Summarize new inbox notes".to_string(),
         model_profile: None,
         mounts: vec!["notes".to_string()],
+        packages: vec![],
+        fileservers: vec![],
         trust: WorkflowTrustPosture::default(),
         json: true,
         timeout_secs: None,
@@ -82,6 +84,8 @@ fn schedule_parsing_and_launchd_cron_rendering_cover_intervals_and_calendar_cron
         prompt: "Check inbox".to_string(),
         model_profile: None,
         mounts: vec![],
+        packages: vec![],
+        fileservers: vec![],
         trust: WorkflowTrustPosture::Governed,
         json: true,
         timeout_secs: Some(60),
@@ -104,6 +108,8 @@ fn schedule_parsing_and_launchd_cron_rendering_cover_intervals_and_calendar_cron
         prompt: "Weekly digest".to_string(),
         model_profile: None,
         mounts: vec![],
+        packages: vec![],
+        fileservers: vec![],
         trust: WorkflowTrustPosture::Governed,
         json: true,
         timeout_secs: None,
@@ -230,6 +236,8 @@ printf '{{"type":"turn_finished","status":"completed","answer":"Found 2 notes; s
                 prompt: "Digest personal notes".to_string(),
                 model_profile: Some("openai-main".to_string()),
                 mounts: vec!["notes-grant".to_string()],
+                packages: vec![],
+                fileservers: vec![],
                 trust: WorkflowTrustPosture::Governed,
                 no_stream_json: false,
                 timeout_secs: Some(30),
@@ -324,6 +332,8 @@ printf '{{"type":"turn_finished","status":"completed","answer":"Found 2 notes; s
                 prompt: "Slow task".to_string(),
                 model_profile: None,
                 mounts: vec![],
+                packages: vec![],
+                fileservers: vec![],
                 trust: WorkflowTrustPosture::Governed,
                 no_stream_json: false,
                 timeout_secs: Some(1),
@@ -369,6 +379,8 @@ pub(super) fn sample_self_iterate_args() -> InitSelfIterateArgs {
         schedule: "every 15m".to_string(),
         model_profile: Some("openai-main".to_string()),
         mounts: vec!["alan-repo".to_string()],
+        packages: vec![],
+        fileservers: vec![],
         trust: WorkflowTrustPosture::Governed,
         no_stream_json: false,
         timeout_secs: 1_800,
@@ -558,6 +570,8 @@ async fn cli_init_self_iterate_and_release_prep_require_grants_and_render_safe_p
                 schedule: "@weekly".to_string(),
                 model_profile: None,
                 mounts: vec!["alan-repo".to_string()],
+                packages: vec![],
+                fileservers: vec![],
                 trust: WorkflowTrustPosture::Governed,
                 no_stream_json: false,
                 timeout_secs: 1_800,
@@ -642,6 +656,7 @@ async fn quartermaster_self_iterate_and_release_prep_skills_pass_snapshot_and_q_
             QArgs {
                 action: QAction::Install {
                     name: None,
+                    catalog_only: false,
                     path: pkg_dir,
                 },
             },
@@ -774,4 +789,186 @@ async fn cli_evaluate_trigger_and_check_release_gate_enforce_fail_closed_gates()
         .unwrap();
     assert!(gate_block_err.is_some());
     assert!(gate_block_out.contains("\"allowed\": false"));
+}
+
+#[tokio::test]
+async fn workflow_manifest_forwards_explicit_packages_and_fileservers_in_isolated_runs() {
+    use crate::cli::dispatch::{Cli, Commands};
+    use clap::Parser;
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::from_root(temp.path().join("workflows")).unwrap();
+    let mock_bin = write_mock_script(temp.path(), "mock-alan.sh", "#!/bin/sh\nexit 0\n");
+
+    let Cli {
+        command: Some(Commands::Workflow(init_args)),
+        ..
+    } = Cli::try_parse_from([
+        "alan",
+        "workflow",
+        "init-self-iterate",
+        "--repo",
+        "realmorrisliu/alan",
+        "--allowed-actor",
+        "morris",
+        "--grant",
+        "alan-repo",
+        "--package",
+        "extra-helper",
+        "--fileserver",
+        "github-fileserver:rw:net",
+        "--json",
+    ])
+    .unwrap()
+    else {
+        panic!("expected workflow command");
+    };
+    let (init_out, init_err) = run_with_store(&store, init_args, None, None).await.unwrap();
+    assert!(init_err.is_none());
+    let init_json: serde_json::Value = serde_json::from_str(&init_out).unwrap();
+    assert_eq!(
+        init_json["manifest"]["packages"],
+        serde_json::json!(["extra-helper"])
+    );
+    assert_eq!(
+        init_json["manifest"]["fileservers"],
+        serde_json::json!([{
+            "package_id": "github-fileserver",
+            "access": "read_write",
+            "allow_network": true,
+        }])
+    );
+
+    let (dry_out, _) = run_with_store(
+        &store,
+        WorkflowArgs {
+            action: WorkflowAction::Run {
+                id: "self-iterate".to_string(),
+                dry_run: true,
+                json: true,
+            },
+        },
+        None,
+        Some(&mock_bin),
+    )
+    .await
+    .unwrap();
+    let dry_json: serde_json::Value = serde_json::from_str(&dry_out).unwrap();
+    let args: Vec<&str> = dry_json["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(args.windows(2).any(|w| w == ["--package", "extra-helper"]));
+    assert!(
+        args.windows(2)
+            .any(|w| w == ["--fileserver", "github-fileserver:rw:net"])
+    );
+
+    // Duplicate package across `packages` and `fileservers` fails validation cleanly.
+    let mut bad = store.load_manifest("self-iterate").unwrap();
+    bad.packages.push("github-fileserver".to_string());
+    assert!(bad.validate().is_err());
+}
+
+#[cfg(unix)]
+async fn wait_for_pid_file(path: &Path, timeout: std::time::Duration) -> libc::pid_t {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Ok(raw) = std::fs::read_to_string(path)
+            && let Some(line) = raw.lines().next()
+            && let Ok(pid) = line.trim().parse::<libc::pid_t>()
+            && pid > 0
+        {
+            return pid;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for PID file {}",
+            path.display()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+#[cfg(unix)]
+async fn assert_pid_terminated(pid: libc::pid_t) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        // SAFETY: Querying process existence with signal 0 sends no signal and only checks PID validity.
+        let rc = unsafe { libc::kill(pid, 0) };
+        if rc == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "process {pid} still alive after process-group cancellation"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn execute_workflow_run_cancellable_kills_and_reaps_entire_process_group() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::from_root(temp.path().join("workflows")).unwrap();
+    let parent_pid_file = temp.path().join("parent.pid");
+    let child_pid_file = temp.path().join("child.pid");
+    let forking_script = format!(
+        "#!/bin/sh\nset -eu\nsleep 30 &\nchild_pid=$!\nprintf '%s\\n' \"$child_pid\" > \"{}.tmp\"\nmv \"{}.tmp\" \"{}\"\nprintf '%s\\n' \"$$\" > \"{}.tmp\"\nmv \"{}.tmp\" \"{}\"\nwait \"$child_pid\"\n",
+        child_pid_file.display(),
+        child_pid_file.display(),
+        child_pid_file.display(),
+        parent_pid_file.display(),
+        parent_pid_file.display(),
+        parent_pid_file.display(),
+    );
+    let forking_bin = write_mock_script(temp.path(), "forking-alan.sh", &forking_script);
+    let manifest = WorkflowManifest {
+        schema_version: 1,
+        id: "cancel-pgid-test".to_string(),
+        schedule: "every 1h".to_string(),
+        prompt: "Long running child".to_string(),
+        model_profile: None,
+        mounts: vec![],
+        packages: vec![],
+        fileservers: vec![],
+        trust: WorkflowTrustPosture::Governed,
+        json: true,
+        timeout_secs: Some(60),
+        trigger_allowlist: None,
+        release_gate: None,
+    };
+    store.save_manifest(&manifest, false).unwrap();
+
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    let store_root = temp.path().join("workflows");
+    let run_handle = tokio::spawn(async move {
+        let task_store = WorkflowStore::from_root(store_root).unwrap();
+        crate::cli::workflow::runner::execute_workflow_run_cancellable(
+            &task_store,
+            &manifest,
+            &forking_bin,
+            None,
+            Some(&mut cancel_rx),
+        )
+        .await
+    });
+
+    let parent_pid = wait_for_pid_file(&parent_pid_file, std::time::Duration::from_secs(10)).await;
+    let child_pid = wait_for_pid_file(&child_pid_file, std::time::Duration::from_secs(10)).await;
+    cancel_tx.send(true).unwrap();
+
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), run_handle)
+        .await
+        .expect("cancellation must return promptly")
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome.entry.status, "cancelled");
+    assert_eq!(outcome.entry.exit_code, 130);
+
+    assert_pid_terminated(parent_pid).await;
+    assert_pid_terminated(child_pid).await;
 }

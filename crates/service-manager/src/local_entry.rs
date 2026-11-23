@@ -75,6 +75,18 @@ impl LocalEntryService {
         Ok(())
     }
 
+    /// Mount an active service subtree (such as `/mnt/<service-id>`) into the login namespace
+    /// so Shell Processes and local clients (such as TUI `/issue` Tier 1) observe it.
+    pub(crate) fn mount_service(
+        &self,
+        mount_path: &str,
+        transport: alan_ap::InProcessTransport,
+        access: Access,
+    ) {
+        self.login_namespace
+            .replace_mount(mount_path, transport, access);
+    }
+
     /// Returns a local-client namespace without allocating a Shell Process.
     /// `/proc` is read-only because this client has no Process parent for clones.
     pub fn namespace_for_local_client(&self) -> Arc<MountFs> {

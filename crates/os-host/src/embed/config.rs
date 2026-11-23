@@ -337,6 +337,8 @@ impl EmbeddedConfig {
             host_mount_adapter: self.host_mount_adapter,
             tools: self.tools,
             include_builtin_skills: self.builtin_skills,
+            root_package_bindings: Vec::new(),
+            explicit_root_package_bindings: Vec::new(),
         };
         Ok((sm_config, self.host_mounts_enabled))
     }

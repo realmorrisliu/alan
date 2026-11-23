@@ -9,7 +9,7 @@ use alan_agent_engine::{
     AgentProcessConfig, LlmClient, ToolRegistry, provider_capabilities_for_config,
 };
 use alan_ap::InProcessTransport;
-use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid};
+use alan_kernel::{Access, Credentials, LiveNamespace, Pid};
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
 
@@ -19,16 +19,22 @@ pub(crate) mod sessions;
 mod supervisor;
 mod trust;
 
+pub use packages::prepare_fileserver_launch_grant;
 pub use sessions::{SessionHandle, SessionLaunchOptions};
 
 #[cfg(test)]
 use packages::project_package_reference_async;
+#[cfg(test)]
+pub(crate) use packages::seed_preinstalled_packages;
+#[cfg(not(test))]
+use packages::seed_preinstalled_packages;
 pub(crate) use packages::{namespace_with_package_references, validate_package_reference_mounts};
-use packages::{overlaps_package_namespace, project_package_reference, seed_preinstalled_packages};
+use packages::{overlaps_package_namespace, project_package_reference};
 
 use supervisor::{
     ActiveUnit, SupervisorEnvironment, SupervisorRuntime, SwitchableFileServer,
-    SystemServiceHandles, mount_service_handles, publish_unit_handles, wait_unit_ready,
+    SystemServiceHandles, mount_boot_units, mount_service_handles, mount_standard_namespace_roots,
+    mount_system_executables, mount_tool_packages, publish_unit_handles, wait_unit_ready,
 };
 
 use crate::{
@@ -37,7 +43,6 @@ use crate::{
     ProcessLaunchContext, RestartDecision, ServiceManagerFs, UnavailableHostMountExportAdapter,
     agent_runtime::{AgentRuntimeService, RootAgentTemplate},
     process_spawn::{spawn_process, spawn_unit_process},
-    quartermaster::QUARTERMASTER_EXECUTABLE,
 };
 
 pub const BOOT_ID_PATH: &str = "/proc/host/boot_id";
@@ -73,6 +78,10 @@ pub struct ServiceManagerConfig {
     pub tools: ToolRegistry,
     /// Whether to project Alan's built-in skills onto Agent Processes.
     pub include_builtin_skills: bool,
+    /// Durable Root package bindings loaded from System Store (`SkillsOnly` or `Active`).
+    pub root_package_bindings: Vec<crate::RootPackageBinding>,
+    /// Explicit per-invocation Root bindings (`--package` / `--fileserver`, fail-closed).
+    pub explicit_root_package_bindings: Vec<crate::RootPackageBinding>,
 }
 
 pub trait LlmClientFactory: std::fmt::Debug + Send + Sync {
@@ -138,12 +147,29 @@ impl ServiceManagerConfig {
             host_mount_adapter: Arc::new(UnavailableHostMountExportAdapter),
             tools,
             include_builtin_skills: true,
+            root_package_bindings: Vec::new(),
+            explicit_root_package_bindings: Vec::new(),
         }
     }
 
     /// Control whether Alan's preinstalled built-in skills are projected onto Agent Processes.
     pub fn with_include_builtin_skills(mut self, include: bool) -> Self {
         self.include_builtin_skills = include;
+        self
+    }
+
+    /// Override durable Root package bindings projected onto Agent Processes.
+    pub fn with_root_package_bindings(mut self, bindings: Vec<crate::RootPackageBinding>) -> Self {
+        self.root_package_bindings = bindings;
+        self
+    }
+
+    /// Add fail-closed per-invocation Root package bindings (`--package` / `--fileserver`).
+    pub fn with_explicit_root_package_bindings(
+        mut self,
+        bindings: Vec<crate::RootPackageBinding>,
+    ) -> Self {
+        self.explicit_root_package_bindings = bindings;
         self
     }
 
@@ -182,6 +208,7 @@ pub struct ServiceManager {
     connection: Arc<ConnectionService>,
     package: Arc<PackageService>,
     package_handle: Arc<SwitchableFileServer>,
+    fileserver_manager: Arc<crate::FileserverManager>,
     #[cfg(test)]
     root_namespace: InProcessTransport,
     supervisor_cmd: tokio::sync::mpsc::UnboundedSender<supervisor::SupervisorCommand>,
@@ -338,6 +365,8 @@ impl ServiceManager {
             launch_context: config.launch_context,
             tools: config.tools,
             include_builtin_skills,
+            root_package_bindings: config.root_package_bindings,
+            explicit_root_package_bindings: config.explicit_root_package_bindings,
             host_capabilities,
             generation_capabilities,
         })
@@ -351,10 +380,17 @@ impl ServiceManager {
         let connection = assembled.connection.clone();
         let package = assembled.package.clone();
         let package_handle = assembled.package_handle.clone();
+        let fileserver_manager = assembled.fileserver_manager.clone();
         let root = assembled.root.namespace();
         let mut runtime = SupervisorRuntime::from_assembled(assembled, root_pid.clone());
-        runtime.settle_initial_root().await?;
-        verify_readiness(&root, boot_id, &state).await?;
+        if let Err(error) = runtime.settle_initial_root().await {
+            let _ = fileserver_manager.stop_all().await;
+            return Err(error);
+        }
+        if let Err(error) = verify_readiness(&root, boot_id, &state).await {
+            let _ = fileserver_manager.stop_all().await;
+            return Err(error);
+        }
 
         if let Some(package_bootstrap) = package_bootstrap {
             package_bootstrap.finish();
@@ -373,6 +409,7 @@ impl ServiceManager {
             connection,
             package,
             package_handle,
+            fileserver_manager,
             #[cfg(test)]
             root_namespace: root,
             supervisor_cmd,
@@ -418,6 +455,11 @@ impl ServiceManager {
             .await
     }
 
+    /// Supervised Quartermaster `fileserver` plugin instances.
+    pub fn fileserver_manager(&self) -> Arc<crate::FileserverManager> {
+        self.fileserver_manager.clone()
+    }
+
     pub fn manager_pid(&self) -> Pid {
         self.manager_pid
     }
@@ -453,9 +495,14 @@ impl ServiceManager {
     pub async fn shutdown(mut self) -> Result<()> {
         self.state.lock().await.mark_stopping();
         self.signal_shutdown();
-        if let Some(task) = self.supervisor_task.take() {
-            task.await
-                .context("Service Manager supervisor task failed")??;
+        let task_res = if let Some(task) = self.supervisor_task.take() {
+            Some(task.await.context("Service Manager supervisor task failed"))
+        } else {
+            None
+        };
+        let _ = self.fileserver_manager.stop_all().await;
+        if let Some(res) = task_res {
+            res??;
         }
         self.procfs.record_exit(self.manager_pid, 0).await;
         Ok(())
@@ -487,6 +534,8 @@ struct AssembleInputs {
     launch_context: ProcessLaunchContext,
     tools: ToolRegistry,
     include_builtin_skills: bool,
+    root_package_bindings: Vec<crate::RootPackageBinding>,
+    explicit_root_package_bindings: Vec<crate::RootPackageBinding>,
     host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
     generation_capabilities: alan_llm::ProviderCapabilities,
 }
@@ -511,6 +560,8 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         mut launch_context,
         tools,
         include_builtin_skills,
+        root_package_bindings,
+        explicit_root_package_bindings,
         host_capabilities,
         generation_capabilities,
     } = inputs;
@@ -739,6 +790,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     let local_entry = local_entry.context("Local Entry Boot Unit did not start")?;
     let root_unit = manifest
         .get("root-agent")
+        .cloned()
         .context("Root Agent Boot Unit is missing")?;
     let root_template_context = launch_context.rebound(
         system_namespace.snapshot(),
@@ -746,7 +798,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     );
     launch_context = root_template_context;
     let reference_service = package_service.clone();
-    let launch_context = tokio::task::spawn_blocking(move || {
+    let mut launch_context = tokio::task::spawn_blocking(move || {
         if include_builtin_skills {
             for package_id in alan_agent_engine::skills::preinstalled_skill_package_ids() {
                 project_package_reference(&reference_service, &mut launch_context, package_id)?;
@@ -756,140 +808,91 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     })
     .await
     .context("join initial Package references")??;
-    validate_package_reference_mounts(&launch_context)?;
-    process.agent_definition = alan_agent_engine::ResolvedAgentDefinition::from_process_inputs(
-        launch_context.descriptor(alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR),
-        &launch_context.package_references,
-        &process.agent_config.core_config.resolved_skill_overrides(),
-        process.core_config_source,
-    )?;
-    process.namespace_cwd = std::path::PathBuf::from(&launch_context.cwd);
-    process.memory_store_bound = launch_context
-        .descriptor(alan_agent_engine::MEMORY_STORE_DESCRIPTOR)
-        .is_some();
-    let root_template = RootAgentTemplate::new(
-        process,
-        launch_context,
-        host_capabilities,
-        generation_capabilities,
-        llm_connection,
-        resume_root,
-        input_shadow,
-    )
-    .with_allow_profile_switch(allow_profile_switch)
-    .with_ephemeral_rollout(ephemeral_rollout)
-    .with_resume_rollout_id(resume_rollout_id);
-    let root = agent_runtime
-        .launch_root(manager_pid, &system_namespace, root_unit, &root_template)
+    let fileserver_manager = Arc::new(crate::FileserverManager::new(
+        package_service.clone(),
+        srvfs.clone(),
+    ));
+    let post_bind = async {
+        packages::apply_root_package_bindings(
+            &package_service,
+            &fileserver_manager,
+            &srvfs,
+            &system_namespace,
+            &local_entry,
+            &mut launch_context,
+            process.trust_posture,
+            &root_package_bindings,
+            &explicit_root_package_bindings,
+        )
         .await?;
-    let root_pid = root.pid();
-    if let Err(error) = state.lock().await.start_attempt("root-agent", root_pid) {
-        agent_runtime.detach_root(root, 1).await?;
-        return Err(anyhow::anyhow!("track Root Agent start: {error:?}"));
-    }
-    active_units.insert(
-        "root-agent".to_string(),
-        ActiveUnit {
-            pid: root_pid,
-            started_at: Instant::now(),
-        },
-    );
-
-    Ok(SupervisorEnvironment {
-        root,
-        root_template,
-        manifest,
-        state,
-        procfs,
-        srvfs,
-        system_namespace,
-        agent_runtime,
-        agent_root,
-        llmfs,
-        routefs,
-        host_mount: host_mount_service,
-        connection: connection_service,
-        package: package_service,
-        package_handle,
-        active_units,
-        manager_pid,
-        local_entry,
-    })
-}
-
-fn mount_standard_namespace_roots(namespace: &mut Namespace) {
-    for path in ["/bin", "/lib", "/mnt"] {
-        namespace.mount(
-            path,
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-            Access::ReadOnly,
+        validate_package_reference_mounts(&launch_context)?;
+        process.agent_definition = alan_agent_engine::ResolvedAgentDefinition::from_process_inputs(
+            launch_context.descriptor(alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR),
+            &launch_context.package_references,
+            &process.agent_config.core_config.resolved_skill_overrides(),
+            process.core_config_source,
+        )?;
+        process.namespace_cwd = std::path::PathBuf::from(&launch_context.cwd);
+        process.memory_store_bound = launch_context
+            .descriptor(alan_agent_engine::MEMORY_STORE_DESCRIPTOR)
+            .is_some();
+        let root_template = RootAgentTemplate::new(
+            process,
+            launch_context,
+            host_capabilities,
+            generation_capabilities,
+            llm_connection,
+            resume_root,
+            input_shadow,
+        )
+        .with_allow_profile_switch(allow_profile_switch)
+        .with_ephemeral_rollout(ephemeral_rollout)
+        .with_resume_rollout_id(resume_rollout_id);
+        let root = agent_runtime
+            .launch_root(manager_pid, &system_namespace, &root_unit, &root_template)
+            .await?;
+        let root_pid = root.pid();
+        if let Err(error) = state.lock().await.start_attempt("root-agent", root_pid) {
+            agent_runtime.detach_root(root, 1).await?;
+            return Err(anyhow::anyhow!("track Root Agent start: {error:?}"));
+        }
+        active_units.insert(
+            "root-agent".to_string(),
+            ActiveUnit {
+                pid: root_pid,
+                started_at: Instant::now(),
+            },
         );
+        Ok::<_, anyhow::Error>(SupervisorEnvironment {
+            root,
+            root_template,
+            manifest,
+            state,
+            procfs,
+            srvfs,
+            system_namespace,
+            agent_runtime,
+            agent_root,
+            llmfs,
+            routefs,
+            host_mount: host_mount_service,
+            connection: connection_service,
+            package: package_service,
+            package_handle,
+            active_units,
+            manager_pid,
+            local_entry,
+            fileserver_manager: fileserver_manager.clone(),
+        })
     }
-    namespace.mount(
-        "/man",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_tree(
-            crate::manpages::tree_entries(),
-        ))),
-        Access::ReadOnly,
-    );
-}
-
-fn mount_boot_units(namespace: &mut Namespace) {
-    namespace.mount(
-        "/lib/boot",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_files(
-            BootManifest::documents()
-                .into_iter()
-                .map(|(name, document)| (name.to_string(), document.as_bytes().to_vec())),
-        ))),
-        Access::ReadOnly,
-    );
-}
-
-fn mount_system_executables(namespace: &mut Namespace, manifest: &BootManifest) {
-    for executable in manifest
-        .ordered()
-        .map(|unit| unit.executable.as_str())
-        .chain([
-            SERVICE_MANAGER_EXECUTABLE,
-            "/bin/alan-shell",
-            QUARTERMASTER_EXECUTABLE,
-            crate::agent_work::EXECUTABLE,
-        ])
-    {
-        namespace.mount(
-            executable,
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-            Access::ReadOnly,
-        );
+    .await;
+    match post_bind {
+        Ok(env) => Ok(env),
+        Err(error) => {
+            let _ = fileserver_manager.stop_all().await;
+            Err(error)
+        }
     }
-}
-
-fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistry) -> Result<()> {
-    namespace.mount(
-        "/lib/exec/agent_work",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-            "manifest",
-            crate::agent_work::manifest(),
-        ))),
-        Access::ReadOnly,
-    );
-    for name in tools.list_tools() {
-        namespace.mount(
-            &format!("/bin/{name}"),
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-            Access::ReadOnly,
-        );
-        namespace.mount(
-            &format!("/lib/exec/{name}"),
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-                "manifest",
-                tools.package_manifest_bytes(name)?,
-            ))),
-            Access::ReadOnly,
-        );
-    }
-    Ok(())
 }
 
 async fn verify_readiness(

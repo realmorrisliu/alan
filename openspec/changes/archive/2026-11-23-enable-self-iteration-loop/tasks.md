@@ -24,5 +24,5 @@
 
 ## 5. Verification, PR review, and archive readiness
 - [x] 5.1 Run OpenSpec current-surface & strict change checks (`bash scripts/test-openspec-current-surfaces.sh`, `bash scripts/check-openspec-current-surfaces.sh`, `openspec validate enable-self-iteration-loop --strict`), `just quality`, `./scripts/check-rust-source-size.sh`, and `cargo test --workspace` across implemented stages, updating `manpages` and user docs cleanly.
-- [ ] 5.2 Complete PR review (including Codex review and 16/16 CI checks) per milestone slice without self-merging prematurely.
-- [ ] 5.3 After all stages are merged to `main`, sync canonical spec deltas into `openspec/specs/` (`rust-inline-tui`, `package-management-contract`, and new `file-server-plugin-contract`), verify `just openspec-check`, and move this change to `openspec/changes/archive/YYYY-MM-DD-enable-self-iteration-loop/`.
+- [x] 5.2 Complete PR review (including Codex review and 16/16 CI checks) per milestone slice without self-merging prematurely.
+- [x] 5.3 After all stages are merged to `main`, sync canonical spec deltas into `openspec/specs/` (`rust-inline-tui`, `package-management-contract`, and new `file-server-plugin-contract`), verify `just openspec-check`, and move this change to `openspec/changes/archive/YYYY-MM-DD-enable-self-iteration-loop/`.

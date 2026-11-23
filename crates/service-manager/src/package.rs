@@ -23,10 +23,14 @@ pub use inspection::validate_package_store_for_migration;
 mod manifest;
 mod materializer;
 mod materializer_exports;
+mod root_bindings;
 mod store;
 mod sync;
 mod types;
 
+pub use root_bindings::{
+    FileserverMountAccess, RootBindingMode, RootFileserverActivation, RootPackageBinding,
+};
 pub use types::{
     FileserverPackageExport, FileserverTransportSpec, McpPackageExport, McpTransportSpec,
     PackageCatalog, PackageCommand, PackageCommandResult, PackageExport, PackageExportKind,
@@ -55,6 +59,7 @@ const MAX_RESULTS: usize = 128;
 
 struct State {
     catalog: PackageCatalog,
+    root_bindings: BTreeMap<String, RootPackageBinding>,
     results: BTreeMap<String, PackageCommandResult>,
     result_order: Vec<String>,
     status: String,
@@ -245,6 +250,7 @@ impl PackageService {
             _temporary_store: None,
             state: Mutex::new(State {
                 catalog: PackageCatalog::default(),
+                root_bindings: BTreeMap::new(),
                 results: BTreeMap::new(),
                 result_order: Vec::new(),
                 status: "ready".to_string(),
@@ -260,12 +266,17 @@ impl PackageService {
         temporary_store: Option<crate::temporary_store::TemporaryStore>,
         bootstrap: Option<Arc<bootstrap::BootstrapWait>>,
     ) -> Result<Arc<Self>> {
+        let initial_bindings = Self::load_root_bindings_from_store(&store_root)?
+            .into_iter()
+            .map(|binding| (binding.package_id.clone(), binding))
+            .collect();
         let (store, catalog) = PackageStore::open(store_root, bootstrap)?;
         Ok(Arc::new(Self {
             store: PackageStoreBackend::Disk(store),
             _temporary_store: temporary_store,
             state: Mutex::new(State {
                 catalog,
+                root_bindings: initial_bindings,
                 results: BTreeMap::new(),
                 result_order: Vec::new(),
                 status: "ready".to_string(),
@@ -708,6 +719,9 @@ impl PackageService {
             .discard_staged_package_revisions(staged_revisions);
         if !retained {
             self.store.remove_in_memory_revisions(&package_id);
+        }
+        if expected_kind == PackageKind::Installed {
+            self.unbind_after_uninstall_locked(&package_id)?;
         }
         Ok(PackageCommandResult {
             request_id,

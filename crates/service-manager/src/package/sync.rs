@@ -106,6 +106,7 @@ impl PackageService {
         }
 
         let mut staged_removals = Vec::new();
+        let mut pruned_ids = Vec::new();
         if prune {
             let removed_ids = current
                 .packages
@@ -117,6 +118,7 @@ impl PackageService {
                 .collect::<Vec<_>>();
             for removed_id in removed_ids {
                 if let Some(existing) = next.packages.get(&removed_id).cloned() {
+                    pruned_ids.push(removed_id.clone());
                     if existing.reference_count > 0 {
                         let mut retiring = existing;
                         retiring.state = PackageState::Retiring;
@@ -151,6 +153,9 @@ impl PackageService {
             for (removed_id, staged) in staged_removals {
                 self.store.discard_staged_package_revisions(Some(staged));
                 self.store.remove_in_memory_revisions(&removed_id);
+            }
+            for removed_id in &pruned_ids {
+                self.unbind_after_uninstall_locked(removed_id)?;
             }
             for id in &touched_ids {
                 self.gc_package_revisions_after_commit(id, "sync package");
