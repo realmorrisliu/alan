@@ -23,7 +23,7 @@ use clap::Args;
 use serde::Serialize;
 
 use super::manifest::{WorkflowManifest, WorkflowStore, WorkflowTrustPosture};
-use super::runner::{execute_workflow_run_with_prompt, resolve_alan_binary};
+use super::runner::{execute_workflow_run_cancellable, resolve_alan_binary};
 
 const MIN_POLL_SECS: u64 = 5;
 const MAX_POLL_SECS: u64 = 3_600;
@@ -194,6 +194,17 @@ pub async fn run_watch_with_stores(
     args: WatchWorkflowArgs,
     alan_bin_override: Option<&Path>,
 ) -> Result<(String, Option<String>)> {
+    run_watch_with_stores_and_shutdown(store, package_service, args, alan_bin_override, None).await
+}
+
+/// Run `alan workflow watch` against explicit stores with an optional external shutdown signal.
+pub async fn run_watch_with_stores_and_shutdown(
+    store: &WorkflowStore,
+    package_service: &Arc<PackageService>,
+    args: WatchWorkflowArgs,
+    alan_bin_override: Option<&Path>,
+    external_shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<(String, Option<String>)> {
     ensure!(
         (MIN_POLL_SECS..=MAX_POLL_SECS).contains(&args.poll_secs),
         "`--poll-secs` must be between {MIN_POLL_SECS} and {MAX_POLL_SECS}"
@@ -206,7 +217,11 @@ pub async fn run_watch_with_stores(
             manifest.id
         )
     })?;
-    let alan_bin = resolve_alan_binary(alan_bin_override)?;
+    let worker_alan_bin = resolve_alan_binary(alan_bin_override)?;
+    let fileserver_alan_bin = match alan_bin_override {
+        Some(path) => path.to_path_buf(),
+        None => std::env::current_exe().context("resolve current `alan` executable path")?,
+    };
     let pkg_record = package_service.resolve(&args.fileserver_package)?;
     ensure!(
         pkg_record.export_kind == PackageExportKind::Fileserver,
@@ -229,6 +244,11 @@ pub async fn run_watch_with_stores(
         }
     };
 
+    let (mut shutdown_rx, signal_task) = match external_shutdown {
+        Some(rx) => (rx, None),
+        None => spawn_shutdown_signal_listener()?,
+    };
+
     let srvfs = Arc::new(SrvFs::new());
     let fileserver_manager = FileserverManager::new(package_service.clone(), srvfs.clone());
     let grant = prepare_fileserver_launch_grant(
@@ -237,10 +257,18 @@ pub async fn run_watch_with_stores(
         FileserverMountAccess::ReadWrite,
         fs_export.allow_network,
         trust_posture,
-        Some(&alan_bin),
+        Some(&fileserver_alan_bin),
         args.gh_bin.as_deref(),
     );
-    let status = fileserver_manager.start(grant).await?;
+    let status = match fileserver_manager.start(grant).await {
+        Ok(status) => status,
+        Err(err) => {
+            if let Some(handle) = signal_task {
+                handle.abort();
+            }
+            return Err(err);
+        }
+    };
 
     let watch_res = async {
         let mut namespace = Namespace::new();
@@ -292,23 +320,23 @@ pub async fn run_watch_with_stores(
                 &mut human_cursor,
                 store,
                 &manifest,
-                &alan_bin,
+                &worker_alan_bin,
                 args.dry_run,
+                &mut shutdown_rx,
                 &mut all_dispatched,
                 &mut all_escalations,
                 &mut last_failure,
             )
             .await?;
         } else {
-            let mut interrupt =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-                    .context("listen for SIGINT")?;
-            let mut terminate =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .context("listen for SIGTERM")?;
-            let mut interval = tokio::time::interval(Duration::from_secs(args.poll_secs));
+            let poll_period = Duration::from_secs(args.poll_secs);
+            let mut interval =
+                tokio::time::interval_at(tokio::time::Instant::now() + poll_period, poll_period);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
+                if *shutdown_rx.borrow() {
+                    break;
+                }
                 cycles += 1;
                 let before_disp = all_dispatched.len();
                 let before_esc = all_escalations.len();
@@ -321,8 +349,9 @@ pub async fn run_watch_with_stores(
                     &mut human_cursor,
                     store,
                     &manifest,
-                    &alan_bin,
+                    &worker_alan_bin,
                     args.dry_run,
+                    &mut shutdown_rx,
                     &mut all_dispatched,
                     &mut all_escalations,
                     &mut last_failure,
@@ -348,10 +377,15 @@ pub async fn run_watch_with_stores(
                         );
                     }
                 }
+                if *shutdown_rx.borrow() {
+                    break;
+                }
+                let tick_fut = interval.tick();
+                tokio::pin!(tick_fut);
                 tokio::select! {
-                    _ = interval.tick() => {}
-                    _ = interrupt.recv() => break,
-                    _ = terminate.recv() => break,
+                    biased;
+                    _ = wait_for_shutdown(&mut shutdown_rx) => break,
+                    _ = &mut tick_fut => {}
                 }
             }
         }
@@ -377,8 +411,55 @@ pub async fn run_watch_with_stores(
     }
     .await;
 
+    if let Some(handle) = signal_task {
+        handle.abort();
+    }
     let _ = fileserver_manager.stop_all().await;
     watch_res
+}
+
+fn spawn_shutdown_signal_listener() -> Result<(
+    tokio::sync::watch::Receiver<bool>,
+    Option<tokio::task::JoinHandle<()>>,
+)> {
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    #[cfg(unix)]
+    {
+        let mut interrupt =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+                .context("listen for SIGINT")?;
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .context("listen for SIGTERM")?;
+        let handle = tokio::spawn(async move {
+            tokio::select! {
+                _ = interrupt.recv() => {}
+                _ = terminate.recv() => {}
+            }
+            let _ = tx.send(true);
+        });
+        Ok((rx, Some(handle)))
+    }
+    #[cfg(not(unix))]
+    {
+        let handle = tokio::spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            let _ = tx.send(true);
+        });
+        Ok((rx, Some(handle)))
+    }
+}
+
+async fn wait_for_shutdown(rx: &mut tokio::sync::watch::Receiver<bool>) {
+    loop {
+        if *rx.borrow_and_update() {
+            return;
+        }
+        if rx.changed().await.is_err() {
+            std::future::pending::<()>().await;
+            return;
+        }
+    }
 }
 
 #[allow(
@@ -396,17 +477,36 @@ async fn run_watch_cycle(
     manifest: &WorkflowManifest,
     alan_bin: &Path,
     dry_run: bool,
+    shutdown_rx: &mut tokio::sync::watch::Receiver<bool>,
     all_dispatched: &mut Vec<WatchDispatchedItem>,
     all_escalations: &mut Vec<WatchEscalationItem>,
     last_failure: &mut Option<String>,
 ) -> Result<()> {
-    shell
-        .write(&format!("{mnt_path}/ctl"), b"sync\n")
-        .await
-        .map_err(|code| anyhow::anyhow!("sync `{mnt_path}/ctl` failed: {code:?}"))?;
-    let _ = dispatcher.process_available_events().await?;
+    if *shutdown_rx.borrow() {
+        return Ok(());
+    }
+    let ctl_path = format!("{mnt_path}/ctl");
+    let sync_fut = shell.write(&ctl_path, b"sync\n");
+    tokio::select! {
+        biased;
+        _ = wait_for_shutdown(shutdown_rx) => return Ok(()),
+        sync_res = sync_fut => {
+            sync_res.map_err(|code| anyhow::anyhow!("sync `{ctl_path}` failed: {code:?}"))?;
+        }
+    }
+    let dispatch_fut = dispatcher.process_available_events();
+    tokio::select! {
+        biased;
+        _ = wait_for_shutdown(shutdown_rx) => return Ok(()),
+        dispatch_res = dispatch_fut => {
+            let _ = dispatch_res?;
+        }
+    }
 
     for _ in 0..MAX_DRAIN_ITERS {
+        if *shutdown_rx.borrow() {
+            break;
+        }
         let mut progressed = false;
         for esc in human_cursor.drain_json(shell).await? {
             progressed = true;
@@ -421,8 +521,14 @@ async fn run_watch_cycle(
             });
         }
 
+        if *shutdown_rx.borrow() {
+            break;
+        }
         let work_items = worker_cursor.drain_json(shell).await?;
         for work in work_items {
+            if *shutdown_rx.borrow() {
+                break;
+            }
             progressed = true;
             let event_id = json_str(&work, "event_id");
             let repo = json_str(&work, "repo");
@@ -462,9 +568,18 @@ async fn run_watch_cycle(
             }
 
             let prompt = build_event_dispatch_prompt(&manifest.prompt, &work);
-            match execute_workflow_run_with_prompt(store, manifest, alan_bin, Some(&prompt)).await {
+            match execute_workflow_run_cancellable(
+                store,
+                manifest,
+                alan_bin,
+                Some(&prompt),
+                Some(shutdown_rx),
+            )
+            .await
+            {
                 Ok(outcome) => {
-                    if outcome.entry.exit_code != 0 {
+                    let was_cancelled = outcome.entry.status == "cancelled";
+                    if !was_cancelled && outcome.entry.exit_code != 0 {
                         *last_failure = Some(format!(
                             "workflow `{}` event `{event_id}` exited with status {} ({})",
                             manifest.id, outcome.entry.exit_code, outcome.entry.summary
@@ -483,6 +598,10 @@ async fn run_watch_cycle(
                         exit_code: Some(outcome.entry.exit_code),
                         status: Some(outcome.entry.status),
                     });
+                    let _ = dispatcher.complete_run(&coalesce_key).await?;
+                    if was_cancelled || *shutdown_rx.borrow() {
+                        return Ok(());
+                    }
                 }
                 Err(err) => {
                     *last_failure = Some(format!(
@@ -502,12 +621,15 @@ async fn run_watch_cycle(
                         exit_code: Some(1),
                         status: Some("error".to_string()),
                     });
+                    let _ = dispatcher.complete_run(&coalesce_key).await?;
+                    if *shutdown_rx.borrow() {
+                        return Ok(());
+                    }
                 }
             }
-            let _ = dispatcher.complete_run(&coalesce_key).await?;
         }
 
-        if !progressed {
+        if !progressed || *shutdown_rx.borrow() {
             break;
         }
     }

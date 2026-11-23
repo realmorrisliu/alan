@@ -54,7 +54,7 @@ pub use self_iterate::{
     unused_imports,
     reason = "re-exported for alan library callers; main.rs includes cli privately"
 )]
-pub use watch::{WatchWorkflowArgs, run_watch_with_stores};
+pub use watch::{WatchWorkflowArgs, run_watch_with_stores, run_watch_with_stores_and_shutdown};
 
 /// Top-level arguments for `alan workflow`.
 #[derive(Debug, Args)]

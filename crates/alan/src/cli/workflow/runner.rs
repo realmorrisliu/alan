@@ -20,6 +20,8 @@ pub const ALAN_WORKFLOW_BIN_ENV: &str = "ALAN_WORKFLOW_ALAN_BIN";
 
 const MAX_CAPTURED_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const TIMEOUT_EXIT_CODE: i32 = 124;
+const CANCELLED_EXIT_CODE: i32 = 130;
+const PIPE_DRAIN_AFTER_KILL_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Resolved dry-run execution plan emitted by `alan workflow run <id> --dry-run`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -147,6 +149,17 @@ pub async fn execute_workflow_run_with_prompt(
     alan_bin: &Path,
     prompt_override: Option<&str>,
 ) -> Result<WorkflowRunOutcome> {
+    execute_workflow_run_cancellable(store, manifest, alan_bin, prompt_override, None).await
+}
+
+/// Execute one bounded workflow run with an optional prompt override and cooperative cancellation.
+pub async fn execute_workflow_run_cancellable(
+    store: &WorkflowStore,
+    manifest: &WorkflowManifest,
+    alan_bin: &Path,
+    prompt_override: Option<&str>,
+    mut cancel: Option<&mut tokio::sync::watch::Receiver<bool>>,
+) -> Result<WorkflowRunOutcome> {
     manifest.validate()?;
     if let Some(gate) = &manifest.release_gate {
         super::release_prep::ensure_release_operation_allowed(
@@ -157,6 +170,31 @@ pub async fn execute_workflow_run_with_prompt(
     let run_id = format!("wf-{}", uuid::Uuid::new_v4().simple());
     let started_at = Utc::now().to_rfc3339();
     let timer = Instant::now();
+
+    if cancel.as_ref().is_some_and(|rx| *rx.borrow()) {
+        let duration_ms = u64::try_from(timer.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let entry = WorkflowRunLogEntry {
+            run_id,
+            workflow_id: manifest.id.clone(),
+            started_at,
+            finished_at: Utc::now().to_rfc3339(),
+            duration_ms,
+            exit_code: CANCELLED_EXIT_CODE,
+            status: "cancelled".to_string(),
+            summary: scrub_and_bound_text(
+                &format!("workflow `{}` cancelled by termination signal", manifest.id),
+                4_000,
+            ),
+            stderr_excerpt: String::new(),
+            ephemeral: true,
+            trust: manifest.trust.as_str().to_string(),
+            model_profile: manifest.model_profile.clone(),
+            tool_calls: 0,
+            usage: None,
+        };
+        return persist_outcome(store, manifest, entry);
+    }
+
     let args = build_alan_args_with_prompt(manifest, prompt_override);
 
     // Keep any temporary `connection_profile` agent.toml scoped strictly to this single run.
@@ -169,6 +207,8 @@ pub async fn execute_workflow_run_with_prompt(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
 
     if let Some(ref config_guard) = _temp_config_dir {
         command.env("ALAN_CONFIG_PATH", &config_guard.config_path);
@@ -188,22 +228,30 @@ pub async fn execute_workflow_run_with_prompt(
     let stderr_task = tokio::spawn(read_bounded_stream(stderr_pipe, MAX_CAPTURED_OUTPUT_BYTES));
 
     let timeout = Duration::from_secs(manifest.effective_timeout_secs());
-    let (timed_out, raw_exit_code) = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(wait_result) => {
+    let timeout_sleep = tokio::time::sleep(timeout);
+    tokio::pin!(timeout_sleep);
+
+    let wait_state = tokio::select! {
+        biased;
+        _ = wait_for_cancel(&mut cancel) => {
+            terminate_and_reap(&mut child).await;
+            ChildWaitState::Cancelled
+        }
+        wait_result = child.wait() => {
             let status = wait_result.with_context(|| {
                 format!("wait for scheduled workflow `{}` process", manifest.id)
             })?;
-            (false, status.code().unwrap_or(1))
+            ChildWaitState::Exited(status.code().unwrap_or(1))
         }
-        Err(_) => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            (true, TIMEOUT_EXIT_CODE)
+        _ = &mut timeout_sleep => {
+            terminate_and_reap(&mut child).await;
+            ChildWaitState::TimedOut
         }
     };
 
-    let stdout_bytes = stdout_task.await.unwrap_or_default();
-    let stderr_bytes = stderr_task.await.unwrap_or_default();
+    let wait_for_eof = matches!(wait_state, ChildWaitState::Exited(_));
+    let stdout_bytes = collect_stream_bytes(stdout_task, wait_for_eof).await;
+    let stderr_bytes = collect_stream_bytes(stderr_task, wait_for_eof).await;
     let duration_ms = u64::try_from(timer.elapsed().as_millis()).unwrap_or(u64::MAX);
     let finished_at = Utc::now().to_rfc3339();
 
@@ -211,8 +259,13 @@ pub async fn execute_workflow_run_with_prompt(
     let stderr_text = String::from_utf8_lossy(&stderr_bytes);
     let parsed = parse_run_output(&stdout_text, manifest.json);
 
-    let (status, exit_code, summary) = if timed_out {
-        (
+    let (status, exit_code, summary) = match wait_state {
+        ChildWaitState::Cancelled => (
+            "cancelled".to_string(),
+            CANCELLED_EXIT_CODE,
+            format!("workflow `{}` cancelled by termination signal", manifest.id),
+        ),
+        ChildWaitState::TimedOut => (
             "timed_out".to_string(),
             TIMEOUT_EXIT_CODE,
             format!(
@@ -220,24 +273,26 @@ pub async fn execute_workflow_run_with_prompt(
                 manifest.id,
                 manifest.effective_timeout_secs()
             ),
-        )
-    } else if raw_exit_code == 0 {
-        let status = parsed.status.unwrap_or_else(|| "completed".to_string());
-        let summary = parsed
-            .answer
-            .or(parsed.text_fallback)
-            .unwrap_or_else(|| "completed".to_string());
-        (status, 0, summary)
-    } else {
-        let status = parsed.status.unwrap_or_else(|| "failed".to_string());
-        let summary = parsed
-            .errors
-            .first()
-            .cloned()
-            .or(parsed.answer)
-            .or(parsed.text_fallback)
-            .unwrap_or_else(|| format!("exited with status {raw_exit_code}"));
-        (status, raw_exit_code, summary)
+        ),
+        ChildWaitState::Exited(0) => {
+            let status = parsed.status.unwrap_or_else(|| "completed".to_string());
+            let summary = parsed
+                .answer
+                .or(parsed.text_fallback)
+                .unwrap_or_else(|| "completed".to_string());
+            (status, 0, summary)
+        }
+        ChildWaitState::Exited(raw_exit_code) => {
+            let status = parsed.status.unwrap_or_else(|| "failed".to_string());
+            let summary = parsed
+                .errors
+                .first()
+                .cloned()
+                .or(parsed.answer)
+                .or(parsed.text_fallback)
+                .unwrap_or_else(|| format!("exited with status {raw_exit_code}"));
+            (status, raw_exit_code, summary)
+        }
     };
 
     let entry = WorkflowRunLogEntry {
@@ -257,12 +312,75 @@ pub async fn execute_workflow_run_with_prompt(
         usage: parsed.usage,
     };
 
+    persist_outcome(store, manifest, entry)
+}
+
+enum ChildWaitState {
+    Exited(i32),
+    TimedOut,
+    Cancelled,
+}
+
+fn persist_outcome(
+    store: &WorkflowStore,
+    manifest: &WorkflowManifest,
+    entry: WorkflowRunLogEntry,
+) -> Result<WorkflowRunOutcome> {
     let log_path = append_run_log(store, &entry)?;
     let persisted_entry = super::logs::latest_run_log(store, &manifest.id)?.unwrap_or(entry);
     Ok(WorkflowRunOutcome {
         entry: persisted_entry,
         log_path,
     })
+}
+
+async fn wait_for_cancel(cancel: &mut Option<&mut tokio::sync::watch::Receiver<bool>>) {
+    let Some(rx) = cancel.as_deref_mut() else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    loop {
+        if *rx.borrow_and_update() {
+            return;
+        }
+        if rx.changed().await.is_err() {
+            std::future::pending::<()>().await;
+            return;
+        }
+    }
+}
+
+async fn terminate_and_reap(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id()
+        && let Ok(pgid) = libc::pid_t::try_from(pid)
+        && pgid > 0
+    {
+        // SAFETY: Sending SIGKILL to `-pgid` targets only the child process group
+        // created via `command.process_group(0)` while `child` has not yet been reaped.
+        unsafe {
+            let _ = libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+}
+
+async fn collect_stream_bytes(
+    mut task: tokio::task::JoinHandle<Vec<u8>>,
+    wait_for_eof: bool,
+) -> Vec<u8> {
+    if wait_for_eof {
+        return task.await.unwrap_or_default();
+    }
+    match tokio::time::timeout(PIPE_DRAIN_AFTER_KILL_TIMEOUT, &mut task).await {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => Vec::new(),
+        Err(_) => {
+            task.abort();
+            Vec::new()
+        }
+    }
 }
 
 struct TempWorkflowConfigGuard {
