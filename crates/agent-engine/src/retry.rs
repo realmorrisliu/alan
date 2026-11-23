@@ -44,6 +44,10 @@ impl GenerationCause {
         !matches!(
             self.0,
             "stream_error:authentication"
+                | "stream_error:bad_request"
+                | "stream_error:not_found"
+                | "stream_error:payload_too_large"
+                | "stream_error:unprocessable"
                 | "stream_error:http"
                 | "stream_error:safety"
                 | "stream_error:recitation"

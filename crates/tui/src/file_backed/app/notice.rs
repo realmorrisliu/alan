@@ -104,8 +104,66 @@ pub(in crate::file_backed) fn humanize_protocol_message(raw: &str) -> String {
     if lower.contains("stream_error:rate_limit") {
         return "Provider rate limit reached. Wait a moment and retry, or switch models with `/model`.".to_string();
     }
-    if let Some(rest) = trimmed.strip_prefix("stream_error:") {
+    if lower.contains("stream_error:bad_request") {
+        return "Provider rejected the request (HTTP 400 bad request). Retry, run `/compact`, or file `/issue`."
+            .to_string();
+    }
+    if lower.contains("stream_error:not_found") {
+        return "Model or endpoint was not found (HTTP 404). Switch models with `/model` or check connection settings."
+            .to_string();
+    }
+    if lower.contains("stream_error:payload_too_large") {
+        return "Request exceeded provider size limit (HTTP 413). Run `/compact` or start a fresh turn."
+            .to_string();
+    }
+    if lower.contains("stream_error:unprocessable") {
+        return "Provider could not process the request (HTTP 422). Retry or switch models with `/model`."
+            .to_string();
+    }
+    if lower.contains("stream_error:unavailable") {
+        return "Provider service is temporarily unavailable (HTTP 5xx). Retry shortly or switch models with `/model`."
+            .to_string();
+    }
+    if lower.contains("stream_error:timeout") {
+        return "Provider request timed out. Retry shortly or switch models with `/model`."
+            .to_string();
+    }
+    if lower.contains("stream_error:connect") {
+        return "Could not connect to the model provider. Check network/proxy settings and retry."
+            .to_string();
+    }
+    if lower.contains("stream_error:closed") {
+        return "Provider stream closed before completion. Retry or file `/issue`.".to_string();
+    }
+    if lower.contains("stream_error:parse") || lower.contains("stream_error:body") {
+        return "Received malformed response stream from provider. Retry or file `/issue`."
+            .to_string();
+    }
+    if lower.contains("stream_error:safety") || lower.contains("stream_error:recitation") {
+        return "Provider blocked the response due to safety or recitation policy.".to_string();
+    }
+    if lower.contains("stream_error:http") {
+        return "Provider returned an unexpected HTTP error. Retry, check logs, or file `/issue`."
+            .to_string();
+    }
+    let unwrapped = unwrap_internal_error_prefixes(trimmed);
+    if let Some(rest) = unwrapped.strip_prefix("stream_error:") {
         return format!("Provider stream error: {}", rest.trim());
     }
-    trimmed.to_string()
+    unwrapped.to_string()
+}
+
+fn unwrap_internal_error_prefixes(mut text: &str) -> &str {
+    loop {
+        let trimmed = text.trim();
+        if let Some(rest) = trimmed.strip_prefix("Error handling submission:") {
+            text = rest;
+        } else if let Some(rest) = trimmed.strip_prefix("Namespace LLM request failed:") {
+            text = rest;
+        } else if let Some(rest) = trimmed.strip_prefix("llmfs generation failed:") {
+            text = rest;
+        } else {
+            return trimmed;
+        }
+    }
 }

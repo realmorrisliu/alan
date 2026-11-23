@@ -160,6 +160,7 @@ impl FileBackedApp {
         self.input_intent = InputIntent::Agent;
         self.history_draft_intent = None;
         self.last_input_failed = false;
+        self.expected_terminal_error = None;
         self.pending_attachments.clear();
         // Submission may be queued behind another client. Tape owns turn boundaries.
     }

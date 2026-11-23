@@ -49,7 +49,7 @@ pub fn tool_title(name: &str, args: &Value) -> Option<String> {
         "write_file" => path.map(|p| format!("Write {p}")),
         "edit_file" => path.map(|p| format!("Edit {p}")),
         "bash" => Some(match args.get("command").and_then(Value::as_str) {
-            Some(cmd) => format!("Bash {}", first_line(cmd)),
+            Some(cmd) => format!("Bash {}", bash_title_summary(cmd)),
             None => "Bash".to_string(),
         }),
         "grep" => args
@@ -306,8 +306,73 @@ fn cap_diff_lines(lines: &mut Vec<DiffLine>) {
     }
 }
 
-fn first_line(text: &str) -> &str {
-    text.lines().next().unwrap_or(text)
+fn bash_title_summary(cmd: &str) -> String {
+    let mut lines = cmd.lines().map(str::trim).filter(|line| !line.is_empty());
+    let Some(head) = lines.next() else {
+        return String::new();
+    };
+    let rest: Vec<&str> = lines.collect();
+    let opener_quote = match multiline_inline_opener_quote(head) {
+        Some(quote) if !rest.is_empty() => quote,
+        _ => return head.to_string(),
+    };
+    let prefix = head.trim_end_matches(['\'', '"']).trim_end();
+    let snippet = first_meaningful_script_line(&rest).unwrap_or("");
+    let cleaned = clean_inline_script_snippet(snippet, opener_quote);
+    if cleaned.is_empty() {
+        return prefix.to_string();
+    }
+    truncate_chars(format!("{prefix} … {cleaned}"), 72)
+}
+
+fn multiline_inline_opener_quote(head: &str) -> Option<Option<char>> {
+    if head.contains("<<") {
+        return Some(None);
+    }
+    let single_quotes = head.chars().filter(|&ch| ch == '\'').count();
+    if head.ends_with('\'') && single_quotes % 2 == 1 {
+        return Some(Some('\''));
+    }
+    let double_quotes = head.chars().filter(|&ch| ch == '"').count();
+    if head.ends_with('"') && double_quotes % 2 == 1 {
+        return Some(Some('"'));
+    }
+    None
+}
+
+fn first_meaningful_script_line<'a>(lines: &[&'a str]) -> Option<&'a str> {
+    let mut fallback: Option<&'a str> = None;
+    for &line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed == "'"
+            || trimmed == "\""
+            || trimmed == "EOF"
+            || trimmed.starts_with('#')
+            || trimmed.starts_with("//")
+        {
+            continue;
+        }
+        if fallback.is_none() {
+            fallback = Some(trimmed);
+        }
+        if trimmed.starts_with("import ") || trimmed.starts_with("from ") {
+            continue;
+        }
+        return Some(trimmed);
+    }
+    fallback
+}
+
+fn clean_inline_script_snippet(line: &str, opener_quote: Option<char>) -> String {
+    let mut trimmed = line.trim();
+    if let Some(q) = opener_quote
+        && trimmed.ends_with(q)
+        && trimmed.chars().filter(|&ch| ch == q).count() % 2 == 1
+    {
+        trimmed = trimmed.strip_suffix(q).unwrap_or(trimmed);
+    }
+    trimmed.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]

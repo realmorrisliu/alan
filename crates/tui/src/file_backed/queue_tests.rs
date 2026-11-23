@@ -320,3 +320,202 @@ async fn queue_invalid_and_reconnect_unknown_are_not_empty() {
     assert!(!app.project_boundary_available(false));
     tails.close().await;
 }
+
+#[test]
+fn queued_input_behind_active_turn_is_not_interleaved_and_survives_pruned_yield() {
+    use crate::history::{HistoryCell, PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
+    use alan_agent_protocol::{InputIntent, UiActivitySnapshot, UiEvent, YieldKind};
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    let owner = "/agent/1";
+    app.queue.apply(
+        owner,
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            paused: false,
+            active_submission_ids: vec!["turn-1".into()],
+            ..Default::default()
+        }),
+    );
+
+    // Turn 1 begins and runs enough lines to prune its User cell into scrollback.
+    app.apply_tape_record(serde_json::from_str(
+        r#"{"version":1,"kind":"message","role":"user","content":"turn one prompt\nline2\nline3","submission_id":"turn-1"}"#,
+    ).unwrap());
+    app.upsert_action_cell(
+        "act-1".into(),
+        HistoryCell::Tool {
+            action: None,
+            title: "Bash ls".into(),
+            status: ToolStatus::Complete,
+            preview: Some("ok".into()),
+            presentation: None,
+        },
+    );
+    app.prune_rendered_prefix(RenderOpts::new(40, false), 10);
+
+    // User queues Turn 2 while Turn 1 is actively running.
+    app.composer.set_text("queued turn two");
+    app.track_local_input(
+        "turn-2",
+        owner.into(),
+        "queued turn two".into(),
+        InputIntent::Agent,
+    );
+    app.queue.apply(
+        owner,
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 2,
+            paused: false,
+            active_submission_ids: vec!["turn-1".into()],
+            pending_submission_ids: vec!["turn-2".into()],
+            ..Default::default()
+        }),
+    );
+    app.acknowledge_local_input("turn-2", owner);
+    assert!(
+        app.composer.text().is_empty(),
+        "composer should clear on queue acknowledgement"
+    );
+    assert!(
+        !app.transcript.iter().any(|cell| cell
+            .input_source()
+            .is_some_and(|(body, ..)| body == "queued turn two")),
+        "queued turn two must stay out of transcript while Turn 1 is still active: {:?}",
+        app.transcript
+    );
+
+    // Stale waiting_submission_ids while a tool is running must not report "waiting for input".
+    app.activity = UiActivitySnapshot::running(1);
+    app.activity.waiting_submission_ids.push("req-old".into());
+    app.running_tools.push(RunningTool {
+        id: "act-2".into(),
+        title: "Bash python3".into(),
+        tail_lines: Vec::new(),
+    });
+    assert!(!app.has_pending_response());
+    app.running_tools.clear();
+    app.activity.waiting_submission_ids.clear();
+
+    // Turn 1 yields for confirmation and then resumes another Bash tool call.
+    app.set_pending_yield(PendingYieldCell {
+        request_id: "req-1".into(),
+        kind: YieldKind::Confirmation,
+        title: "Escalate tool call 'bash'?".into(),
+        prompt: None,
+        options: vec!["approve".into(), "reject".into()],
+        default_option: Some("approve".into()),
+        questions: Vec::new(),
+        capability: Some("network".into()),
+        reason: Some("needs human judgment".into()),
+        presentation: None,
+    });
+    app.clear_pending_yield();
+    app.upsert_action_cell(
+        "act-2".into(),
+        HistoryCell::Tool {
+            action: None,
+            title: "Bash python3".into(),
+            status: ToolStatus::Complete,
+            preview: Some("resumed ok".into()),
+            presentation: None,
+        },
+    );
+    assert_eq!(
+        app.pending_remote_turn_start, None,
+        "resumed Turn 1 tool after pruned user cell + yield must not arm remote turn splicing"
+    );
+
+    // Turn 1 finishes and Turn 2 begins on Tape.
+    app.apply_ui_event(UiEvent::InputCompleted {
+        submission_ids: vec!["turn-1".into()],
+        status: alan_agent_protocol::UiInputStatus::Completed,
+        error: None,
+    });
+    app.apply_tape_record(serde_json::from_str(
+        r#"{"version":1,"kind":"message","role":"user","content":"queued turn two","submission_id":"turn-2"}"#,
+    ).unwrap());
+
+    let act2_idx = app
+        .transcript
+        .iter()
+        .position(|c| matches!(c, HistoryCell::Tool { title, .. } if title == "Bash python3"))
+        .unwrap();
+    let turn2_idx = app
+        .transcript
+        .iter()
+        .position(|c| {
+            c.input_source()
+                .is_some_and(|(body, ..)| body == "queued turn two")
+        })
+        .unwrap();
+    assert!(
+        turn2_idx > act2_idx,
+        "Turn 2 user boundary must appear AFTER Turn 1 resumed actions, not spliced above them: {:?}",
+        app.transcript
+    );
+}
+
+#[test]
+fn provisional_receipt_before_tape_preserves_user_before_early_action_and_output() {
+    use crate::history::{HistoryCell, ToolStatus};
+    use alan_agent_protocol::InputIntent;
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    let owner = "/agent/1";
+    app.queue.owner = owner.into();
+    app.queue.apply(
+        owner,
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            paused: false,
+            pending_submission_ids: vec!["sub-race".into()],
+            ..Default::default()
+        }),
+    );
+
+    app.track_local_input(
+        "sub-race",
+        owner.into(),
+        "race prompt".into(),
+        InputIntent::Agent,
+    );
+    app.acknowledge_local_input("sub-race", owner);
+    assert!(
+        !app.active_turn_has_user_boundary,
+        "untaped provisional receipt must not pretend an authoritative tape boundary was seen"
+    );
+
+    app.upsert_action_cell(
+        "act-early".into(),
+        HistoryCell::Tool {
+            action: None,
+            title: "Bash ls".into(),
+            status: ToolStatus::Complete,
+            preview: Some("ok".into()),
+            presentation: None,
+        },
+    );
+    app.push_output("early output".into());
+
+    app.apply_tape_record(
+        serde_json::from_str(
+            r#"{"version":1,"kind":"message","role":"user","content":"race prompt","submission_id":"sub-race"}"#,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(app.transcript.len(), 3, "transcript: {:?}", app.transcript);
+    assert!(
+        app.transcript[0]
+            .input_source()
+            .is_some_and(|(body, ..)| body == "race prompt"),
+        "authoritative user boundary must precede early tool/output cells: {:?}",
+        app.transcript
+    );
+    assert!(matches!(app.transcript[1], HistoryCell::Tool { .. }));
+    assert!(matches!(app.transcript[2], HistoryCell::Assistant(ref s) if s == "early output"));
+}

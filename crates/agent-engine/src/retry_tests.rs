@@ -14,6 +14,10 @@ fn uncertain_cleanup_wins_over_transient_cause_and_context() {
 fn typed_permanent_cause_wins_over_transient_context() {
     for reason in [
         "stream_error:authentication",
+        "stream_error:bad_request",
+        "stream_error:not_found",
+        "stream_error:payload_too_large",
+        "stream_error:unprocessable",
         "stream_error:http",
         "stream_error:safety",
         "stream_error:recitation",

@@ -11,6 +11,25 @@ fn titles_format_from_args() {
         tool_title("bash", &json!({"command": "cargo test\nmore"})).as_deref(),
         Some("Bash cargo test")
     );
+    assert_eq!(
+        tool_title("bash", &json!({"command": "python3 -c '\nprint(1)'"})).as_deref(),
+        Some("Bash python3 -c … print(1)")
+    );
+    assert_eq!(
+        tool_title(
+            "bash",
+            &json!({"command": "python3 -c '\nimport urllib.request\n# fetch repo\nurl = \"https://api.github.com/repos/openai/codex\"\nprint(url)\n'"})
+        )
+        .as_deref(),
+        Some("Bash python3 -c … url = \"https://api.github.com/repos/openai/codex\"")
+    );
+    let long_py = format!(
+        "python3 -c '\nimport json\nprint(\"{}\")\n'",
+        "a".repeat(120)
+    );
+    let long_title = tool_title("bash", &json!({"command": long_py})).unwrap();
+    assert!(long_title.starts_with("Bash python3 -c … print("));
+    assert!(long_title.ends_with('…'));
     assert!(tool_title("mcp_custom", &json!({})).is_none());
 }
 

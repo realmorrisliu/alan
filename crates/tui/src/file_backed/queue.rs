@@ -180,25 +180,25 @@ impl FileBackedApp {
             })
             .unwrap_or_default();
         for id in ids {
-            let Some(input) = self.local_inputs.get_mut(&id) else {
-                continue;
+            let deferred = self.is_queued_behind_other_active(&id);
+            let should_materialize = {
+                let Some(input) = self.local_inputs.get_mut(&id) else {
+                    continue;
+                };
+                if input.owner != self.queue.owner || input.terminal {
+                    continue;
+                }
+                input.tape_seen = records.iter().any(|record| {
+                    record.kind == "message" && record.role == "user" && record.belongs_to(&id)
+                });
+                input.acknowledged
+                    && !input.tape_seen
+                    && !input.committed
+                    && input.cell.is_none()
+                    && !deferred
             };
-            if input.owner != self.queue.owner || input.terminal {
-                continue;
-            }
-            input.tape_seen = records.iter().any(|record| {
-                record.kind == "message" && record.role == "user" && record.belongs_to(&id)
-            });
-            if input.acknowledged && !input.tape_seen && !input.committed && input.cell.is_none() {
-                input.cell = Some(self.transcript.len());
-                self.transcript.push(
-                    (if input.intent == alan_agent_protocol::InputIntent::Command {
-                        crate::history::HistoryCell::Command(input.body.clone())
-                    } else {
-                        crate::history::HistoryCell::User(input.body.clone())
-                    })
-                    .with_input_cut(input.source_cut),
-                );
+            if should_materialize {
+                self.materialize_local_receipt_cell(&id);
             }
         }
         // Exact-ID receipts remain available for repeated late Tape/hydration.
@@ -356,7 +356,53 @@ impl FileBackedApp {
         }
     }
 
+    pub(super) fn is_queued_behind_other_active(&self, id: &str) -> bool {
+        let Some(q) = self.queue.snapshot.as_ref().filter(|q| q.known) else {
+            return false;
+        };
+        !q.paused
+            && q.pending_submission_ids
+                .iter()
+                .any(|candidate| candidate == id)
+            && q.active_submission_ids
+                .iter()
+                .any(|candidate| candidate != id)
+    }
+
+    pub(super) fn materialize_local_receipt_cell(&mut self, id: &str) {
+        let Some((body, intent, cut, tape_seen, committed, has_cell)) =
+            self.local_inputs.get(id).map(|input| {
+                (
+                    input.body.clone(),
+                    input.intent,
+                    input.source_cut,
+                    input.tape_seen,
+                    input.committed,
+                    input.cell.is_some(),
+                )
+            })
+        else {
+            return;
+        };
+        if tape_seen || committed || has_cell {
+            return;
+        }
+        let cell_index = self.transcript.len();
+        self.transcript.push(
+            (if intent == alan_agent_protocol::InputIntent::Command {
+                crate::history::HistoryCell::Command(body)
+            } else {
+                crate::history::HistoryCell::User(body)
+            })
+            .with_input_cut(cut),
+        );
+        if let Some(input) = self.local_inputs.get_mut(id) {
+            input.cell = Some(cell_index);
+        }
+    }
+
     pub(super) fn acknowledge_local_input(&mut self, id: &str, owner: &str) {
+        let deferred = self.is_queued_behind_other_active(id);
         let Some(input) = self.local_inputs.get_mut(id) else {
             return;
         };
@@ -367,14 +413,9 @@ impl FileBackedApp {
         let body = input.body.clone();
         let intent = input.intent;
         let draft_revision = input.draft_revision;
-        if !input.tape_seen {
-            input.cell = Some(self.transcript.len());
-            self.transcript
-                .push(if intent == alan_agent_protocol::InputIntent::Command {
-                    crate::history::HistoryCell::Command(body.clone())
-                } else {
-                    crate::history::HistoryCell::User(body.clone())
-                });
+        let tape_seen = input.tape_seen;
+        if !tape_seen && !deferred {
+            self.materialize_local_receipt_cell(id);
         }
         self.consume_or_remember_local_input(&body, intent, draft_revision);
         self.refresh_local_input_hint(id, owner);
@@ -460,6 +501,14 @@ pub(super) fn confirm_local_receipts(
     let owner = app.queue.owner.clone();
     for id in ids {
         app.acknowledge_local_input(&id, &owner);
+        if !app.is_queued_behind_other_active(&id)
+            && app
+                .local_inputs
+                .get(&id)
+                .is_some_and(|input| input.owner == owner && input.acknowledged && !input.terminal)
+        {
+            app.materialize_local_receipt_cell(&id);
+        }
     }
 }
 

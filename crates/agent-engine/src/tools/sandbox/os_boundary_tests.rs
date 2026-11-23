@@ -295,3 +295,81 @@ async fn host_account_trusted_runs_unsandboxed_shell_while_preserving_explicit_f
         "unexpected file bound error: {file_err}"
     );
 }
+
+#[tokio::test]
+async fn protected_only_allows_inline_interpreter_code_slash_literals_without_weakening_guard() {
+    let temp = TempDir::new().unwrap();
+    let mounted_file = temp.path().join("sample.txt");
+    std::fs::write(&mounted_file, "hello /a/b\n").unwrap();
+
+    // Seatbelt / ProtectedOnly must not reject `/a` inside inline code or regex patterns.
+    let seatbelt = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    seatbelt
+        .validate_command_paths(
+            "python3 -c 'html = \"<a href=\\\"/a\\\">x</a>\"; print(html)'",
+            temp.path(),
+            crate::tools::sandbox::PathCheckMode::ProtectedOnly,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .unwrap();
+    seatbelt
+        .validate_command_paths(
+            "node -e 'console.log(\"/a/b\")'",
+            temp.path(),
+            crate::tools::sandbox::PathCheckMode::ProtectedOnly,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .unwrap();
+    seatbelt
+        .validate_command_paths(
+            "grep -E '/a/b' sample.txt",
+            temp.path(),
+            crate::tools::sandbox::PathCheckMode::ProtectedOnly,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .unwrap();
+
+    // Additional path operand outside host_mount after inline code must STILL be rejected!
+    let extra_arg = seatbelt.validate_command_paths(
+        "python3 -c 'print(1)' /etc/passwd",
+        temp.path(),
+        crate::tools::sandbox::PathCheckMode::ProtectedOnly,
+        Some(alan_agent_protocol::ToolCapability::Read),
+    );
+    assert!(
+        extra_arg.is_err(),
+        "extra path operand after python3 -c must still be blocked: {extra_arg:?}"
+    );
+
+    // HostMountPathGuard (Full) must keep rejecting opaque inline scripts & literals.
+    let guard = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
+    );
+    let full_err = guard
+        .exec_with_timeout_and_capability(
+            "python3 -c 'print(\"/a\")'",
+            temp.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await;
+    assert!(full_err.is_err());
+
+    if cfg!(target_os = "macos") {
+        let out = seatbelt
+            .exec_with_timeout_and_capability(
+                "python3 -c 'print(\"<a href=/a>ok</a>\")'",
+                temp.path(),
+                None,
+                Some(alan_agent_protocol::ToolCapability::Read),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
+        assert_eq!(out.stdout.trim(), "<a href=/a>ok</a>");
+    }
+}

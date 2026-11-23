@@ -16,6 +16,9 @@ pub(super) struct ProjectedRequestInput {
     pub(super) system_instruction: Option<Content>,
 }
 
+const INTERRUPTED_TURN_BRIDGE_TEXT: &str =
+    "[Previous turn did not complete before next user input.]";
+
 pub(super) fn project_request_input(
     model: &str,
     system_prompt: Option<&str>,
@@ -27,49 +30,65 @@ pub(super) fn project_request_input(
         .into_iter()
         .collect::<Vec<_>>();
     let mut call_id_to_name: HashMap<String, String> = HashMap::new();
-    let mut pending_tool_responses: Vec<Part> = Vec::new();
+    let mut expected_calls: Vec<(Option<String>, String)> = Vec::new();
+    let mut deferred_user_parts: Vec<Part> = Vec::new();
+    let mut pending_tool_responses: Vec<ProjectedToolResponse> = Vec::new();
+    let mut last_user_turn_is_function_response = false;
 
     for message in messages {
-        if message.role != MessageRole::Tool && !pending_tool_responses.is_empty() {
-            contents.push(Content::user(std::mem::take(&mut pending_tool_responses)));
-        }
-
         match message.role {
+            MessageRole::Tool => {
+                if let Some(projected) = project_tool_response(message, &call_id_to_name)? {
+                    pending_tool_responses.push(projected);
+                }
+            }
             MessageRole::User | MessageRole::Context => {
                 let parts = project_user_parts(&message.content, &message.content_parts)?;
-                contents.push(Content::user(parts));
+                if !expected_calls.is_empty() {
+                    // Defer user/context messages that arrive while a tool-call batch
+                    // is still open (for example mid-batch steering) so all
+                    // functionResponses stay immediately paired with their model turn.
+                    deferred_user_parts.extend(parts);
+                    continue;
+                }
+                if !pending_tool_responses.is_empty() {
+                    flush_tool_responses(
+                        &mut contents,
+                        &mut pending_tool_responses,
+                        &mut expected_calls,
+                        &mut last_user_turn_is_function_response,
+                    );
+                }
+                append_user_turn(
+                    &mut contents,
+                    parts,
+                    &mut last_user_turn_is_function_response,
+                );
             }
             MessageRole::Assistant => {
-                let parts = project_assistant_parts(model, message, &mut call_id_to_name)?;
-                contents.push(Content::model(parts));
-            }
-            MessageRole::Tool => {
-                let Some(raw_id) = message
-                    .tool_call_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                else {
-                    continue;
-                };
-                let content = project_plain_text(
-                    &message.content,
-                    &message.content_parts,
-                    "Google Gemini GenerateContent tool results",
-                )?;
-                let (id, name) = match call_id_to_name.get(raw_id) {
-                    Some(function_name) => (Some(raw_id.to_string()), function_name.clone()),
-                    None => (None, raw_id.to_string()),
-                };
-                let response = match serde_json::from_str::<Value>(&content) {
-                    Ok(Value::Object(map)) => Value::Object(map),
-                    Ok(other) => serde_json::json!({ "result": other }),
-                    Err(_) => serde_json::json!({ "result": content }),
-                };
-                pending_tool_responses.push(Part {
-                    function_response: Some(FunctionResponse { id, name, response }),
-                    ..Part::default()
-                });
+                if !pending_tool_responses.is_empty() || !expected_calls.is_empty() {
+                    flush_tool_responses(
+                        &mut contents,
+                        &mut pending_tool_responses,
+                        &mut expected_calls,
+                        &mut last_user_turn_is_function_response,
+                    );
+                }
+                if !deferred_user_parts.is_empty() {
+                    append_user_turn(
+                        &mut contents,
+                        std::mem::take(&mut deferred_user_parts),
+                        &mut last_user_turn_is_function_response,
+                    );
+                }
+                let (parts, new_expected_calls) =
+                    project_assistant_parts(model, message, &mut call_id_to_name)?;
+                expected_calls = new_expected_calls;
+                push_or_merge_model_turn(
+                    &mut contents,
+                    parts,
+                    &mut last_user_turn_is_function_response,
+                );
             }
             MessageRole::System => {
                 let text = project_plain_text(
@@ -82,8 +101,22 @@ pub(super) fn project_request_input(
         }
     }
 
-    if !pending_tool_responses.is_empty() {
-        contents.push(Content::user(pending_tool_responses));
+    if !pending_tool_responses.is_empty()
+        || (!expected_calls.is_empty() && !deferred_user_parts.is_empty())
+    {
+        flush_tool_responses(
+            &mut contents,
+            &mut pending_tool_responses,
+            &mut expected_calls,
+            &mut last_user_turn_is_function_response,
+        );
+    }
+    if !deferred_user_parts.is_empty() {
+        append_user_turn(
+            &mut contents,
+            deferred_user_parts,
+            &mut last_user_turn_is_function_response,
+        );
     }
 
     let system_instruction = (!system_parts.is_empty()).then_some(Content {
@@ -96,13 +129,228 @@ pub(super) fn project_request_input(
     })
 }
 
+struct ProjectedToolResponse {
+    id: Option<String>,
+    name: String,
+    response: Value,
+    raw_content: String,
+}
+
+fn project_tool_response(
+    message: &Message,
+    call_id_to_name: &HashMap<String, String>,
+) -> Result<Option<ProjectedToolResponse>> {
+    let Some(raw_id) = message
+        .tool_call_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let content = project_plain_text(
+        &message.content,
+        &message.content_parts,
+        "Google Gemini GenerateContent tool results",
+    )?;
+    let (id, name) = match call_id_to_name.get(raw_id) {
+        Some(function_name) => (Some(raw_id.to_string()), function_name.clone()),
+        None => (None, raw_id.to_string()),
+    };
+    let response = match serde_json::from_str::<Value>(&content) {
+        Ok(Value::Object(map)) => Value::Object(map),
+        Ok(other) => serde_json::json!({ "result": other }),
+        Err(_) => serde_json::json!({ "result": content }),
+    };
+    Ok(Some(ProjectedToolResponse {
+        id,
+        name,
+        response,
+        raw_content: content,
+    }))
+}
+
+fn flush_tool_responses(
+    contents: &mut Vec<Content>,
+    pending_tool_responses: &mut Vec<ProjectedToolResponse>,
+    expected_calls: &mut Vec<(Option<String>, String)>,
+    last_user_turn_is_function_response: &mut bool,
+) {
+    let drained = std::mem::take(pending_tool_responses);
+    let expected = std::mem::take(expected_calls);
+    if expected.is_empty() {
+        // Orphan tool results without a preceding functionCall turn must be
+        // sent as plain text rather than standalone `functionResponse` parts.
+        let orphan_parts = drained
+            .into_iter()
+            .map(|tr| Part::text(format!("[Tool result ({}): {}]", tr.name, tr.raw_content)))
+            .collect();
+        append_user_turn(contents, orphan_parts, last_user_turn_is_function_response);
+        return;
+    }
+
+    let mut remaining: Vec<Option<ProjectedToolResponse>> = drained.into_iter().map(Some).collect();
+    let mut response_parts = Vec::with_capacity(expected.len());
+
+    for (expected_id, expected_name) in expected {
+        let matched_idx = remaining.iter().position(|candidate| {
+            let Some(tr) = candidate.as_ref() else {
+                return false;
+            };
+            match (&expected_id, &tr.id) {
+                (Some(eid), Some(tid)) => eid == tid,
+                _ => tr.name == expected_name,
+            }
+        });
+        if let Some(idx) = matched_idx {
+            let tr = remaining[idx].take().expect("checked Some");
+            response_parts.push(Part {
+                function_response: Some(FunctionResponse {
+                    id: tr.id,
+                    name: tr.name,
+                    response: tr.response,
+                }),
+                ..Part::default()
+            });
+        } else {
+            response_parts.push(Part {
+                function_response: Some(FunctionResponse {
+                    id: expected_id,
+                    name: expected_name,
+                    response: serde_json::json!({
+                        "error": "tool call did not complete before next turn"
+                    }),
+                }),
+                ..Part::default()
+            });
+        }
+    }
+
+    push_pure_function_response_turn(
+        contents,
+        response_parts,
+        last_user_turn_is_function_response,
+    );
+
+    let extra_parts: Vec<Part> = remaining
+        .into_iter()
+        .flatten()
+        .map(|tr| Part::text(format!("[Tool result ({}): {}]", tr.name, tr.raw_content)))
+        .collect();
+    if !extra_parts.is_empty() {
+        append_user_turn(contents, extra_parts, last_user_turn_is_function_response);
+    }
+}
+
+fn push_pure_function_response_turn(
+    contents: &mut Vec<Content>,
+    parts: Vec<Part>,
+    last_user_turn_is_function_response: &mut bool,
+) {
+    if parts.is_empty() {
+        return;
+    }
+    if contents
+        .last()
+        .is_some_and(|last| last.role.as_deref() == Some("user"))
+    {
+        // Keep a pure model bridge if the preceding turn was also `user`.
+        contents.push(Content::model(vec![Part::text(
+            INTERRUPTED_TURN_BRIDGE_TEXT,
+        )]));
+    }
+    contents.push(Content::user(parts));
+    *last_user_turn_is_function_response = true;
+}
+
+fn append_user_turn(
+    contents: &mut Vec<Content>,
+    parts: Vec<Part>,
+    last_user_turn_is_function_response: &mut bool,
+) {
+    let mut parts = strip_redundant_empty_text(parts);
+    if parts.is_empty() {
+        parts.push(Part::text(" "));
+    }
+    if *last_user_turn_is_function_response
+        && contents
+            .last()
+            .is_some_and(|last| last.role.as_deref() == Some("user"))
+    {
+        // Vertex AI rejects mixing conversational text into a functionResponse
+        // turn or sending two consecutive `user` turns. Bridge with a model turn
+        // so the functionResponse turn remains pure and role alternation holds.
+        contents.push(Content::model(vec![Part::text(
+            INTERRUPTED_TURN_BRIDGE_TEXT,
+        )]));
+        *last_user_turn_is_function_response = false;
+    }
+    if let Some(last) = contents
+        .last_mut()
+        .filter(|last| last.role.as_deref() == Some("user"))
+    {
+        last.parts.extend(parts);
+    } else {
+        contents.push(Content::user(parts));
+    }
+    *last_user_turn_is_function_response = false;
+}
+
+fn push_or_merge_model_turn(
+    contents: &mut Vec<Content>,
+    parts: Vec<Part>,
+    last_user_turn_is_function_response: &mut bool,
+) {
+    let parts: Vec<Part> = parts
+        .into_iter()
+        .filter(|part| !is_empty_text_part(part))
+        .collect();
+    if parts.is_empty() {
+        return;
+    }
+    if let Some(last) = contents
+        .last_mut()
+        .filter(|last| last.role.as_deref() == Some("model"))
+    {
+        last.parts.extend(parts);
+    } else {
+        contents.push(Content::model(parts));
+    }
+    *last_user_turn_is_function_response = false;
+}
+
+fn strip_redundant_empty_text(parts: Vec<Part>) -> Vec<Part> {
+    let has_non_empty = parts.iter().any(|part| !is_empty_text_part(part));
+    if has_non_empty {
+        parts
+            .into_iter()
+            .filter(|part| !is_empty_text_part(part))
+            .collect()
+    } else {
+        parts
+    }
+}
+
+fn is_empty_text_part(part: &Part) -> bool {
+    part.text.as_deref().is_some_and(str::is_empty)
+        && part.thought.is_none()
+        && part.thought_signature.is_none()
+        && part.inline_data.is_none()
+        && part.file_data.is_none()
+        && part.function_call.is_none()
+        && part.function_response.is_none()
+}
+
+type ExpectedToolCall = (Option<String>, String);
+
 fn project_assistant_parts(
     model: &str,
     message: &Message,
     call_id_to_name: &mut HashMap<String, String>,
-) -> Result<Vec<Part>> {
+) -> Result<(Vec<Part>, Vec<ExpectedToolCall>)> {
     let signatures = TurnSignatures::decode(message.thinking_signature.as_deref());
     let mut parts = Vec::new();
+    let mut expected_calls = Vec::new();
 
     if let Some(thinking) = message
         .thinking
@@ -153,6 +401,7 @@ fn project_assistant_parts(
             {
                 call_id_to_name.insert(id.to_string(), call.name.clone());
             }
+            expected_calls.push((call.id.clone(), call.name.clone()));
             let thought_signature =
                 signatures
                     .call(ordinal)
@@ -175,11 +424,7 @@ fn project_assistant_parts(
         }
     }
 
-    if parts.is_empty() {
-        parts.push(Part::text(message.content.clone()));
-    }
-
-    Ok(parts)
+    Ok((parts, expected_calls))
 }
 
 fn project_user_parts(fallback: &str, parts: &[MessageContentPart]) -> Result<Vec<Part>> {
@@ -514,5 +759,159 @@ mod tests {
         .unwrap();
 
         assert_eq!(content, "fallback");
+    }
+
+    #[test]
+    fn merges_consecutive_user_turns_and_skips_empty_model_turns() {
+        let projected = project_request_input(
+            "gemini-3-pro-preview",
+            None,
+            &[
+                Message::user("first"),
+                Message::assistant(""),
+                Message::user("second"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(projected.contents.len(), 1);
+        assert_eq!(projected.contents[0].role.as_deref(), Some("user"));
+        assert_eq!(projected.contents[0].parts.len(), 2);
+        assert_eq!(
+            projected.contents[0].parts[0].text.as_deref(),
+            Some("first")
+        );
+        assert_eq!(
+            projected.contents[0].parts[1].text.as_deref(),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn keeps_function_response_turn_pure_and_bridges_before_following_user_input() {
+        let assistant = Message::assistant_with_tools(
+            "",
+            vec![ToolCall::new("bash", json!({"command": "ls"})).with_id("call_1")],
+        );
+        let tool = Message::tool("call_1", r#"{"exit_code":0}"#);
+        let follow_up = Message::user("1");
+
+        let projected = project_request_input(
+            "gemini-3-pro-preview",
+            None,
+            &[Message::user("start"), assistant, tool, follow_up],
+        )
+        .unwrap();
+
+        let roles: Vec<&str> = projected
+            .contents
+            .iter()
+            .map(|c| c.role.as_deref().unwrap())
+            .collect();
+        assert_eq!(roles, vec!["user", "model", "user", "model", "user"]);
+        assert!(projected.contents[2].parts.len() == 1);
+        assert!(projected.contents[2].parts[0].function_response.is_some());
+        assert!(projected.contents[2].parts[0].text.is_none());
+        assert_eq!(projected.contents[4].parts[0].text.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn regroups_mid_batch_steering_after_all_tool_responses_and_repairs_missing_calls() {
+        let assistant = Message::assistant_with_tools(
+            "",
+            vec![
+                ToolCall::new("read_file", json!({"path": "a.rs"})).with_id("c1"),
+                ToolCall::new("read_file", json!({"path": "b.rs"})).with_id("c2"),
+            ],
+        );
+        // Simulate steering_queue inserting User before the skipped Tool response.
+        let projected = project_request_input(
+            "gemini-3-pro-preview",
+            None,
+            &[
+                Message::user("go"),
+                assistant,
+                Message::tool("c1", "alpha"),
+                Message::user("steer now"),
+                Message::tool("c2", "skipped"),
+            ],
+        )
+        .unwrap();
+        let roles: Vec<&str> = projected
+            .contents
+            .iter()
+            .map(|c| c.role.as_deref().unwrap())
+            .collect();
+        assert_eq!(roles, vec!["user", "model", "user", "model", "user"]);
+        assert_eq!(projected.contents[2].parts.len(), 2);
+        assert_eq!(
+            projected.contents[2].parts[0]
+                .function_response
+                .as_ref()
+                .unwrap()
+                .id
+                .as_deref(),
+            Some("c1")
+        );
+        assert_eq!(
+            projected.contents[2].parts[1]
+                .function_response
+                .as_ref()
+                .unwrap()
+                .id
+                .as_deref(),
+            Some("c2")
+        );
+        assert_eq!(
+            projected.contents[4].parts[0].text.as_deref(),
+            Some("steer now")
+        );
+
+        // Also test an interrupted batch where c2 never recorded a Tool response.
+        let interrupted = project_request_input(
+            "gemini-3-pro-preview",
+            None,
+            &[
+                Message::user("go"),
+                Message::assistant_with_tools(
+                    "",
+                    vec![
+                        ToolCall::new("read_file", json!({"path": "a.rs"})).with_id("c1"),
+                        ToolCall::new("read_file", json!({"path": "b.rs"})).with_id("c2"),
+                    ],
+                ),
+                Message::tool("c1", "alpha"),
+                Message::user("retry"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(interrupted.contents[2].parts.len(), 2);
+        assert_eq!(
+            interrupted.contents[2].parts[1]
+                .function_response
+                .as_ref()
+                .unwrap()
+                .response["error"],
+            "tool call did not complete before next turn"
+        );
+    }
+
+    #[test]
+    fn degrades_orphan_tool_response_without_preceding_function_call_to_text() {
+        let projected = project_request_input(
+            "gemini-3-pro-preview",
+            None,
+            &[Message::tool("bash", "ok"), Message::user("next")],
+        )
+        .unwrap();
+        assert_eq!(projected.contents.len(), 1);
+        assert_eq!(projected.contents[0].role.as_deref(), Some("user"));
+        assert!(projected.contents[0].parts[0].function_response.is_none());
+        assert!(
+            projected.contents[0].parts[0]
+                .text
+                .as_deref()
+                .unwrap()
+                .contains("Tool result (bash)")
+        );
     }
 }

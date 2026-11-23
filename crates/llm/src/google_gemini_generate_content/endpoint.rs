@@ -249,6 +249,11 @@ async fn ensure_success(response: reqwest::Response) -> Result<reqwest::Response
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     let excerpt: String = body.chars().take(1_000).collect();
+    warn!(
+        status = %status,
+        body = %excerpt.trim(),
+        "Vertex AI returned non-success HTTP status"
+    );
     Err(anyhow::Error::from(http_error).context(format!(
         "Vertex AI returned HTTP {status}: {}",
         excerpt.trim()

@@ -102,36 +102,88 @@ impl FileBackedApp {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::file_backed) fn confirmation_keypress(
         &mut self,
         key: KeyEvent,
     ) -> Option<FileBackedAction> {
-        if self.response_in_flight.is_some() {
-            return None;
+        match self.handle_confirmation_key(key) {
+            ConfirmationKeyResult::Action(action) => Some(action),
+            ConfirmationKeyResult::Swallowed | ConfirmationKeyResult::Ignored => None,
         }
+    }
+
+    pub(in crate::file_backed) fn handle_confirmation_key(
+        &mut self,
+        key: KeyEvent,
+    ) -> ConfirmationKeyResult {
         if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
-            return None;
+            return ConfirmationKeyResult::Ignored;
         }
-        let pending = self.pending_yield.as_ref()?;
+        if self.response_in_flight.is_some() {
+            if self.composer.text().is_empty()
+                && (matches!(key.code, KeyCode::Char(ch) if ('1'..='9').contains(&ch))
+                    || key.code == KeyCode::Enter)
+            {
+                self.notice = Some("request response is still being sent".into());
+                return ConfirmationKeyResult::Swallowed;
+            }
+            return ConfirmationKeyResult::Ignored;
+        }
+        if self.pending_yield.is_none()
+            && self.form.is_none()
+            && !self.activity.waiting_submission_ids.is_empty()
+            && self.running_tools.is_empty()
+            && self.composer.text().is_empty()
+            && matches!(key.code, KeyCode::Char(ch) if ('1'..='9').contains(&ch))
+        {
+            self.notice = Some("waiting for prompt details…".into());
+            return ConfirmationKeyResult::Swallowed;
+        }
+        let Some(pending) = self.pending_yield.as_ref() else {
+            return ConfirmationKeyResult::Ignored;
+        };
         if !matches!(pending.kind, YieldKind::Confirmation) || !self.composer.text().is_empty() {
-            return None;
+            return ConfirmationKeyResult::Ignored;
         }
         let KeyCode::Char(ch) = key.code else {
-            return None;
+            return ConfirmationKeyResult::Ignored;
         };
-        let index = ch.to_digit(10).filter(|digit| *digit >= 1)? as usize - 1;
-        let option = pending.options.get(index)?.clone();
+        let Some(digit) = ch.to_digit(10) else {
+            return ConfirmationKeyResult::Ignored;
+        };
+        let Some(option) = digit
+            .checked_sub(1)
+            .and_then(|index| pending.options.get(index as usize))
+            .cloned()
+        else {
+            if !pending.options.is_empty() {
+                self.notice = Some(Notice::warning(format!(
+                    "Select an option (1-{}) or type a response.",
+                    pending.options.len()
+                )));
+                return ConfirmationKeyResult::Swallowed;
+            }
+            return ConfirmationKeyResult::Ignored;
+        };
         let pending = pending.clone();
         match pending.resume_content(&option) {
-            Ok(content) => Some(FileBackedAction::Resume {
+            Ok(content) => ConfirmationKeyResult::Action(FileBackedAction::Resume {
                 request_id: pending.request_id,
                 response: response_text_from_content(content),
                 retry_input: option,
             }),
             Err(message) => {
                 self.notice = Some(Notice::warning(message));
-                None
+                ConfirmationKeyResult::Swallowed
             }
         }
     }
+}
+
+#[derive(Debug)]
+pub(in crate::file_backed) enum ConfirmationKeyResult {
+    Ignored,
+    Swallowed,
+    Action(FileBackedAction),
 }

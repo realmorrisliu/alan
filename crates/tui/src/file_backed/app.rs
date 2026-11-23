@@ -124,6 +124,9 @@ pub(super) struct FileBackedApp {
     /// or `Running -> Idle`), cleared on the next `user` tape boundary so a
     /// late `assistant` tape record cannot arm the latch for a future turn.
     pub(super) ui_turn_closed: bool,
+    /// Whether the active turn has already opened a `user` boundary in this attachment,
+    /// surviving scrollback pruning and interactive confirmation yields until the turn closes.
+    pub(super) active_turn_has_user_boundary: bool,
     pub(super) scrollback_front_is_partial: bool,
 }
 
@@ -202,6 +205,7 @@ impl FileBackedApp {
             pending_remote_turn_start: None,
             closed_assistant_accepts_late_thinking: false,
             ui_turn_closed: false,
+            active_turn_has_user_boundary: false,
             scrollback_front_is_partial: false,
         }
     }
@@ -570,8 +574,10 @@ impl FileBackedApp {
         if self.form.is_some() {
             return self.handle_form_key(key);
         }
-        if let Some(action) = self.confirmation_keypress(key) {
-            return Some(action);
+        match self.handle_confirmation_key(key) {
+            form_control::ConfirmationKeyResult::Action(action) => return Some(action),
+            form_control::ConfirmationKeyResult::Swallowed => return None,
+            form_control::ConfirmationKeyResult::Ignored => {}
         }
         match key {
             KeyEvent {

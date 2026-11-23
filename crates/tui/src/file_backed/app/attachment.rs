@@ -5,7 +5,9 @@ impl FileBackedApp {
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
         self.clear_late_thinking_latch();
+        self.active_turn_has_user_boundary = false;
         self.turn_prompts.clear();
+        let mut last_role_is_user = false;
         for line in raw.lines() {
             let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
                 continue;
@@ -16,9 +18,13 @@ impl FileBackedApp {
                     let is_cmd =
                         record.input_intent == Some(alan_agent_protocol::InputIntent::Command);
                     self.turn_prompts.push((record.content, is_cmd));
+                    last_role_is_user = true;
+                } else if record.role == "assistant" {
+                    last_role_is_user = false;
                 }
             }
         }
+        self.active_turn_has_user_boundary = last_role_is_user;
     }
     pub(in crate::file_backed) fn reset_for_root_process_change(&mut self) {
         self.namespace_cwd = std::path::PathBuf::from("/");
@@ -73,5 +79,6 @@ impl FileBackedApp {
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
         self.clear_late_thinking_latch();
+        self.active_turn_has_user_boundary = false;
     }
 }
