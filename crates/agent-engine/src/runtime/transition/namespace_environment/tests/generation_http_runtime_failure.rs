@@ -40,7 +40,7 @@ async fn local_http_runtime_exact_input(outcome: HttpOutcome) {
         HttpOutcome::Unauthorized => "stream_error:authentication",
         HttpOutcome::Refusal => "stream_error:safety",
         HttpOutcome::TimeoutThenSuccess => "stream_error:timeout",
-        HttpOutcome::NotFound => "stream_error:http",
+        HttpOutcome::NotFound => "stream_error:not_found",
     };
     let provider = if anthropic_refusal {
         "anthropic_messages"

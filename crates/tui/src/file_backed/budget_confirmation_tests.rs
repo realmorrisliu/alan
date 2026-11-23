@@ -38,3 +38,32 @@ fn budget_confirmation_uses_one_prompt_and_safe_confirmation_controls() {
         Some(FileBackedAction::Resume { response, .. }) if response == r#"{"choice":"reject"}"#
     ));
 }
+
+#[test]
+fn confirmation_digit_and_enter_do_not_leak_into_composer_while_response_in_flight() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.begin_resume_write("req-1".into());
+
+    assert!(
+        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE))
+            .is_none()
+    );
+    assert!(
+        app.composer.text().is_empty(),
+        "digit '1' must be swallowed during in-flight confirmation resume"
+    );
+    assert!(
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .is_none()
+    );
+    assert!(app.composer.text().is_empty());
+
+    // Normal text typing (e.g. starting a prompt with a word) still enters composer.
+    assert!(
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
+            .is_none()
+    );
+    assert_eq!(app.composer.text(), "h");
+}

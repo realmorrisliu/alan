@@ -320,6 +320,14 @@ fn protocol_and_stdio_errors_humanize_no_callable_connection_and_fix_man_and_mod
         msg.contains("/login") && msg.contains("alan login"),
         "{msg}"
     );
+    let wrapped_bad_req = humanize_protocol_message(
+        "Error handling submission: Namespace LLM request failed: llmfs generation failed: stream_error:bad_request",
+    );
+    assert!(
+        wrapped_bad_req.contains("HTTP 400 bad request")
+            && !wrapped_bad_req.contains("stream_error:"),
+        "{wrapped_bad_req}"
+    );
 
     let mut snapshot = StdioTaskSnapshot {
         task_started: true,
@@ -357,6 +365,52 @@ fn protocol_and_stdio_errors_humanize_no_callable_connection_and_fix_man_and_mod
             .unwrap_or("")
             .contains("model_reasoning_effort")
     );
+}
+
+#[test]
+fn tool_cells_and_running_tools_strip_internal_project_mount_prefixes() {
+    use super::file_surface::{ActionSnapshot, action_snapshot_to_history_cell};
+    use crate::history::RenderOpts;
+    use alan_agent_protocol::ToolResultPresentation;
+
+    let snap = ActionSnapshot {
+        id: "grep-1".into(),
+        name: "grep".into(),
+        status: "completed".into(),
+        output: String::new(),
+        result: serde_json::json!({
+            "title": "Grep foo",
+            "result_preview": "2 rows · /mnt/project-request-1/AGENTS.md",
+            "presentation": ToolResultPresentation::Listing {
+                rows: vec![
+                    "/mnt/project-request-1/AGENTS.md:12: foo".into(),
+                    "/mnt/project-request-1/crates/tui/src/lib.rs:3: foo".into(),
+                ],
+            }
+        })
+        .to_string(),
+    };
+    let cell = action_snapshot_to_history_cell(&snap).unwrap();
+    let rendered = cell.render_lines(RenderOpts::new(120, false)).join("\n");
+    assert!(
+        !rendered.contains("/mnt/project-request-1"),
+        "display must strip internal mount prefix: {rendered}"
+    );
+    assert!(rendered.contains("AGENTS.md"), "{rendered}");
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    super::file_surface::sync_action_snapshot(
+        &mut app,
+        ActionSnapshot {
+            id: "read-1".into(),
+            name: "read_file".into(),
+            status: "running".into(),
+            output: String::new(),
+            result: serde_json::json!({"title": "Read /mnt/project-request-1/src/main.rs"})
+                .to_string(),
+        },
+    );
+    assert_eq!(app.running_tools[0].title, "Read src/main.rs");
 }
 
 #[test]

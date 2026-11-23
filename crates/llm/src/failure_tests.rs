@@ -189,11 +189,12 @@ async fn reqwest_response_body_failure_retains_typed_category() {
 fn http_status_failures_preserve_transient_and_permanent_categories() {
     for (status, expected) in [
         (408, "stream_error:timeout"),
-        (400, "stream_error:http"),
+        (400, "stream_error:bad_request"),
         (401, "stream_error:authentication"),
         (403, "stream_error:authentication"),
-        (404, "stream_error:http"),
-        (422, "stream_error:http"),
+        (404, "stream_error:not_found"),
+        (413, "stream_error:payload_too_large"),
+        (422, "stream_error:unprocessable"),
         (429, "stream_error:rate_limit"),
         (500, "stream_error:unavailable"),
         (503, "stream_error:unavailable"),

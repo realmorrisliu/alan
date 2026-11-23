@@ -233,6 +233,9 @@ impl FileBackedApp {
     }
 
     pub(in crate::file_backed) fn current_turn_has_user_boundary(&self) -> bool {
+        if self.active_turn_has_user_boundary {
+            return true;
+        }
         for (index, cell) in self.transcript.iter().enumerate().rev() {
             if self.queued_receipt_at(index) {
                 continue;
@@ -323,6 +326,8 @@ impl FileBackedApp {
                 }
                 self.reconciler.on_user_record();
                 self.clear_late_thinking_latch();
+                self.active_turn_has_user_boundary = true;
+                self.expected_terminal_error = None;
                 if !local || !duplicate {
                     let index = self
                         .pending_remote_turn_start
@@ -365,6 +370,7 @@ impl FileBackedApp {
                 });
                 self.closed_assistant_accepts_late_thinking =
                     !self.ui_turn_closed && !already_has_thinking;
+                self.active_turn_has_user_boundary = false;
             }
             _ => {}
         }
@@ -380,16 +386,17 @@ impl FileBackedApp {
         let paired_notice = matches!(&event, UiEvent::Notice { snapshot }
             if snapshot.kind == UiNoticeKind::Error
                 && self.expected_terminal_error.as_deref() == Some(snapshot.message.as_str()));
-        let expected_error = if matches!(event, UiEvent::InputCompleted { .. }) || paired_notice {
-            None
-        } else {
+        let expected_error = if matches!(event, UiEvent::Error { .. }) {
             self.expected_terminal_error.take()
+        } else {
+            None
         };
         match event {
             UiEvent::InputCompleted { status, .. } => {
                 self.last_input_failed = status == UiInputStatus::Failed;
                 self.closed_assistant_accepts_late_thinking = false;
                 self.ui_turn_closed = true;
+                self.active_turn_has_user_boundary = false;
             }
             UiEvent::Activity { snapshot } => self.apply_ui_activity_snapshot(snapshot),
             UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
@@ -397,14 +404,20 @@ impl FileBackedApp {
             UiEvent::Notice { .. } if paired_notice => {}
             UiEvent::Notice { snapshot } => self.apply_ui_notice_snapshot(snapshot),
             UiEvent::Error { message, .. } => {
+                let humanized = super::notice::humanize_protocol_message(&message);
                 if self.notice.as_ref().is_some_and(|notice| {
                     notice.runtime_owned
                         && notice.kind == UiNoticeKind::Error
-                        && &**notice == message.as_str()
+                        && (&**notice == message.as_str() || &**notice == humanized.as_str())
                 }) {
                     self.notice = None;
                 }
-                if expected_error.as_deref() != Some(message.as_str()) {
+                let matches_expected = expected_error.as_deref().is_some_and(|expected| {
+                    expected == message.as_str()
+                        || expected.strip_prefix("Error handling submission: ")
+                            == Some(message.as_str())
+                });
+                if !matches_expected {
                     self.push_error(message);
                 }
             }
@@ -422,6 +435,7 @@ impl FileBackedApp {
     ) {
         if snapshot.state == UiActivityState::Idle {
             self.closed_assistant_accepts_late_thinking = false;
+            self.active_turn_has_user_boundary = false;
             if self.activity.state != UiActivityState::Idle {
                 self.ui_turn_closed = true;
             }

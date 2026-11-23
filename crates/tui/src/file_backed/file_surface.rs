@@ -865,15 +865,17 @@ fn running_tool(snapshot: &ActionSnapshot) -> Option<RunningTool> {
         return None;
     }
     let metadata = serde_json::from_str::<Value>(&snapshot.result).ok();
-    let title = format_running_subagent_title(snapshot, metadata.as_ref()).unwrap_or_else(|| {
-        metadata
-            .as_ref()
-            .and_then(|v| v.get("title"))
-            .and_then(Value::as_str)
-            .filter(|v| !v.trim().is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| action_title(snapshot))
-    });
+    let title = action_projection::normalize_project_mount_paths(
+        &format_running_subagent_title(snapshot, metadata.as_ref()).unwrap_or_else(|| {
+            metadata
+                .as_ref()
+                .and_then(|v| v.get("title"))
+                .and_then(Value::as_str)
+                .filter(|v| !v.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| action_title(snapshot))
+        }),
+    );
     let tail_lines = extract_running_tool_tail(metadata.as_ref(), &snapshot.output);
     Some(RunningTool {
         id: snapshot.id.clone(),

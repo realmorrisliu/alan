@@ -61,8 +61,12 @@ pub fn safe_failure_reason(error: &anyhow::Error) -> &'static str {
             }
             if let Some(status) = http.status() {
                 return match status.as_u16() {
+                    400 => "stream_error:bad_request",
                     401 | 403 => "stream_error:authentication",
+                    404 => "stream_error:not_found",
                     408 => "stream_error:timeout",
+                    413 => "stream_error:payload_too_large",
+                    422 => "stream_error:unprocessable",
                     429 => "stream_error:rate_limit",
                     500..=599 => "stream_error:unavailable",
                     _ => "stream_error:http",
@@ -87,7 +91,11 @@ pub fn safe_finish_reason(reason: &str) -> &'static str {
         "content_filter" => "content_filter",
         "STOP" => "STOP",
         "MAX_TOKENS" => "MAX_TOKENS",
+        "stream_error:bad_request" => "stream_error:bad_request",
         "stream_error:authentication" => "stream_error:authentication",
+        "stream_error:not_found" => "stream_error:not_found",
+        "stream_error:payload_too_large" => "stream_error:payload_too_large",
+        "stream_error:unprocessable" => "stream_error:unprocessable",
         "stream_error:rate_limit" => "stream_error:rate_limit",
         "stream_error:unavailable" => "stream_error:unavailable",
         "stream_error:timeout" => "stream_error:timeout",

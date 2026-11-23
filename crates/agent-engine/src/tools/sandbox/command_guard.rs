@@ -89,7 +89,9 @@ impl Sandbox {
                 continue;
             }
 
-            if !matches!(role, TokenPathRole::Check | TokenPathRole::Read) {
+            let check_token = matches!(role, TokenPathRole::Check | TokenPathRole::Read)
+                || (!protected_only && role == TokenPathRole::InlineCode);
+            if !check_token {
                 continue;
             }
             let capability = role.capability(capability, self.os_sandbox_or_explicit_trust());
@@ -331,7 +333,8 @@ impl Sandbox {
         let protected_only = matches!(mode, PathCheckMode::ProtectedOnly);
         for token in tokens {
             let role = token_path_role(command, token);
-            if role == TokenPathRole::Data {
+            if role == TokenPathRole::Data || (protected_only && role == TokenPathRole::InlineCode)
+            {
                 continue;
             }
             let capability = role.capability(capability, self.os_sandbox_or_explicit_trust());

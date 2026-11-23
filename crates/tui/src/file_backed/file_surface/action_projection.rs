@@ -30,18 +30,20 @@ pub(in crate::file_backed) fn action_snapshot_to_history_cell(
     {
         return None;
     }
-    let title = metadata
-        .as_ref()
-        .and_then(|v| v.get("title"))
-        .and_then(Value::as_str)
-        .filter(|v| !v.trim().is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| action_title(snapshot));
+    let title = normalize_project_mount_paths(
+        &metadata
+            .as_ref()
+            .and_then(|v| v.get("title"))
+            .and_then(Value::as_str)
+            .filter(|v| !v.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| action_title(snapshot)),
+    );
     let preview = metadata
         .as_ref()
         .and_then(|v| v.get("result_preview"))
         .and_then(Value::as_str)
-        .map(str::to_string);
+        .map(normalize_project_mount_paths);
     let presentation = metadata
         .as_ref()
         .and_then(|v| v.get("presentation"))
@@ -51,9 +53,10 @@ pub(in crate::file_backed) fn action_snapshot_to_history_cell(
                 .as_ref()
                 .filter(|text| !text.trim().is_empty())
                 .cloned()
-                .or(body)
+                .or_else(|| body.as_deref().map(normalize_project_mount_paths))
                 .map(|body| ToolResultPresentation::PlainText { body })
-        });
+        })
+        .map(normalize_presentation_project_paths);
     Some(HistoryCell::Tool {
         action: Some(crate::history::ActionHistory {
             owner: String::new(),
@@ -87,6 +90,68 @@ pub(in crate::file_backed) fn action_title(snapshot: &ActionSnapshot) -> String 
         trimmed.to_string()
     } else {
         format!("tool {}", snapshot.id)
+    }
+}
+
+pub(in crate::file_backed) fn normalize_project_mount_paths(text: &str) -> String {
+    const PREFIX: &str = "/mnt/project-request-";
+    if !text.contains(PREFIX) {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(rel) = text[cursor..].find(PREFIX) {
+        let start = cursor + rel;
+        out.push_str(&text[cursor..start]);
+        let slug_start = start + PREFIX.len();
+        let slug_len = text[slug_start..]
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
+            .unwrap_or(text.len() - slug_start);
+        if slug_len == 0 {
+            out.push_str(PREFIX);
+            cursor = slug_start;
+            continue;
+        }
+        let after_slug = slug_start + slug_len;
+        if text[after_slug..].starts_with('/') {
+            // Strip `/mnt/project-request-<id>/` down to project-relative path.
+            cursor = after_slug + 1;
+        } else {
+            out.push('.');
+            cursor = after_slug;
+        }
+    }
+    out.push_str(&text[cursor..]);
+    out
+}
+
+fn normalize_presentation_project_paths(
+    presentation: ToolResultPresentation,
+) -> ToolResultPresentation {
+    match presentation {
+        ToolResultPresentation::Diff { path, hunks } => ToolResultPresentation::Diff {
+            path: normalize_project_mount_paths(&path),
+            hunks,
+        },
+        ToolResultPresentation::Listing { rows } => ToolResultPresentation::Listing {
+            rows: rows
+                .into_iter()
+                .map(|row| normalize_project_mount_paths(&row))
+                .collect(),
+        },
+        ToolResultPresentation::FileContent {
+            path,
+            lines,
+            truncated,
+        } => ToolResultPresentation::FileContent {
+            path: normalize_project_mount_paths(&path),
+            lines,
+            truncated,
+        },
+        ToolResultPresentation::PlainText { body } => ToolResultPresentation::PlainText {
+            body: normalize_project_mount_paths(&body),
+        },
+        other @ ToolResultPresentation::Command { .. } => other,
     }
 }
 

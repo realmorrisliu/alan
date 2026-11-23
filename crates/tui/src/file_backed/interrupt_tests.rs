@@ -238,3 +238,52 @@ fn matching_non_success_completion_is_visible_before_pending_is_released() {
         }
     }
 }
+
+#[test]
+fn terminal_error_dedup_survives_intermediate_activity_and_thinking_events() {
+    use alan_agent_protocol::{
+        UiActivitySnapshot, UiNoticeKind, UiNoticeSnapshot, UiThinkingSnapshot,
+    };
+
+    let mut pending = VecDeque::from([PendingRootAgentTurn {
+        input: "task".into(),
+        submission_id: "mine".into(),
+        submitted_process: Some(1),
+        submitted_at_ms: 20,
+    }]);
+    let mut app = FileBackedApp::new("/agent/root".into());
+    let completed = UiEvent::InputCompleted {
+        submission_ids: vec!["mine".into()],
+        status: alan_agent_protocol::UiInputStatus::Failed,
+        error: Some(
+            "Namespace LLM request failed: llmfs generation failed: stream_error:bad_request"
+                .into(),
+        ),
+    };
+    observe_root_agent_completion(&mut pending, &completed, &mut app);
+    app.apply_ui_event(completed);
+    // Intermediate Activity / Thinking updates must not clear expected_terminal_error
+    // before the matching Notice / Error arrives.
+    app.apply_ui_event(UiEvent::Activity {
+        snapshot: UiActivitySnapshot::idle(),
+    });
+    app.apply_ui_event(UiEvent::Thinking {
+        snapshot: UiThinkingSnapshot::idle(),
+    });
+    app.apply_ui_event(UiEvent::Notice {
+        snapshot: UiNoticeSnapshot::new(
+            UiNoticeKind::Error,
+            "Error handling submission: Namespace LLM request failed: llmfs generation failed: stream_error:bad_request",
+        ),
+    });
+    app.apply_ui_event(UiEvent::Error {
+        message: "Error handling submission: Namespace LLM request failed: llmfs generation failed: stream_error:bad_request".into(),
+        recoverable: true,
+    });
+    assert_eq!(app.transcript.len(), 1);
+    assert!(
+        matches!(&app.transcript[0], crate::history::HistoryCell::Error(msg) if msg.contains("HTTP 400 bad request")),
+        "unexpected error rendering: {:?}",
+        app.transcript
+    );
+}

@@ -9,6 +9,7 @@ pub(super) enum TokenPathRole {
     Check,
     Read,
     Data,
+    InlineCode,
     ExecutableData(usize),
 }
 
@@ -74,6 +75,10 @@ pub(super) fn token_path_role(command: &str, token: &ShellToken) -> TokenPathRol
         return TokenPathRole::Data;
     }
 
+    if let Some(role) = inline_code_argument_role(command_name, args, &token.decoded) {
+        return role;
+    }
+
     // ponytail: recognize only known literal-data operands; add broader shell
     // argument semantics only if real commands are blocked by this ceiling.
     let git_commit = command_name == "git" && args.iter().any(|word| word == "commit");
@@ -86,6 +91,312 @@ pub(super) fn token_path_role(command: &str, token: &ShellToken) -> TokenPathRol
     } else {
         TokenPathRole::Check
     }
+}
+
+fn inline_code_argument_role(
+    command_name: &str,
+    args: &[String],
+    current: &str,
+) -> Option<TokenPathRole> {
+    // Shell wrappers (`sh`, `bash`, `zsh`, `dash`, `ksh`) are deliberately excluded
+    // because `command_wrappers` extracts and checks their inline scripts directly.
+    if is_python_command(command_name) {
+        return interpreter_flag_code_role(args, current, &["-c"], &[], &['c']);
+    }
+    if matches!(command_name, "node" | "deno" | "bun") {
+        return interpreter_flag_code_role(
+            args,
+            current,
+            &["-e", "-p", "--eval", "--print"],
+            &["--eval=", "--print="],
+            &[],
+        );
+    }
+    if command_name == "ruby" {
+        return interpreter_flag_code_role(args, current, &["-e"], &[], &['e']);
+    }
+    if command_name == "perl" {
+        return interpreter_flag_code_role(args, current, &["-e", "-E"], &[], &['e', 'E']);
+    }
+    if command_name == "php" {
+        return interpreter_flag_code_role(args, current, &["-r"], &[], &['r']);
+    }
+    if command_name == "jq" {
+        return jq_argument_role(args, current);
+    }
+    if command_name == "sed" {
+        return sed_argument_role(args, current);
+    }
+    if matches!(command_name, "grep" | "egrep" | "fgrep" | "rg") {
+        return search_pattern_argument_role(args, current);
+    }
+    None
+}
+
+fn is_python_command(name: &str) -> bool {
+    matches!(name, "python" | "python3")
+        || name
+            .strip_prefix("python3.")
+            .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn interpreter_flag_code_role(
+    args: &[String],
+    current: &str,
+    exact_flags: &[&str],
+    equals_prefixes: &[&str],
+    attached_short_chars: &[char],
+) -> Option<TokenPathRole> {
+    if args.iter().any(|word| word == "--") {
+        return None;
+    }
+    if args
+        .last()
+        .is_some_and(|prev| exact_flags.iter().any(|flag| prev == flag))
+    {
+        return Some(TokenPathRole::InlineCode);
+    }
+    if equals_prefixes
+        .iter()
+        .any(|prefix| current.starts_with(prefix))
+    {
+        return Some(TokenPathRole::InlineCode);
+    }
+    if !current.starts_with("--")
+        && let Some(short) = current.strip_prefix('-')
+        && let Some(first) = short.chars().next()
+        && attached_short_chars.contains(&first)
+        && short.len() > first.len_utf8()
+    {
+        return Some(TokenPathRole::InlineCode);
+    }
+    None
+}
+
+fn jq_argument_role(args: &[String], current: &str) -> Option<TokenPathRole> {
+    let mut filter_seen = false;
+    let mut from_file_seen = false;
+    let mut expect_file_or_dir = false;
+    let mut expect_data_args = 0usize;
+    let mut options_ended = false;
+
+    for arg in args {
+        if expect_data_args > 0 {
+            expect_data_args -= 1;
+            continue;
+        }
+        if expect_file_or_dir {
+            expect_file_or_dir = false;
+            continue;
+        }
+        if !options_ended && arg == "--" {
+            options_ended = true;
+            continue;
+        }
+        if !options_ended {
+            if matches!(arg.as_str(), "-f" | "--from-file") {
+                from_file_seen = true;
+                expect_file_or_dir = true;
+                continue;
+            }
+            if arg.starts_with("--from-file=") || (arg.starts_with("-f") && arg.len() > 2) {
+                from_file_seen = true;
+                continue;
+            }
+            if arg == "-L" {
+                expect_file_or_dir = true;
+                continue;
+            }
+            if matches!(
+                arg.as_str(),
+                "--arg" | "--argjson" | "--slurpfile" | "--rawfile"
+            ) {
+                expect_data_args = if matches!(arg.as_str(), "--arg" | "--argjson") {
+                    2
+                } else {
+                    1
+                };
+                if matches!(arg.as_str(), "--slurpfile" | "--rawfile") {
+                    expect_file_or_dir = true;
+                }
+                continue;
+            }
+            if arg == "--indent" {
+                expect_data_args = 1;
+                continue;
+            }
+            if arg.starts_with('-') {
+                continue;
+            }
+        }
+        filter_seen = true;
+    }
+
+    if expect_data_args > 0 {
+        return Some(TokenPathRole::Data);
+    }
+    if expect_file_or_dir {
+        return Some(TokenPathRole::Check);
+    }
+    if !from_file_seen && !filter_seen && (options_ended || !current.starts_with('-')) {
+        return Some(TokenPathRole::InlineCode);
+    }
+    None
+}
+
+fn sed_argument_role(args: &[String], current: &str) -> Option<TokenPathRole> {
+    let mut script_supplied = false;
+    let mut expect_expression = false;
+    let mut expect_file = false;
+    let mut options_ended = false;
+
+    for arg in args {
+        if expect_expression {
+            expect_expression = false;
+            script_supplied = true;
+            continue;
+        }
+        if expect_file {
+            expect_file = false;
+            script_supplied = true;
+            continue;
+        }
+        if !options_ended && arg == "--" {
+            options_ended = true;
+            continue;
+        }
+        if !options_ended {
+            if matches!(arg.as_str(), "-e" | "--expression") {
+                expect_expression = true;
+                continue;
+            }
+            if arg.starts_with("--expression=") || (arg.starts_with("-e") && arg.len() > 2) {
+                script_supplied = true;
+                continue;
+            }
+            if matches!(arg.as_str(), "-f" | "--file") {
+                expect_file = true;
+                continue;
+            }
+            if arg.starts_with("--file=") || (arg.starts_with("-f") && arg.len() > 2) {
+                script_supplied = true;
+                continue;
+            }
+            if matches!(arg.as_str(), "-i" | "--in-place") || arg.starts_with('-') {
+                continue;
+            }
+        }
+        script_supplied = true;
+    }
+
+    if expect_expression
+        || current.starts_with("--expression=")
+        || (!options_ended && current.starts_with("-e") && current.len() > 2)
+    {
+        return Some(TokenPathRole::InlineCode);
+    }
+    if expect_file {
+        return Some(TokenPathRole::Check);
+    }
+    if !script_supplied && (options_ended || !current.starts_with('-')) {
+        return Some(TokenPathRole::InlineCode);
+    }
+    None
+}
+
+fn search_pattern_argument_role(args: &[String], current: &str) -> Option<TokenPathRole> {
+    let mut pattern_supplied = false;
+    let mut expect_pattern = false;
+    let mut expect_value_flag = false;
+    let mut options_ended = false;
+
+    for arg in args {
+        if expect_pattern {
+            expect_pattern = false;
+            pattern_supplied = true;
+            continue;
+        }
+        if expect_value_flag {
+            expect_value_flag = false;
+            continue;
+        }
+        if !options_ended && arg == "--" {
+            options_ended = true;
+            continue;
+        }
+        if !options_ended {
+            if matches!(arg.as_str(), "-e" | "--regexp") {
+                expect_pattern = true;
+                continue;
+            }
+            if arg.starts_with("--regexp=") || (arg.starts_with("-e") && arg.len() > 2) {
+                pattern_supplied = true;
+                continue;
+            }
+            if matches!(arg.as_str(), "-f" | "--file") {
+                pattern_supplied = true;
+                expect_value_flag = true;
+                continue;
+            }
+            if arg.starts_with("--file=") || (arg.starts_with("-f") && arg.len() > 2) {
+                pattern_supplied = true;
+                continue;
+            }
+            if matches!(
+                arg.as_str(),
+                "-A" | "-B"
+                    | "-C"
+                    | "-m"
+                    | "-g"
+                    | "-t"
+                    | "-T"
+                    | "-M"
+                    | "-j"
+                    | "-d"
+                    | "-D"
+                    | "--after-context"
+                    | "--before-context"
+                    | "--context"
+                    | "--max-count"
+                    | "--glob"
+                    | "--iglob"
+                    | "--type"
+                    | "--type-not"
+                    | "--type-add"
+                    | "--max-columns"
+                    | "--max-filesize"
+                    | "--include"
+                    | "--exclude"
+                    | "--exclude-dir"
+                    | "--color"
+                    | "--colors"
+                    | "--sort"
+                    | "--sortr"
+                    | "--encoding"
+            ) {
+                expect_value_flag = true;
+                continue;
+            }
+            if arg.starts_with('-') {
+                continue;
+            }
+        }
+        pattern_supplied = true;
+    }
+
+    if expect_pattern
+        || current.starts_with("--regexp=")
+        || (!options_ended && current.starts_with("-e") && current.len() > 2)
+    {
+        return Some(TokenPathRole::InlineCode);
+    }
+    if expect_value_flag {
+        return Some(TokenPathRole::Check);
+    }
+    if !pattern_supplied && (options_ended || !current.starts_with('-')) {
+        return Some(TokenPathRole::InlineCode);
+    }
+    None
 }
 
 fn push_unique_range(ranges: &mut Vec<Range<usize>>, range: Range<usize>) {

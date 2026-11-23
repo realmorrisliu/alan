@@ -12,7 +12,9 @@ impl FileBackedApp {
     pub(in crate::file_backed) fn has_pending_response(&self) -> bool {
         self.pending_yield.is_some()
             || self.form.is_some()
-            || !self.activity.waiting_submission_ids.is_empty()
+            || (!self.activity.waiting_submission_ids.is_empty()
+                && self.running_tools.is_empty()
+                && self.response_in_flight.is_none())
     }
 
     pub(in crate::file_backed) fn window_title(&self) -> String {
