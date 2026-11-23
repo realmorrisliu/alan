@@ -457,3 +457,65 @@ fn queued_input_behind_active_turn_is_not_interleaved_and_survives_pruned_yield(
         app.transcript
     );
 }
+
+#[test]
+fn provisional_receipt_before_tape_preserves_user_before_early_action_and_output() {
+    use crate::history::{HistoryCell, ToolStatus};
+    use alan_agent_protocol::InputIntent;
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    let owner = "/agent/1";
+    app.queue.owner = owner.into();
+    app.queue.apply(
+        owner,
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            paused: false,
+            pending_submission_ids: vec!["sub-race".into()],
+            ..Default::default()
+        }),
+    );
+
+    app.track_local_input(
+        "sub-race",
+        owner.into(),
+        "race prompt".into(),
+        InputIntent::Agent,
+    );
+    app.acknowledge_local_input("sub-race", owner);
+    assert!(
+        !app.active_turn_has_user_boundary,
+        "untaped provisional receipt must not pretend an authoritative tape boundary was seen"
+    );
+
+    app.upsert_action_cell(
+        "act-early".into(),
+        HistoryCell::Tool {
+            action: None,
+            title: "Bash ls".into(),
+            status: ToolStatus::Complete,
+            preview: Some("ok".into()),
+            presentation: None,
+        },
+    );
+    app.push_output("early output".into());
+
+    app.apply_tape_record(
+        serde_json::from_str(
+            r#"{"version":1,"kind":"message","role":"user","content":"race prompt","submission_id":"sub-race"}"#,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(app.transcript.len(), 3, "transcript: {:?}", app.transcript);
+    assert!(
+        app.transcript[0]
+            .input_source()
+            .is_some_and(|(body, ..)| body == "race prompt"),
+        "authoritative user boundary must precede early tool/output cells: {:?}",
+        app.transcript
+    );
+    assert!(matches!(app.transcript[1], HistoryCell::Tool { .. }));
+    assert!(matches!(app.transcript[2], HistoryCell::Assistant(ref s) if s == "early output"));
+}

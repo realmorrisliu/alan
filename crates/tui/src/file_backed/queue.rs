@@ -399,9 +399,6 @@ impl FileBackedApp {
         if let Some(input) = self.local_inputs.get_mut(id) {
             input.cell = Some(cell_index);
         }
-        if !self.queue.snapshot.as_ref().is_some_and(|q| q.paused) {
-            self.active_turn_has_user_boundary = true;
-        }
     }
 
     pub(super) fn acknowledge_local_input(&mut self, id: &str, owner: &str) {
