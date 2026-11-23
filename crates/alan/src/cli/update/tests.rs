@@ -1,11 +1,16 @@
 use super::*;
 use crate::cli::update::archive::{sha256_bytes, validate_archive_listing};
+use crate::cli::update::channel::{
+    ChannelSource, configured_channel_path, effective_channel, read_configured_channel,
+    run_channel_command_with_store, set_configured_channel, write_configured_channel,
+};
 use crate::cli::update::ownership::{
     InstallLock, atomic_install_binary, preflight_ownership, resolve_install_dir,
 };
 use crate::cli::update::passive_check::{
     LastCheckCache, evaluate_cache_for_notice, evaluate_cache_for_notice_for_channel,
-    passive_check_cache_path, should_skip_passive_check_with,
+    evaluate_cache_for_notice_with_target, passive_check_cache_path,
+    should_skip_passive_check_with,
 };
 use crate::cli::update::semver::{is_newer_version, parse_semver, target_triple_for};
 use alan_os_host::SystemStorePaths;
@@ -591,4 +596,123 @@ fn beta_semver_ordering_and_manifest_validation_work() {
 
     manifest.channel = "nightly".to_string();
     assert!(validate_manifest_metadata(&manifest, None, None).is_err());
+}
+
+#[test]
+fn persisted_channel_precedence_storage_and_cache_invalidation_work() {
+    // 1. Precedence: --channel / ALAN_CHANNEL > configured_channel > current_channel.
+    assert_eq!(
+        resolve_manifest_url_with_configured(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(ReleaseChannel::Beta),
+            ReleaseChannel::Stable,
+        )
+        .unwrap(),
+        DEFAULT_BETA_MANIFEST_URL
+    );
+    assert_eq!(
+        resolve_manifest_url_with_configured(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("stable"),
+            Some(ReleaseChannel::Beta),
+            ReleaseChannel::Beta,
+        )
+        .unwrap(),
+        DEFAULT_MANIFEST_URL
+    );
+
+    // 2. Store persistence + cache invalidation + symlink refusal.
+    let temp = tempfile::tempdir().unwrap();
+    let store = SystemStorePaths::from_data_dir(temp.path()).unwrap();
+    let channel_path = configured_channel_path(&store).unwrap();
+    let cache_path = passive_check_cache_path(&store).unwrap();
+
+    assert_eq!(read_configured_channel(&store), None);
+    assert_eq!(
+        effective_channel(Some(&store)),
+        (current_binary_channel(), ChannelSource::BinaryDefault)
+    );
+
+    std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+    let now = Utc::now();
+    let stale_cache = LastCheckCache {
+        checked_at_rfc3339: (now - Duration::hours(1)).to_rfc3339(),
+        channel: "stable".to_string(),
+        latest_version: "0.1.6".to_string(),
+        tag: "v0.1.6".to_string(),
+        release_url: None,
+    };
+    std::fs::write(&cache_path, serde_json::to_vec(&stale_cache).unwrap()).unwrap();
+    assert!(cache_path.exists());
+
+    write_configured_channel(&store, ReleaseChannel::Beta).unwrap();
+    assert_eq!(read_configured_channel(&store), Some(ReleaseChannel::Beta));
+    assert_eq!(
+        effective_channel(Some(&store)),
+        (ReleaseChannel::Beta, ChannelSource::Configured)
+    );
+    assert!(
+        !cache_path.exists(),
+        "changing channel must remove stale last-check.json"
+    );
+
+    // Corrupt channel.json degrades safely to None.
+    std::fs::write(&channel_path, b"{bad-json").unwrap();
+    assert_eq!(read_configured_channel(&store), None);
+
+    // Writing over symlink is refused.
+    #[cfg(unix)]
+    {
+        let victim = temp.path().join("victim.json");
+        std::fs::write(&victim, b"keep").unwrap();
+        std::fs::remove_file(&channel_path).unwrap();
+        std::os::unix::fs::symlink(&victim, &channel_path).unwrap();
+        assert!(write_configured_channel(&store, ReleaseChannel::Stable).is_err());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        std::fs::remove_file(&channel_path).unwrap();
+    }
+
+    // 3. Channel helper & pending-switch passive notice.
+    let matches_binary = set_configured_channel(&store, ReleaseChannel::Beta).unwrap();
+    assert_eq!(
+        matches_binary,
+        current_binary_channel() == ReleaseChannel::Beta
+    );
+    let status =
+        run_channel_command_with_store(&store, None, ReleaseChannel::Stable, "0.1.6").unwrap();
+    assert_eq!(status.channel, "beta");
+    assert_eq!(status.source, "configured");
+    assert!(status.switch_pending);
+
+    let beta_cache = LastCheckCache {
+        checked_at_rfc3339: (now - Duration::minutes(10)).to_rfc3339(),
+        channel: "beta".to_string(),
+        latest_version: "0.1.7-beta.20261123.5".to_string(),
+        tag: "beta".to_string(),
+        release_url: None,
+    };
+    std::fs::write(&cache_path, serde_json::to_vec(&beta_cache).unwrap()).unwrap();
+    let (notice, needs_refresh) = evaluate_cache_for_notice_with_target(
+        &cache_path,
+        "0.1.6",
+        ReleaseChannel::Stable,
+        ReleaseChannel::Beta,
+        now,
+    );
+    assert_eq!(
+        notice.as_deref(),
+        Some("Channel switch pending (beta: v0.1.7-beta.20261123.5) — run 'alan update'")
+    );
+    assert!(!needs_refresh);
 }

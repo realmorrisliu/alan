@@ -85,6 +85,7 @@ fn str_flag_is_truthy(value: Option<&str>) -> bool {
 
 /// Read the cached `last-check.json` synchronously (`< 1ms`) and decide whether to show a notice
 /// and whether a background refresh is required (`missing`, `invalid`, channel mismatch, or `>= 24h` old).
+#[cfg(test)]
 pub fn evaluate_cache_for_notice(
     cache_path: &Path,
     current_version: &str,
@@ -99,10 +100,28 @@ pub fn evaluate_cache_for_notice(
 }
 
 /// Pure channel-parameterized cache evaluator for deterministic unit and integration testing.
+#[cfg(test)]
 pub fn evaluate_cache_for_notice_for_channel(
     cache_path: &Path,
     current_version: &str,
     current_channel: ReleaseChannel,
+    now: DateTime<Utc>,
+) -> (Option<String>, bool) {
+    evaluate_cache_for_notice_with_target(
+        cache_path,
+        current_version,
+        current_channel,
+        current_channel,
+        now,
+    )
+}
+
+/// Evaluate `last-check.json` against both the running binary channel and the selected target channel.
+pub fn evaluate_cache_for_notice_with_target(
+    cache_path: &Path,
+    current_version: &str,
+    current_channel: ReleaseChannel,
+    target_channel: ReleaseChannel,
     now: DateTime<Utc>,
 ) -> (Option<String>, bool) {
     let Ok(metadata) = std::fs::symlink_metadata(cache_path) else {
@@ -118,7 +137,7 @@ pub fn evaluate_cache_for_notice_for_channel(
     let Ok(cache) = serde_json::from_slice::<LastCheckCache>(&bytes) else {
         return (None, true);
     };
-    if cache.channel != current_channel.as_str() {
+    if cache.channel != target_channel.as_str() {
         return (None, true);
     }
     let Ok(checked_at) = DateTime::parse_from_rfc3339(&cache.checked_at_rfc3339) else {
@@ -129,22 +148,32 @@ pub fn evaluate_cache_for_notice_for_channel(
     let needs_refresh =
         age >= Duration::hours(PASSIVE_CHECK_TTL_HOURS) || age < Duration::minutes(-5);
 
-    let notice = match (
-        parse_semver(&cache.latest_version),
-        is_newer_version(current_version, &cache.latest_version),
-    ) {
-        (Ok(parsed), Ok(true)) => {
+    let notice = if target_channel != current_channel {
+        parse_semver(&cache.latest_version).ok().map(|parsed| {
             let display = display_tag(&parsed.to_string());
-            Some(match current_channel {
-                ReleaseChannel::Stable => {
-                    format!("Update available: {display} — run 'alan update'")
-                }
-                ReleaseChannel::Beta => {
-                    format!("Beta update available: {display} — run 'alan update'")
-                }
-            })
+            format!(
+                "Channel switch pending ({}: {display}) — run 'alan update'",
+                target_channel.as_str()
+            )
+        })
+    } else {
+        match (
+            parse_semver(&cache.latest_version),
+            is_newer_version(current_version, &cache.latest_version),
+        ) {
+            (Ok(parsed), Ok(true)) => {
+                let display = display_tag(&parsed.to_string());
+                Some(match target_channel {
+                    ReleaseChannel::Stable => {
+                        format!("Update available: {display} — run 'alan update'")
+                    }
+                    ReleaseChannel::Beta => {
+                        format!("Beta update available: {display} — run 'alan update'")
+                    }
+                })
+            }
+            _ => None,
         }
-        _ => None,
     };
 
     (notice, needs_refresh)
@@ -167,12 +196,18 @@ pub fn prepare_passive_tui_update_notice(
 
     let cache_path = passive_check_cache_path(store).ok()?;
     let current_version = env!("ALAN_VERSION");
-    let current_channel = current_binary_channel();
-    let (notice, needs_refresh) =
-        evaluate_cache_for_notice(&cache_path, current_version, Utc::now());
+    let binary_channel = current_binary_channel();
+    let target_channel = super::channel::read_configured_channel(store).unwrap_or(binary_channel);
+    let (notice, needs_refresh) = evaluate_cache_for_notice_with_target(
+        &cache_path,
+        current_version,
+        binary_channel,
+        target_channel,
+        Utc::now(),
+    );
 
     if needs_refresh && let Ok(handle) = tokio::runtime::Handle::try_current() {
-        let (manifest_url, overridden) = default_manifest_url_for_channel(current_channel);
+        let (manifest_url, overridden) = default_manifest_url_for_channel(target_channel);
         if let Ok(target_triple) = current_target_triple() {
             handle.spawn(async move {
                 let _ = tokio::time::timeout(
@@ -185,7 +220,7 @@ pub fn prepare_passive_tui_update_notice(
                                 &cache_path,
                                 &manifest_url,
                                 target_triple,
-                                Some(current_channel),
+                                Some(target_channel),
                             )
                             .await
                         }

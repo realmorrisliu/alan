@@ -154,7 +154,7 @@ Standalone CLI distribution (prebuilt releases + local source workflow):
 ```bash
 curl -fsSL https://alanworks.app/install.sh | sh                       # stable channel (default)
 curl -fsSL https://alanworks.app/install.sh | sh -s -- --channel beta  # rolling beta from main
-alan update                                        # built-in self-updater (or --channel beta|stable)
+alan update                                        # built-in self-updater (`alan update channel beta|stable`)
 
 just install                                       # developer workflow: build & install from source
 just standalone-distribution-test                  # verify local source installer & archive contract

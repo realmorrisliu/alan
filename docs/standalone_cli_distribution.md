@@ -57,26 +57,28 @@ Installed binaries include built-in self-update over `latest.json` (`stable`)
 or `beta.json` (`beta`) and the same `.alan-cli-manifest` ownership contract:
 
 ```bash
-alan update --check             # check whether a newer release is available on the binary's channel
+alan update --check             # check whether a newer release is available on the selected channel
 alan update --check --json      # machine-readable status check
 alan update                     # download, verify SHA-256, and replace atomically
-alan update --channel beta      # switch from stable to rolling beta builds from main
-alan update --channel stable    # switch back from beta to stable releases
+alan update channel             # show persisted channel (`stable` or `beta`) and active binary
+alan update channel beta        # save `beta` preference (or `/settings` -> `Release Channel` in TUI)
+alan update channel stable      # save `stable` preference for the next `alan update`
+alan update --channel beta      # one-shot override to install rolling beta builds from main
+alan update --channel stable    # one-shot override to switch back from beta to stable releases
 alan update --version 0.1.0     # target a specific release (--force to downgrade)
 ```
 
 Channel and endpoint precedence is:
-`--manifest-url` > `ALAN_MANIFEST_URL` / `ALAN_RELEASE_MANIFEST_URL` > `--version` > `--channel` / `ALAN_CHANNEL` > compiled binary channel (`ALAN_RELEASE_CHANNEL`).
-Explicit `--channel <target>` allows switching back from `beta` (`0.1.6-beta.*`)
+`--manifest-url` > `ALAN_MANIFEST_URL` / `ALAN_RELEASE_MANIFEST_URL` > `--version` > `--channel` / `ALAN_CHANNEL` > persisted channel (`services/updater/channel.json`) > compiled binary channel (`ALAN_RELEASE_CHANNEL`).
+Selecting another channel via `alan update channel <target>` (or `/settings` -> `Release Channel`) or passing `--channel <target>` allows switching back from `beta` (`0.1.6-beta.*`)
 to `stable` (`0.1.5`) without passing `--version` + `--force`; same-channel
 downgrades remain refused unless both `--version` and `--force` are supplied.
 
 Interactive TUI launches also read a cached non-blocking 24-hour release check
-(`services/updater/last-check.json` inside the System Store) against the current
-binary's channel endpoint (`latest.json` or `beta.json`), invalidate the cache
-automatically if the binary channel changed, and surface a quiet notice
-(`Update available: ...` or `Beta update available: ...`) when a newer version is
-available. Set `ALAN_NO_UPDATE_CHECK=1` (or `CI=1`) to disable startup checks;
+(`services/updater/last-check.json` inside the System Store) against the selected
+target channel endpoint (`latest.json` or `beta.json`), invalidate the cache
+automatically if the target channel changes, and surface a quiet notice
+(`Update available: ...`, `Beta update available: ...`, or `Channel switch pending ...`) when action is available. Set `ALAN_NO_UPDATE_CHECK=1` (or `CI=1`) to disable startup checks;
 `--ephemeral` and piped/non-TTY runs skip checks automatically.
 
 ## Ownership and upgrade safety

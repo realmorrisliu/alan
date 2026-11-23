@@ -869,11 +869,9 @@ async fn passive_cache_refresh_writes_last_check_json_in_system_store() {
     assert_eq!(cached.tag, "v0.2.5");
     assert!(cache_path.is_file());
 
-    let (notice, needs_refresh) = alan::cli::update::passive_check::evaluate_cache_for_notice(
-        &cache_path,
-        "0.1.0",
-        chrono::Utc::now(),
-    );
+    use alan::cli::update::passive_check::evaluate_cache_for_notice_with_target as eval_notice;
+    let ch = alan::cli::update::current_binary_channel();
+    let (notice, needs_refresh) = eval_notice(&cache_path, "0.1.0", ch, ch, chrono::Utc::now());
     assert_eq!(
         notice.as_deref(),
         Some("Update available: v0.2.5 — run 'alan update'")

@@ -10,7 +10,7 @@ export default defineConfig({
       ASSETS: bindings.assets(),
     },
     assets: {
-      runWorkerFirst: ['/', '/install', '/install.sh', '/latest.json'],
+      runWorkerFirst: ['/', '/install', '/install.sh', '/latest.json', '/beta.json'],
     },
     domains: ['alanworks.app', 'www.alanworks.app'],
   },

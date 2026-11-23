@@ -27,6 +27,8 @@ pub enum SettingsResetScope {
 pub enum SettingsControl {
     /// Clear Alan stores according to `scope` and reload runtime connections.
     Reset { scope: SettingsResetScope },
+    /// Persist the preferred release channel (`"stable"` or `"beta"`) in System Store.
+    SetReleaseChannel { channel: String },
 }
 
 /// Result returned by [`SettingsControlHandler`].
@@ -38,6 +40,13 @@ pub enum SettingsResult {
         scope: SettingsResetScope,
         /// Number of top-level Alan store paths removed.
         removed_count: usize,
+    },
+    /// Preferred release channel was saved in System Store.
+    ReleaseChannelUpdated {
+        /// Normalized channel name (`"stable"` or `"beta"`).
+        channel: String,
+        /// Whether the selected channel matches the running binary's compiled channel.
+        matches_binary: bool,
     },
 }
 
