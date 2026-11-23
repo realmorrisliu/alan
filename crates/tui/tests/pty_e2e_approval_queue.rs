@@ -658,6 +658,33 @@ async fn run_child(log_dir: PathBuf) -> Result<()> {
                         )
                         .await;
                     }
+                    "bash-overflow" => {
+                        let options = serde_json::json!({
+                            "title": "Escalate tool call `bash`",
+                            "options": ["approve", "allow_session", "reject"],
+                            "default_option": "approve",
+                            "details": {
+                                "capability": "bash",
+                                "policy": { "reason": "Inspect overflow preview" },
+                                "presentation": ToolResultPresentation::Command {
+                                    cmdline: "head-marker-cmd\nmid-line-two\nmid-line-three\nmid-line-four\nmid-line-five\ntail-line-six".into(),
+                                    exit_code: None,
+                                    stdout: String::new(),
+                                    stderr: String::new(),
+                                    truncated: false,
+                                }
+                            }
+                        });
+                        let _ = emit_confirmation_and_wait_response(
+                            &io_shell,
+                            &io_transport,
+                            &io_owner,
+                            options,
+                            "Overflow test?",
+                            log_dir.join("overflow.json"),
+                        )
+                        .await;
+                    }
                     "follow up build check" => {
                         rev += 1;
                         let active = active_sub.clone().into_iter().collect();
@@ -892,6 +919,58 @@ fn pty_e2e_dumb_terminal_confirmation_and_queue_preview() -> Result<()> {
         Ok(())
     })();
 
+    let _ = std::fs::remove_dir_all(&log_dir);
+    res
+}
+
+#[test]
+fn pty_e2e_overflowing_confirmation_scrolls_in_80x10_terminal() -> Result<()> {
+    let log_dir = std::env::temp_dir().join(format!("alan-pty-overflow-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&log_dir);
+    std::fs::create_dir_all(&log_dir)?;
+    let (master, slave) = open_pty(10, 80)?;
+    let master_fd = std::os::fd::AsRawFd::as_raw_fd(&master);
+    let master_read = master.try_clone().context("clone master fd")?;
+    let master_write = Arc::new(Mutex::new(std::fs::File::from(master)));
+    let child = spawn_in_pty(
+        &slave,
+        master_fd,
+        "styled",
+        &[
+            (CHILD_LOG_ENV, log_dir.as_os_str()),
+            ("TERM", OsStr::new("xterm-256color")),
+        ],
+    )?;
+    drop(slave);
+    let mut child = ChildGuard::new(child);
+    let screen = PtyScreen::new(10, 80);
+    let _reader = spawn_master_reader(master_read, master_write.clone(), screen.clone());
+    let res = (|| -> Result<()> {
+        screen.wait_for("prompt ready", Duration::from_secs(5), |s| {
+            s.contains("gpt-5.4") && s.contains(": ")
+        })?;
+        write_master(&master_write, b"bash-overflow\r")?;
+        let clipped = screen.wait_for("80x10 overflow footer", Duration::from_secs(5), |s| {
+            s.contains("[1] approve (default)") && s.contains("PgUp/PgDn scroll")
+        })?;
+        assert!(!clipped.contains("$ head-marker-cmd"), "{clipped}");
+        write_master(&master_write, b"\x1b[5~\x1b[5~")?;
+        let top = screen.wait_for("PgUp reveals head", Duration::from_secs(3), |s| {
+            s.contains("Approval · Escalate tool call `bash`")
+                && s.contains("$ head-marker-cmd")
+                && s.contains("why: Inspect overflow preview")
+        })?;
+        assert!(top.contains("capability: bash"), "{top}");
+        write_master(&master_write, b"\x1b[6~\x1b[6~1")?;
+        screen.wait_for("settled overflow", Duration::from_secs(5), |s| {
+            s.contains("✓ Approved · bash: head-marker-cmd")
+        })?;
+        let resp = wait_for_json_file(&log_dir.join("overflow.json"), Duration::from_secs(3))?;
+        assert_eq!(resp["choice"], "approve");
+        write_master(&master_write, b"\x11")?;
+        assert!(child.wait_with_timeout(Duration::from_secs(5))?.success());
+        Ok(())
+    })();
     let _ = std::fs::remove_dir_all(&log_dir);
     res
 }

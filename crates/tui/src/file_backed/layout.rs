@@ -134,7 +134,8 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
     }
     let mut lines = history_lines(app, width);
     let history_height = wrapped_line_count(&lines, width);
-    let (mut live_lines, prompt_start) = live_region_lines_at(app, width, now_ms);
+    let (mut live_lines, prompt_start) =
+        live_region_lines_in(app, width, Some(area.height.max(1) as usize), now_ms);
     let menu_start = prompt_start.map(|start| start + app.composer_lines().len());
     let menu = menu_start
         .map(|start| live_lines.split_off(start))
@@ -161,12 +162,6 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
             &live_lines,
         )
     });
-    let conf_end_y = app
-        .confirmation
-        .as_ref()
-        .map(|_| history_height + wrapped_line_count(&live_lines, width));
-    lines.extend(live_lines);
-
     let overlay_active = app.form.is_some() || app.confirmation.is_some();
     // Menu growth never changes the base input viewport or its scroll offset.
     let base_height = base_region_height(app, width)
@@ -177,6 +172,14 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
                 .saturating_sub(u16::from(!overlay_active && area.height >= 3))
                 as usize,
         ) as u16;
+    let conf_scroll_y =
+        app.confirmation_scroll_y(&live_lines, history_height, width, base_height as usize);
+    let conf_end_y = app
+        .confirmation
+        .as_ref()
+        .map(|_| history_height + wrapped_line_count(&live_lines, width));
+    lines.extend(live_lines);
+
     let base_area = Rect::new(area.x, area.y, area.width, base_height);
     let cursor_position = prompt_start
         .map(|start| composer_cursor_position(app, width, start))
@@ -191,12 +194,7 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
                 .saturating_sub(base_height)
                 .min(y)
         })
-        .or_else(|| {
-            conf_end_y.map(|end| {
-                end.saturating_sub(base_height as usize)
-                    .min(u16::MAX as usize) as u16
-            })
-        })
+        .or(conf_scroll_y)
         .or_else(|| cursor_position.map(|(_, y)| y.saturating_add(1).saturating_sub(base_height)))
         .or_else(|| {
             // Forms have no composer cursor. Keep the focused field visible,
@@ -325,6 +323,20 @@ pub(super) fn live_region_lines_at(
     width: usize,
     now_ms: u64,
 ) -> (Vec<Line<'static>>, Option<usize>) {
+    live_region_lines_in(
+        app,
+        width,
+        Some(app.viewport_size.1.max(1) as usize),
+        now_ms,
+    )
+}
+
+fn live_region_lines_in(
+    app: &FileBackedApp,
+    width: usize,
+    viewport_height: Option<usize>,
+    now_ms: u64,
+) -> (Vec<Line<'static>>, Option<usize>) {
     let mut lines = Vec::new();
     // Keep the live composer visually separate from retained output. These
     // rows share the ordinary viewport budget, including cursor placement.
@@ -401,9 +413,8 @@ pub(super) fn live_region_lines_at(
             lines.push(Line::styled(text, style));
         }
         (lines, None)
-    } else if let Some(conf) = &app.confirmation {
-        let rendered = conf.render(app.theme, width, app.response_in_flight.is_some());
-        lines.extend(rendered.lines);
+    } else if let Some(conf_lines) = app.confirmation_live_lines(width, viewport_height) {
+        lines.extend(conf_lines);
         (lines, None)
     } else {
         if !app.login.is_entering_input() && app.project_selection.is_none() {

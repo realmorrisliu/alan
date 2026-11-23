@@ -474,16 +474,16 @@ fn confirmation_note_footer_and_idle_details_footer_respect_narrow_widths() {
     conf.enter_note_mode();
 
     for width in [46usize, 47, 48] {
-        let hint = conf.footer_hint(width, false);
+        let hint = conf.footer_hint(width, false, false);
         assert_eq!(hint, "Enter submit · Esc back", "width={width}");
         assert!(UnicodeWidthStr::width(hint.as_str()) <= width);
     }
-    let full = conf.footer_hint(49, false);
+    let full = conf.footer_hint(49, false, false);
     assert_eq!(full, "Enter submit rejection note · Esc back to options");
     assert!(UnicodeWidthStr::width(full.as_str()) <= 49);
 
     for width in [10usize, 20, 22] {
-        let hint = conf.footer_hint(width, false);
+        let hint = conf.footer_hint(width, false, false);
         assert!(
             UnicodeWidthStr::width(hint.as_str()) <= width,
             "{width}: {hint}"
@@ -518,4 +518,61 @@ fn rollout_switch_clears_confirmation_and_staged_outcome() {
     assert!(app.pending_yield.is_none());
     assert!(app.confirmation.is_none());
     assert!(app.staged_confirmation_outcome.is_none());
+}
+
+#[test]
+fn confirmation_overflow_scrolls_to_top_preview_and_snaps_back_on_selection() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.viewport_size = (80, 10);
+    let mut long_bash = bash_confirmation();
+    long_bash.presentation = Some(ToolResultPresentation::Command {
+        cmdline: "head-line-one\ncmd-line-two\ncmd-line-three\ncmd-line-four\ncmd-line-five\ntail-line-six".into(),
+        exit_code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+        truncated: false,
+    });
+    app.set_pending_yield(long_bash);
+
+    let initial = render_lines(&app, 80, 10).join("\n");
+    assert!(initial.contains("PgUp/PgDn scroll"), "{initial}");
+    assert!(initial.contains("[1] approve (default)"), "{initial}");
+    assert!(
+        !initial.contains("$ head-line-one"),
+        "top preview is initially clipped on 80x10: {initial}"
+    );
+
+    // PageUp / Home reveal clipped approval header, explanation, and command start.
+    assert!(
+        app.handle_key(key(KeyCode::PageUp, KeyModifiers::NONE))
+            .is_none()
+    );
+    let scrolled_mid = render_lines(&app, 80, 10).join("\n");
+    assert!(app.confirmation.as_ref().unwrap().scroll_from_bottom > 0);
+    assert!(
+        app.handle_key(key(KeyCode::Home, KeyModifiers::NONE))
+            .is_none()
+    );
+    let scrolled_top = render_lines(&app, 80, 10).join("\n");
+    assert!(
+        scrolled_top.contains("Approval · Escalate tool call `bash`"),
+        "{scrolled_top}"
+    );
+    assert!(scrolled_top.contains("$ head-line-one"), "{scrolled_top}");
+    assert!(
+        scrolled_top.contains("why: Runs tests outside sandbox"),
+        "{scrolled_top}"
+    );
+    assert_ne!(scrolled_mid, initial);
+    assert!(app.composer.text().is_empty());
+
+    // Selection navigation or PageDown/End returns cleanly to options and footer.
+    assert!(
+        app.handle_key(key(KeyCode::Down, KeyModifiers::NONE))
+            .is_none()
+    );
+    assert_eq!(app.confirmation.as_ref().unwrap().scroll_from_bottom, 0);
+    let snapped = render_lines(&app, 80, 10).join("\n");
+    assert!(snapped.contains("▶ [2] allow_session"), "{snapped}");
+    assert!(snapped.contains("PgUp/PgDn scroll"), "{snapped}");
 }

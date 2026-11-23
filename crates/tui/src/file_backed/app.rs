@@ -81,6 +81,7 @@ pub(super) struct FileBackedApp {
     pub(super) form: Option<FormState>,
     pub(super) confirmation: Option<super::confirmation::ConfirmationState>,
     pub(super) staged_confirmation_outcome: Option<super::confirmation::ConfirmationOutcomeDraft>,
+    pub(super) viewport_size: (u16, u16),
     pub(super) completion: Option<CompletionState>,
     pub(super) completion_sources: CompletionSources,
     pub(super) project_candidate: Option<std::path::PathBuf>,
@@ -180,6 +181,7 @@ impl FileBackedApp {
             form: None,
             confirmation: None,
             staged_confirmation_outcome: None,
+            viewport_size: (80, 24),
             completion: None,
             completion_sources: CompletionSources {
                 commands: default_commands(),
@@ -381,7 +383,10 @@ impl FileBackedApp {
                 }
                 None
             }
-            FileBackedEvent::Terminal(TerminalEvent::Resize(_, _)) => None,
+            FileBackedEvent::Terminal(TerminalEvent::Resize(cols, rows)) => {
+                self.viewport_size = (cols.max(1), rows.max(1));
+                None
+            }
             FileBackedEvent::Terminal(_) => None,
             FileBackedEvent::Output(text) => {
                 self.push_output(text);

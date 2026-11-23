@@ -813,6 +813,10 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     && let Some(active_terminal) = terminal.as_mut()
                 {
                     let (viewport_width, terminal_height) = active_terminal.viewport_size();
+                    app.viewport_size = (
+                        viewport_width.clamp(1, u16::MAX as usize) as u16,
+                        terminal_height.clamp(1, u16::MAX as usize) as u16,
+                    );
                     let committed = app.drain_committed_scrollback(viewport_width, terminal_height);
                     draw_result = active_terminal.draw_inline_frame(&committed, inline_viewport_height(
                         &app,

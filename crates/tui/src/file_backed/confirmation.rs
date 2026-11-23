@@ -37,6 +37,7 @@ pub(in crate::file_backed) struct ConfirmationState {
     pub editing_note: bool,
     pub note: String,
     pub note_cursor: usize,
+    pub scroll_from_bottom: usize,
     pub error: Option<String>,
 }
 
@@ -69,6 +70,7 @@ impl ConfirmationState {
             editing_note: false,
             note: String::new(),
             note_cursor: 0,
+            scroll_from_bottom: 0,
             error: None,
         }
     }
@@ -97,6 +99,7 @@ impl ConfirmationState {
         if total > 0 {
             self.selected = (self.selected + total - 1) % total;
         }
+        self.scroll_from_bottom = 0;
     }
 
     pub fn move_down(&mut self) {
@@ -104,6 +107,7 @@ impl ConfirmationState {
         if total > 0 {
             self.selected = (self.selected + 1) % total;
         }
+        self.scroll_from_bottom = 0;
     }
 
     pub fn enter_note_mode(&mut self) {
@@ -111,6 +115,7 @@ impl ConfirmationState {
             self.selected = self.pending.options.len();
             self.editing_note = true;
             self.note_cursor = self.note.len();
+            self.scroll_from_bottom = 0;
             self.error = None;
         }
     }
@@ -205,7 +210,7 @@ impl ConfirmationState {
         self.error = None;
     }
 
-    pub fn footer_hint(&self, width: usize, in_flight: bool) -> String {
+    pub fn footer_hint(&self, width: usize, in_flight: bool, scrollable: bool) -> String {
         if in_flight {
             return clamp_text_width("Sending response…", width);
         }
@@ -221,9 +226,15 @@ impl ConfirmationState {
             };
         }
         let total = self.total_items();
-        let full = format!("↑↓ / 1-{total} choose · Enter confirm · Esc cancel");
+        let full = if scrollable {
+            format!("↑↓ / 1-{total} choose · PgUp/PgDn scroll · Enter confirm · Esc cancel")
+        } else {
+            format!("↑↓ / 1-{total} choose · Enter confirm · Esc cancel")
+        };
         if UnicodeWidthStr::width(full.as_str()) <= width {
             full
+        } else if scrollable && width >= 32 {
+            format!("↑↓/1-{total} · PgUp/PgDn · Enter · Esc")
         } else if width >= 28 {
             format!("↑↓/1-{total} · Enter · Esc")
         } else {
@@ -232,6 +243,7 @@ impl ConfirmationState {
     }
 
     pub fn render(&self, theme: Theme, width: usize, in_flight: bool) -> ConfirmationRender {
+        let scrollable = false;
         let gutter = theme.gutter();
         let wait_gutter = theme.wait_style();
         let mut lines = Vec::new();
@@ -368,7 +380,7 @@ impl ConfirmationState {
             ));
         }
 
-        let hint = self.footer_hint(width, in_flight);
+        let hint = self.footer_hint(width, in_flight, scrollable);
         let hint_style = if in_flight {
             theme.wait_style()
         } else {
@@ -508,6 +520,67 @@ pub(in crate::file_backed) fn confirmation_summary(pending: &PendingYieldCell) -
 }
 
 impl FileBackedApp {
+    pub(in crate::file_backed) fn confirmation_live_lines(
+        &self,
+        width: usize,
+        viewport_height: Option<usize>,
+    ) -> Option<Vec<Line<'static>>> {
+        let conf = self.confirmation.as_ref()?;
+        let in_flight = self.response_in_flight.is_some();
+        let mut rendered = conf.render(self.theme, width, in_flight);
+        let scrollable = viewport_height.is_some_and(|h| {
+            h > 0 && crate::transcript_ui::wrapped_line_count(&rendered.lines, width) > h
+        });
+        if scrollable
+            && !conf.editing_note
+            && let Some(last) = rendered.lines.last_mut()
+        {
+            let hint_style = if in_flight {
+                self.theme.wait_style()
+            } else {
+                self.theme.muted_style()
+            };
+            *last = Line::styled(conf.footer_hint(width, in_flight, true), hint_style);
+        }
+        Some(rendered.lines)
+    }
+
+    pub(in crate::file_backed) fn confirmation_scroll_bounds(&self) -> (usize, usize) {
+        let Some(conf) = self.confirmation.as_ref() else {
+            return (0, 1);
+        };
+        let width = self.viewport_size.0.max(1) as usize;
+        let height = self.viewport_size.1.max(1) as usize;
+        let rendered = conf.render(self.theme, width, self.response_in_flight.is_some());
+        let conf_height = crate::transcript_ui::wrapped_line_count(&rendered.lines, width);
+        (conf_height.saturating_sub(height), (height / 2).max(1))
+    }
+
+    pub(in crate::file_backed) fn confirmation_scroll_y(
+        &self,
+        live_lines: &[Line<'static>],
+        history_height: usize,
+        width: usize,
+        base_height: usize,
+    ) -> Option<u16> {
+        let conf = self.confirmation.as_ref()?;
+        let conf_len = conf
+            .render(self.theme, width, self.response_in_flight.is_some())
+            .lines
+            .len();
+        let conf_start = live_lines.len().saturating_sub(conf_len);
+        let conf_top = history_height
+            + crate::transcript_ui::wrapped_line_count(&live_lines[..conf_start], width);
+        let conf_end = history_height + crate::transcript_ui::wrapped_line_count(live_lines, width);
+        let max_scroll = conf_end.saturating_sub(base_height);
+        let max_back = max_scroll.saturating_sub(conf_top);
+        Some(
+            max_scroll
+                .saturating_sub(conf.scroll_from_bottom.min(max_back))
+                .min(u16::MAX as usize) as u16,
+        )
+    }
+
     pub(in crate::file_backed) fn sync_confirmation(&mut self) {
         match &self.pending_yield {
             Some(pending)
@@ -545,6 +618,15 @@ impl FileBackedApp {
         &mut self,
         key: KeyEvent,
     ) -> Option<ConfirmationKeyResult> {
+        if self
+            .confirmation
+            .as_ref()
+            .is_some_and(|conf| !conf.editing_note)
+            && self.response_in_flight.is_none()
+            && self.handle_confirmation_scroll_key(key)
+        {
+            return Some(ConfirmationKeyResult::Swallowed);
+        }
         let conf = self.confirmation.as_mut()?;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
@@ -651,6 +733,42 @@ impl FileBackedApp {
             _ => {}
         }
         Some(ConfirmationKeyResult::Swallowed)
+    }
+
+    fn handle_confirmation_scroll_key(&mut self, key: KeyEvent) -> bool {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let delta: Option<isize> = match key.code {
+            KeyCode::PageUp => Some(1),
+            KeyCode::PageDown => Some(-1),
+            KeyCode::Char('b') if !ctrl && !alt => Some(1),
+            KeyCode::Char(' ') if !ctrl && !alt => Some(-1),
+            KeyCode::Char('u') if ctrl && !alt => Some(1),
+            KeyCode::Char('d') if ctrl && !alt => Some(-1),
+            KeyCode::Home if !ctrl && !alt => Some(isize::MAX),
+            KeyCode::End if !ctrl && !alt => Some(isize::MIN),
+            _ => None,
+        };
+        let Some(direction) = delta else {
+            return false;
+        };
+        let (max_scroll, page_step) = self.confirmation_scroll_bounds();
+        let Some(conf) = self.confirmation.as_mut() else {
+            return false;
+        };
+        conf.scroll_from_bottom = match direction {
+            isize::MAX => max_scroll,
+            isize::MIN => 0,
+            d if d > 0 => conf
+                .scroll_from_bottom
+                .saturating_add(page_step)
+                .min(max_scroll),
+            _ => conf
+                .scroll_from_bottom
+                .min(max_scroll)
+                .saturating_sub(page_step),
+        };
+        true
     }
 
     pub(in crate::file_backed) fn handle_confirmation_paste(&mut self, text: &str) -> bool {
