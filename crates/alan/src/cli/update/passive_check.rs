@@ -1,7 +1,10 @@
 //! Non-blocking 24-hour passive update check cached under Alan's System Store.
 
 use super::semver::{current_target_triple, display_tag, is_newer_version, parse_semver};
-use super::{ReleaseManifest, default_manifest_url};
+use super::{
+    ReleaseChannel, ReleaseManifest, current_binary_channel, default_channel,
+    default_manifest_url_for_channel, validate_manifest_metadata,
+};
 use alan_os_host::SystemStorePaths;
 use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Duration, Utc};
@@ -20,9 +23,12 @@ const MAX_CACHE_BYTES: u64 = 64 * 1024;
 pub struct LastCheckCache {
     /// RFC-3339 UTC timestamp when the remote manifest was last fetched.
     pub checked_at_rfc3339: String,
+    /// Release channel associated with this cached check (`"stable"` or `"beta"`).
+    #[serde(default = "default_channel")]
+    pub channel: String,
     /// Latest semantic version reported by the release manifest.
     pub latest_version: String,
-    /// Release tag associated with `latest_version` (e.g. `v0.1.1`).
+    /// Release tag associated with `latest_version` (e.g. `v0.1.1` or `beta`).
     pub tag: String,
     /// Optional web URL for the release notes page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,10 +84,25 @@ fn str_flag_is_truthy(value: Option<&str>) -> bool {
 }
 
 /// Read the cached `last-check.json` synchronously (`< 1ms`) and decide whether to show a notice
-/// and whether a background refresh is required (`missing`, `invalid`, or `>= 24h` old).
+/// and whether a background refresh is required (`missing`, `invalid`, channel mismatch, or `>= 24h` old).
 pub fn evaluate_cache_for_notice(
     cache_path: &Path,
     current_version: &str,
+    now: DateTime<Utc>,
+) -> (Option<String>, bool) {
+    evaluate_cache_for_notice_for_channel(
+        cache_path,
+        current_version,
+        current_binary_channel(),
+        now,
+    )
+}
+
+/// Pure channel-parameterized cache evaluator for deterministic unit and integration testing.
+pub fn evaluate_cache_for_notice_for_channel(
+    cache_path: &Path,
+    current_version: &str,
+    current_channel: ReleaseChannel,
     now: DateTime<Utc>,
 ) -> (Option<String>, bool) {
     let Ok(metadata) = std::fs::symlink_metadata(cache_path) else {
@@ -97,6 +118,9 @@ pub fn evaluate_cache_for_notice(
     let Ok(cache) = serde_json::from_slice::<LastCheckCache>(&bytes) else {
         return (None, true);
     };
+    if cache.channel != current_channel.as_str() {
+        return (None, true);
+    }
     let Ok(checked_at) = DateTime::parse_from_rfc3339(&cache.checked_at_rfc3339) else {
         return (None, true);
     };
@@ -111,7 +135,14 @@ pub fn evaluate_cache_for_notice(
     ) {
         (Ok(parsed), Ok(true)) => {
             let display = display_tag(&parsed.to_string());
-            Some(format!("Update available: {display} — run 'alan update'"))
+            Some(match current_channel {
+                ReleaseChannel::Stable => {
+                    format!("Update available: {display} — run 'alan update'")
+                }
+                ReleaseChannel::Beta => {
+                    format!("Beta update available: {display} — run 'alan update'")
+                }
+            })
         }
         _ => None,
     };
@@ -135,17 +166,30 @@ pub fn prepare_passive_tui_update_notice(
     }
 
     let cache_path = passive_check_cache_path(store).ok()?;
-    let current_version = env!("CARGO_PKG_VERSION");
+    let current_version = env!("ALAN_VERSION");
+    let current_channel = current_binary_channel();
     let (notice, needs_refresh) =
         evaluate_cache_for_notice(&cache_path, current_version, Utc::now());
 
     if needs_refresh && let Ok(handle) = tokio::runtime::Handle::try_current() {
-        let manifest_url = default_manifest_url();
+        let (manifest_url, overridden) = default_manifest_url_for_channel(current_channel);
         if let Ok(target_triple) = current_target_triple() {
             handle.spawn(async move {
                 let _ = tokio::time::timeout(
                     StdDuration::from_secs(PASSIVE_CHECK_TIMEOUT_SECS),
-                    refresh_passive_cache(&cache_path, &manifest_url, target_triple),
+                    async {
+                        if overridden {
+                            refresh_passive_cache(&cache_path, &manifest_url, target_triple).await
+                        } else {
+                            refresh_passive_cache_for_channel(
+                                &cache_path,
+                                &manifest_url,
+                                target_triple,
+                                Some(current_channel),
+                            )
+                            .await
+                        }
+                    },
                 )
                 .await;
             });
@@ -161,10 +205,20 @@ pub async fn refresh_passive_cache(
     manifest_url: &str,
     target_triple: &str,
 ) -> Result<LastCheckCache> {
+    refresh_passive_cache_for_channel(cache_path, manifest_url, target_triple, None).await
+}
+
+/// Fetch `manifest_url` with optional expected channel enforcement and atomically persist `last-check.json`.
+pub async fn refresh_passive_cache_for_channel(
+    cache_path: &Path,
+    manifest_url: &str,
+    target_triple: &str,
+    expected_channel: Option<ReleaseChannel>,
+) -> Result<LastCheckCache> {
     let client = reqwest::Client::builder()
         .timeout(StdDuration::from_secs(PASSIVE_CHECK_TIMEOUT_SECS))
         .connect_timeout(StdDuration::from_secs(PASSIVE_CHECK_TIMEOUT_SECS))
-        .user_agent(concat!("alan/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("alan/", env!("ALAN_VERSION")))
         .build()
         .context("build passive update HTTP client")?;
     let response = client
@@ -178,18 +232,15 @@ pub async fn refresh_passive_cache(
         .json()
         .await
         .context("parse passive release manifest JSON")?;
-    ensure!(
-        manifest.schema_version == 1 && manifest.product == "alan",
-        "unexpected passive release manifest schema or product"
-    );
-    let _ = parse_semver(&manifest.version)?;
-    ensure!(
+    let (_, manifest_channel) = validate_manifest_metadata(&manifest, None, expected_channel)?;
+    anyhow::ensure!(
         manifest.targets.contains_key(target_triple),
         "passive release manifest does not include `{target_triple}`"
     );
 
     let cache = LastCheckCache {
         checked_at_rfc3339: Utc::now().to_rfc3339(),
+        channel: manifest_channel.as_str().to_string(),
         latest_version: manifest.version,
         tag: manifest.tag,
         release_url: manifest.release_url,

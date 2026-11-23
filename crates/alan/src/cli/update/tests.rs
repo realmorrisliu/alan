@@ -4,8 +4,8 @@ use crate::cli::update::ownership::{
     InstallLock, atomic_install_binary, preflight_ownership, resolve_install_dir,
 };
 use crate::cli::update::passive_check::{
-    LastCheckCache, evaluate_cache_for_notice, passive_check_cache_path,
-    should_skip_passive_check_with,
+    LastCheckCache, evaluate_cache_for_notice, evaluate_cache_for_notice_for_channel,
+    passive_check_cache_path, should_skip_passive_check_with,
 };
 use crate::cli::update::semver::{is_newer_version, parse_semver, target_triple_for};
 use alan_os_host::SystemStorePaths;
@@ -112,9 +112,12 @@ fn manifest_url_resolution_precedence_works() {
         resolve_manifest_url_with(
             Some("https://mirror.example/latest.json"),
             Some("0.2.0"),
+            Some(ReleaseChannel::Beta),
             Some("https://env.example/latest.json"),
             Some("https://rel.example/latest.json"),
             None,
+            Some("beta"),
+            ReleaseChannel::Stable,
         )
         .unwrap(),
         "https://mirror.example/latest.json"
@@ -123,9 +126,12 @@ fn manifest_url_resolution_precedence_works() {
         resolve_manifest_url_with(
             None,
             None,
+            Some(ReleaseChannel::Beta),
             Some("http://127.0.0.1:9000/a.json"),
             Some("http://127.0.0.1:9000/b.json"),
             None,
+            Some("beta"),
+            ReleaseChannel::Stable,
         )
         .unwrap(),
         "http://127.0.0.1:9000/a.json"
@@ -134,16 +140,98 @@ fn manifest_url_resolution_precedence_works() {
         resolve_manifest_url_with(
             None,
             Some("0.3.0"),
+            Some(ReleaseChannel::Beta),
             None,
             None,
             Some("http://127.0.0.1:9000/releases/download/"),
+            Some("beta"),
+            ReleaseChannel::Stable,
         )
         .unwrap(),
         "http://127.0.0.1:9000/releases/download/v0.3.0/latest.json"
     );
     assert_eq!(
-        resolve_manifest_url_with(None, None, None, None, None).unwrap(),
+        resolve_manifest_url_with(
+            None,
+            None,
+            Some(ReleaseChannel::Beta),
+            None,
+            None,
+            None,
+            Some("stable"),
+            ReleaseChannel::Stable,
+        )
+        .unwrap(),
+        DEFAULT_BETA_MANIFEST_URL
+    );
+    assert_eq!(
+        resolve_manifest_url_with(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("beta"),
+            ReleaseChannel::Stable,
+        )
+        .unwrap(),
+        DEFAULT_BETA_MANIFEST_URL
+    );
+    assert_eq!(
+        resolve_manifest_url_with(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ReleaseChannel::Beta,
+        )
+        .unwrap(),
+        DEFAULT_BETA_MANIFEST_URL
+    );
+    assert_eq!(
+        resolve_manifest_url_with(
+            None,
+            None,
+            Some(ReleaseChannel::Stable),
+            None,
+            None,
+            None,
+            Some("beta"),
+            ReleaseChannel::Beta,
+        )
+        .unwrap(),
         DEFAULT_MANIFEST_URL
+    );
+    assert_eq!(
+        resolve_manifest_url_with(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(""),
+            ReleaseChannel::Stable,
+        )
+        .unwrap(),
+        DEFAULT_MANIFEST_URL
+    );
+    assert!(
+        resolve_manifest_url_with(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("nightly"),
+            ReleaseChannel::Stable,
+        )
+        .is_err()
     );
 }
 
@@ -364,6 +452,7 @@ fn passive_check_skip_conditions_and_24h_cache_evaluation_work() {
     std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
     let fresh = LastCheckCache {
         checked_at_rfc3339: (now - Duration::hours(2)).to_rfc3339(),
+        channel: "stable".to_string(),
         latest_version: "0.1.1".to_string(),
         tag: "v0.1.1".to_string(),
         release_url: Some("https://github.com/realmorrisliu/alan/releases/tag/v0.1.1".to_string()),
@@ -376,6 +465,11 @@ fn passive_check_skip_conditions_and_24h_cache_evaluation_work() {
             false
         )
     );
+    // Switching binary channel invalidates cache and suppresses stale-channel notice.
+    assert_eq!(
+        evaluate_cache_for_notice_for_channel(&cache_path, "0.1.0", ReleaseChannel::Beta, now),
+        (None, true)
+    );
     // Already on 0.1.1 -> no notice, no refresh.
     assert_eq!(
         evaluate_cache_for_notice(&cache_path, "0.1.1", now),
@@ -385,6 +479,7 @@ fn passive_check_skip_conditions_and_24h_cache_evaluation_work() {
     // >24h stale cache -> needs refresh.
     let stale = LastCheckCache {
         checked_at_rfc3339: (now - Duration::hours(25)).to_rfc3339(),
+        channel: "stable".to_string(),
         latest_version: "0.1.2".to_string(),
         tag: "v0.1.2".to_string(),
         release_url: None,
@@ -398,10 +493,102 @@ fn passive_check_skip_conditions_and_24h_cache_evaluation_work() {
         )
     );
 
+    // Beta cache formats Beta update notice and rejects mismatched stable binary.
+    let beta_fresh = LastCheckCache {
+        checked_at_rfc3339: (now - Duration::hours(1)).to_rfc3339(),
+        channel: "beta".to_string(),
+        latest_version: "0.1.6-beta.20261123.42".to_string(),
+        tag: "beta".to_string(),
+        release_url: Some("https://github.com/realmorrisliu/alan/releases/tag/beta".to_string()),
+    };
+    std::fs::write(&cache_path, serde_json::to_vec(&beta_fresh).unwrap()).unwrap();
+    assert_eq!(
+        evaluate_cache_for_notice_for_channel(
+            &cache_path,
+            "0.1.6-beta.20261123.41",
+            ReleaseChannel::Beta,
+            now
+        ),
+        (
+            Some("Beta update available: v0.1.6-beta.20261123.42 — run 'alan update'".to_string()),
+            false
+        )
+    );
+    assert_eq!(
+        evaluate_cache_for_notice_for_channel(&cache_path, "0.1.5", ReleaseChannel::Stable, now),
+        (None, true)
+    );
+
+    // Legacy cache JSON without `channel` defaults to `"stable"`.
+    std::fs::write(
+        &cache_path,
+        serde_json::json!({
+            "checked_at_rfc3339": (now - Duration::hours(1)).to_rfc3339(),
+            "latest_version": "0.1.3",
+            "tag": "v0.1.3"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        evaluate_cache_for_notice_for_channel(&cache_path, "0.1.0", ReleaseChannel::Stable, now),
+        (
+            Some("Update available: v0.1.3 — run 'alan update'".to_string()),
+            false
+        )
+    );
+    assert_eq!(
+        evaluate_cache_for_notice_for_channel(&cache_path, "0.1.0", ReleaseChannel::Beta, now),
+        (None, true)
+    );
+
     // Corrupt cache -> no notice, needs refresh.
     std::fs::write(&cache_path, b"{not-json").unwrap();
     assert_eq!(
         evaluate_cache_for_notice(&cache_path, "0.1.0", now),
         (None, true)
     );
+}
+
+#[test]
+fn beta_semver_ordering_and_manifest_validation_work() {
+    assert!(is_newer_version("0.1.5", "0.1.6-beta.20261123.1").unwrap());
+    assert!(is_newer_version("0.1.6-beta.20261123.1", "0.1.6-beta.20261123.2").unwrap());
+    assert!(is_newer_version("0.1.6-beta.20261123.2", "0.1.6-beta.20261123.10").unwrap());
+    assert!(is_newer_version("0.1.6-beta.20261123.10", "0.1.6").unwrap());
+
+    let mut manifest = ReleaseManifest {
+        schema_version: 1,
+        product: "alan".to_string(),
+        channel: "beta".to_string(),
+        version: "0.1.6-beta.20261123.42".to_string(),
+        tag: "beta".to_string(),
+        commit: Some("6c1dfd7".to_string()),
+        published_at: None,
+        release_url: None,
+        notes_url: None,
+        installer_url: None,
+        targets: BTreeMap::new(),
+    };
+
+    assert_eq!(
+        validate_manifest_metadata(&manifest, None, Some(ReleaseChannel::Beta))
+            .unwrap()
+            .1,
+        ReleaseChannel::Beta
+    );
+    assert!(validate_manifest_metadata(&manifest, None, Some(ReleaseChannel::Stable)).is_err());
+
+    manifest.tag = "v0.1.6-beta.20261123.42".to_string();
+    assert!(validate_manifest_metadata(&manifest, None, Some(ReleaseChannel::Beta)).is_ok());
+
+    manifest.tag = "v0.1.5".to_string();
+    assert!(validate_manifest_metadata(&manifest, None, None).is_err());
+
+    manifest.tag = "beta".to_string();
+    manifest.version = "0.1.6".to_string();
+    assert!(validate_manifest_metadata(&manifest, None, None).is_err());
+
+    manifest.channel = "nightly".to_string();
+    assert!(validate_manifest_metadata(&manifest, None, None).is_err());
 }

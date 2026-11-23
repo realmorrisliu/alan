@@ -15,7 +15,8 @@ use super::{
 #[command(
     name = "alan",
     about = "Alan — a programmable personal computing environment",
-    version
+    version = env!("ALAN_VERSION"),
+    long_version = env!("ALAN_LONG_VERSION")
 )]
 pub struct Cli {
     /// Restore the latest selected Root Agent rollout (or explicit rollout id) for this invocation.

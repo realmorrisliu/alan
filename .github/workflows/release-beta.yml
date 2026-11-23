@@ -1,0 +1,132 @@
+name: Release Beta
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "openspec/**"
+      - "website/**"
+      - "**.md"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run build, manifest, and checksum checks without publishing the rolling beta pre-release"
+        type: boolean
+        required: true
+        default: true
+      sign_macos:
+        description: "Sign and notarize macOS binaries during a dry-run (always required for published beta releases)"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-beta-main
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: Compute Beta Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      commit_sha: ${{ steps.meta.outputs.commit_sha }}
+      target_sha: ${{ steps.meta.outputs.target_sha }}
+      should_publish: ${{ steps.meta.outputs.should_publish }}
+      should_sign_macos: ${{ steps.meta.outputs.should_sign_macos }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Refresh git tags
+        run: git fetch --tags --force
+
+      - name: Resolve beta version and build metadata
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_SIGN_MACOS: ${{ inputs.sign_macos }}
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import tomllib
+
+          cargo = tomllib.loads(pathlib.Path("Cargo.toml").read_text(encoding="utf-8"))
+          pkg_version = cargo["workspace"]["package"]["version"].strip()
+          match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", pkg_version)
+          if not match:
+              raise SystemExit(
+                  f"Invalid Cargo.toml workspace.package.version for beta calculation: {pkg_version!r}"
+              )
+          major, minor, patch = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+          tag_probe = subprocess.run(
+              ["git", "rev-parse", "-q", "--verify", f"refs/tags/v{pkg_version}"],
+              capture_output=True,
+              text=True,
+          )
+          if tag_probe.returncode == 0:
+              base = f"{major}.{minor}.{patch + 1}"
+          else:
+              base = f"{major}.{minor}.{patch}"
+
+          yyyymmdd = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
+          run_number = os.environ["RUN_NUMBER"].strip()
+          if not run_number.isdigit() or int(run_number) <= 0:
+              raise SystemExit(f"Invalid github.run_number: {run_number!r}")
+          version = f"{base}-beta.{yyyymmdd}.{int(run_number)}"
+          tag = "beta"
+          target_sha = os.environ["GITHUB_SHA"].strip()
+          commit_sha = target_sha[:7]
+
+          event_name = os.environ["EVENT_NAME"]
+          if event_name == "push":
+              should_publish = True
+              should_sign_macos = True
+          elif event_name == "workflow_dispatch":
+              dry_run = os.environ.get("INPUT_DRY_RUN", "true").lower() == "true"
+              sign_macos_input = os.environ.get("INPUT_SIGN_MACOS", "false").lower() == "true"
+              should_publish = not dry_run
+              should_sign_macos = should_publish or sign_macos_input
+          else:
+              raise SystemExit(f"Unsupported trigger event: {event_name}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"version={version}\n")
+              fh.write(f"tag={tag}\n")
+              fh.write(f"commit_sha={commit_sha}\n")
+              fh.write(f"target_sha={target_sha}\n")
+              fh.write(f"should_publish={'true' if should_publish else 'false'}\n")
+              fh.write(f"should_sign_macos={'true' if should_sign_macos else 'false'}\n")
+          print(
+              f"Resolved beta release version={version} tag={tag} commit={commit_sha} "
+              f"should_publish={should_publish} should_sign_macos={should_sign_macos}"
+          )
+          PY
+
+  release:
+    needs: prepare
+    uses: ./.github/workflows/_release-build.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      tag: ${{ needs.prepare.outputs.tag }}
+      channel: beta
+      commit_sha: ${{ needs.prepare.outputs.commit_sha }}
+      target_sha: ${{ needs.prepare.outputs.target_sha }}
+      should_publish: ${{ needs.prepare.outputs.should_publish == 'true' }}
+      should_sign_macos: ${{ needs.prepare.outputs.should_sign_macos == 'true' }}

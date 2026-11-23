@@ -17,18 +17,21 @@ use progress::UpdateProgress;
 use semver::{SemVer, current_target_triple, display_tag, normalize_version_str, parse_semver};
 
 use anyhow::{Context, Result, bail, ensure};
-use clap::Args;
+use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::fmt;
 use std::io::{BufWriter, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub use passive_check::prepare_passive_tui_update_notice;
 
-/// Default canonical release metadata endpoint.
+/// Default canonical stable release metadata endpoint.
 pub const DEFAULT_MANIFEST_URL: &str = "https://alanworks.app/latest.json";
+/// Default canonical beta release metadata endpoint.
+pub const DEFAULT_BETA_MANIFEST_URL: &str = "https://alanworks.app/beta.json";
 /// Default tagged release download base URL when `--version` is requested without `--manifest-url`.
 pub const DEFAULT_RELEASE_BASE_URL: &str =
     "https://github.com/realmorrisliu/alan/releases/download";
@@ -36,6 +39,61 @@ const MANIFEST_FETCH_TIMEOUT_SECS: u64 = 15;
 const ARCHIVE_CONNECT_TIMEOUT_SECS: u64 = 30;
 const ARCHIVE_CHUNK_IDLE_TIMEOUT_SECS: u64 = 30;
 const ARCHIVE_MAX_TOTAL_TIMEOUT_SECS: u64 = 900;
+
+/// Supported release distribution channels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ReleaseChannel {
+    /// Tagged semantic releases published at `latest.json`.
+    Stable,
+    /// Rolling pre-release builds from `main` published at `beta.json`.
+    Beta,
+}
+
+impl ReleaseChannel {
+    /// Canonical lowercase channel identifier.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Beta => "beta",
+        }
+    }
+
+    /// Default manifest endpoint URL for this channel.
+    pub const fn default_manifest_url(self) -> &'static str {
+        match self {
+            Self::Stable => DEFAULT_MANIFEST_URL,
+            Self::Beta => DEFAULT_BETA_MANIFEST_URL,
+        }
+    }
+
+    /// Parse a strict lowercase channel identifier (`"stable"` or `"beta"`).
+    pub fn parse(raw: &str) -> Result<Self> {
+        match raw.trim() {
+            "stable" => Ok(Self::Stable),
+            "beta" => Ok(Self::Beta),
+            other => bail!("unknown release channel `{other}` (expected `stable` or `beta`)"),
+        }
+    }
+}
+
+impl fmt::Display for ReleaseChannel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Return the release channel compiled into the running `alan` binary.
+pub fn current_binary_channel() -> ReleaseChannel {
+    match env!("ALAN_RELEASE_CHANNEL") {
+        "stable" => ReleaseChannel::Stable,
+        "beta" => ReleaseChannel::Beta,
+        other => panic!("invalid compiled ALAN_RELEASE_CHANNEL `{other}`"),
+    }
+}
+
+pub(crate) fn default_channel() -> String {
+    "stable".to_string()
+}
 
 /// Arguments for `alan update`.
 #[derive(Debug, Clone, Args)]
@@ -49,13 +107,16 @@ pub struct UpdateArgs {
     /// Install or check a specific release version or tag (e.g. `0.1.0` or `v0.1.0`)
     #[arg(long, value_name = "VER_OR_TAG")]
     pub version: Option<String>,
+    /// Select release channel (`stable` or `beta`; defaults to the current binary's channel)
+    #[arg(long, value_enum)]
+    pub channel: Option<ReleaseChannel>,
     /// Allow overwriting unowned/modified binaries, reinstalling, or downgrading with `--version`
     #[arg(long)]
     pub force: bool,
     /// Override the installation directory instead of inspecting the current executable
     #[arg(long, value_name = "DIR")]
     pub install_dir: Option<PathBuf>,
-    /// Override the release manifest URL (`latest.json`)
+    /// Override the release manifest URL (`latest.json` or `beta.json`)
     #[arg(long, value_name = "URL")]
     pub manifest_url: Option<String>,
     /// Suppress routine human-readable status output
@@ -63,17 +124,23 @@ pub struct UpdateArgs {
     pub quiet: bool,
 }
 
-/// Release metadata schema published at `latest.json`.
+/// Release metadata schema published at `latest.json` and `beta.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReleaseManifest {
     /// Manifest format version (must be `1`).
     pub schema_version: u64,
     /// Product identifier (must be `"alan"`).
     pub product: String,
+    /// Release channel (`"stable"` or `"beta"`).
+    #[serde(default = "default_channel")]
+    pub channel: String,
     /// Semantic release version without `v` prefix.
     pub version: String,
-    /// Git release tag (e.g. `v0.1.0`).
+    /// Git release tag (e.g. `v0.1.0` or `beta`).
     pub tag: String,
+    /// Optional short Git commit SHA for the release build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
     /// RFC-3339 release timestamp, if supplied.
     #[serde(default)]
     pub published_at: Option<String>,
@@ -114,8 +181,13 @@ pub struct TargetArtifact {
 /// Structured status output emitted for `alan update --json` and internal inspection.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UpdateReport {
-    /// Outcome status: `update_available`, `up_to_date`, `updated`, or `downgrade_selected`.
+    /// Outcome status: `update_available`, `up_to_date`, `updated`, `downgrade_selected`, or `channel_switch`.
     pub status: String,
+    /// Target release channel (`"stable"` or `"beta"`).
+    pub channel: String,
+    /// Running binary channel before switching, when switching between channels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_channel: Option<String>,
     /// Running version before update.
     pub current_version: String,
     /// Version described by the resolved release manifest.
@@ -177,7 +249,7 @@ pub async fn run(args: UpdateArgs) -> Result<()> {
 
     let report = run_with_options(
         args,
-        env!("CARGO_PKG_VERSION"),
+        env!("ALAN_VERSION"),
         target_triple,
         current_exe.as_deref(),
         home_dir.as_deref(),
@@ -192,45 +264,46 @@ pub async fn run(args: UpdateArgs) -> Result<()> {
     Ok(())
 }
 
-/// Resolve the default release manifest URL, honoring `ALAN_MANIFEST_URL` and
-/// `ALAN_RELEASE_MANIFEST_URL`.
-pub(crate) fn default_manifest_url() -> String {
+/// Resolve the default release manifest URL for `channel`, honoring `ALAN_MANIFEST_URL` and
+/// `ALAN_RELEASE_MANIFEST_URL`. Returns `(url, overridden)`.
+pub(crate) fn default_manifest_url_for_channel(channel: ReleaseChannel) -> (String, bool) {
     for env_key in ["ALAN_MANIFEST_URL", "ALAN_RELEASE_MANIFEST_URL"] {
         if let Ok(value) = std::env::var(env_key) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
-                return trimmed.to_string();
+                return (trimmed.to_string(), true);
             }
         }
     }
-    DEFAULT_MANIFEST_URL.to_string()
+    (channel.default_manifest_url().to_string(), false)
 }
 
-/// Resolve the manifest URL for an explicit invocation of `alan update`.
-pub fn resolve_manifest_url(
-    explicit_url: Option<&str>,
-    requested_version: Option<&str>,
-) -> Result<String> {
-    let manifest_env = std::env::var("ALAN_MANIFEST_URL").ok();
-    let release_manifest_env = std::env::var("ALAN_RELEASE_MANIFEST_URL").ok();
-    let release_base_env = std::env::var("ALAN_RELEASE_BASE_URL").ok();
-    resolve_manifest_url_with(
-        explicit_url,
-        requested_version,
-        manifest_env.as_deref(),
-        release_manifest_env.as_deref(),
-        release_base_env.as_deref(),
-    )
+/// Parse an optional `ALAN_CHANNEL` environment value, treating empty as unset and rejecting
+/// unknown values.
+pub fn parse_channel_env(raw: Option<&str>) -> Result<Option<ReleaseChannel>> {
+    let Some(trimmed) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    ReleaseChannel::parse(trimmed).map(Some)
 }
 
 /// Pure manifest URL resolver taking explicit environment values for deterministic testing.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "pure test helper accepts explicit env inputs for deterministic resolution"
+)]
 pub fn resolve_manifest_url_with(
     explicit_url: Option<&str>,
     requested_version: Option<&str>,
+    requested_channel: Option<ReleaseChannel>,
     manifest_env: Option<&str>,
     release_manifest_env: Option<&str>,
     release_base_env: Option<&str>,
+    channel_env: Option<&str>,
+    current_channel: ReleaseChannel,
 ) -> Result<String> {
+    let parsed_channel_env = parse_channel_env(channel_env)?;
+
     if let Some(url) = explicit_url {
         let trimmed = url.trim();
         ensure!(!trimmed.is_empty(), "`--manifest-url` cannot be empty");
@@ -259,7 +332,10 @@ pub fn resolve_manifest_url_with(
         return Ok(format!("{}/{tag}/latest.json", base.trim_end_matches('/')));
     }
 
-    Ok(DEFAULT_MANIFEST_URL.to_string())
+    let effective_channel = requested_channel
+        .or(parsed_channel_env)
+        .unwrap_or(current_channel);
+    Ok(effective_channel.default_manifest_url().to_string())
 }
 
 fn validate_http_url(label: &str, url: &str) -> Result<()> {
@@ -278,6 +354,42 @@ pub async fn run_with_options(
     current_exe: Option<&Path>,
     home_dir: Option<&Path>,
 ) -> Result<UpdateReport> {
+    let manifest_env = std::env::var("ALAN_MANIFEST_URL").ok();
+    let release_manifest_env = std::env::var("ALAN_RELEASE_MANIFEST_URL").ok();
+    let release_base_env = std::env::var("ALAN_RELEASE_BASE_URL").ok();
+    let channel_env = std::env::var("ALAN_CHANNEL").ok();
+    run_with_options_and_env(
+        args,
+        current_version,
+        current_binary_channel(),
+        target_triple,
+        current_exe,
+        home_dir,
+        manifest_env.as_deref(),
+        release_manifest_env.as_deref(),
+        release_base_env.as_deref(),
+        channel_env.as_deref(),
+    )
+    .await
+}
+
+/// Pure testable implementation of `alan update` accepting explicit channel and environment inputs.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "pure test helper accepts explicit channel and env inputs for deterministic testing"
+)]
+pub async fn run_with_options_and_env(
+    args: UpdateArgs,
+    current_version: &str,
+    current_channel: ReleaseChannel,
+    target_triple: &str,
+    current_exe: Option<&Path>,
+    home_dir: Option<&Path>,
+    manifest_env: Option<&str>,
+    release_manifest_env: Option<&str>,
+    release_base_env: Option<&str>,
+    channel_env: Option<&str>,
+) -> Result<UpdateReport> {
     let current_ver = parse_semver(current_version)
         .with_context(|| format!("invalid current binary version `{current_version}`"))?;
     let requested_ver = args
@@ -286,10 +398,41 @@ pub async fn run_with_options(
         .map(parse_semver)
         .transpose()
         .context("invalid `--version` value")?;
+    let parsed_channel_env = parse_channel_env(channel_env)?;
 
     let install_dir = resolve_install_dir(args.install_dir.as_deref(), current_exe, home_dir)?;
     let installed_binary = install_dir.join("alan");
-    let manifest_url = resolve_manifest_url(args.manifest_url.as_deref(), args.version.as_deref())?;
+    let manifest_url = resolve_manifest_url_with(
+        args.manifest_url.as_deref(),
+        args.version.as_deref(),
+        args.channel,
+        manifest_env,
+        release_manifest_env,
+        release_base_env,
+        channel_env,
+        current_channel,
+    )?;
+
+    let explicit_channel_arg = args.channel;
+    let selected_channel = explicit_channel_arg.or(parsed_channel_env);
+    let has_url_override = args
+        .manifest_url
+        .as_deref()
+        .is_some_and(|v| !v.trim().is_empty())
+        || [manifest_env, release_manifest_env]
+            .into_iter()
+            .flatten()
+            .any(|v| !v.trim().is_empty());
+    let expected_channel = if args.version.is_some() && explicit_channel_arg.is_none() {
+        None
+    } else if let Some(explicit) = explicit_channel_arg {
+        Some(explicit)
+    } else if has_url_override {
+        None
+    } else {
+        Some(selected_channel.unwrap_or(current_channel))
+    };
+
     let mut progress = UpdateProgress::new(!args.json && !args.quiet);
 
     let client = reqwest::Client::builder()
@@ -303,8 +446,10 @@ pub async fn run_with_options(
         &manifest_url,
         target_triple,
         requested_ver.as_ref(),
+        expected_channel,
     )
     .await?;
+    let manifest_channel = ReleaseChannel::parse(&manifest.channel)?;
     let target_artifact = manifest
         .targets
         .get(target_triple)
@@ -314,7 +459,13 @@ pub async fn run_with_options(
     let is_same = target_ver == current_ver;
     let is_older = target_ver < current_ver;
 
-    if is_older && !(args.version.is_some() && args.force) {
+    let is_channel_switch = selected_channel == Some(manifest_channel)
+        && manifest_channel != current_channel
+        && !(args.version.is_some() && explicit_channel_arg.is_none());
+    let previous_channel =
+        (manifest_channel != current_channel).then(|| current_channel.as_str().to_string());
+
+    if is_older && !is_channel_switch && !(args.version.is_some() && args.force) {
         bail!(
             "refusing to downgrade `alan` from `{current_version}` to `{}` (pass both `--version {}` and `--force` to allow downgrade)",
             manifest.version,
@@ -332,6 +483,8 @@ pub async fn run_with_options(
     if args.check {
         let status = if is_newer {
             "update_available"
+        } else if is_channel_switch {
+            "channel_switch"
         } else if is_same {
             "up_to_date"
         } else {
@@ -340,6 +493,8 @@ pub async fn run_with_options(
         let existing_sha = existing_regular_file_sha256(&installed_binary);
         return Ok(UpdateReport {
             status: status.to_string(),
+            channel: manifest_channel.as_str().to_string(),
+            previous_channel,
             current_version: current_version.to_string(),
             target_version: manifest.version,
             tag: manifest.tag,
@@ -363,10 +518,12 @@ pub async fn run_with_options(
         });
     }
 
-    if is_same && !args.force {
+    if is_same && !is_channel_switch && !args.force {
         let existing_sha = existing_regular_file_sha256(&installed_binary);
         return Ok(UpdateReport {
             status: "up_to_date".to_string(),
+            channel: manifest_channel.as_str().to_string(),
+            previous_channel: None,
             current_version: current_version.to_string(),
             target_version: manifest.version,
             tag: manifest.tag,
@@ -418,6 +575,8 @@ pub async fn run_with_options(
 
     Ok(UpdateReport {
         status: "updated".to_string(),
+        channel: manifest_channel.as_str().to_string(),
+        previous_channel,
         current_version: current_version.to_string(),
         target_version: manifest.version,
         tag: manifest.tag,
@@ -441,11 +600,86 @@ pub async fn run_with_options(
     })
 }
 
+pub(crate) fn validate_manifest_metadata(
+    manifest: &ReleaseManifest,
+    requested_ver: Option<&SemVer>,
+    expected_channel: Option<ReleaseChannel>,
+) -> Result<(SemVer, ReleaseChannel)> {
+    ensure!(
+        manifest.schema_version == 1,
+        "unsupported release manifest schema_version `{}` (expected 1)",
+        manifest.schema_version
+    );
+    ensure!(
+        manifest.product == "alan",
+        "unexpected release manifest product `{}` (expected `alan`)",
+        manifest.product
+    );
+    let manifest_channel = ReleaseChannel::parse(&manifest.channel)
+        .with_context(|| format!("invalid release manifest channel `{}`", manifest.channel))?;
+    if let Some(expected) = expected_channel {
+        ensure!(
+            manifest_channel == expected,
+            "release manifest channel `{}` does not match expected channel `{}`",
+            manifest_channel.as_str(),
+            expected.as_str()
+        );
+    }
+
+    let manifest_ver = parse_semver(&manifest.version)
+        .with_context(|| format!("invalid manifest version `{}`", manifest.version))?;
+    ensure!(
+        !manifest.tag.trim().is_empty(),
+        "release manifest `tag` cannot be empty"
+    );
+
+    match manifest_channel {
+        ReleaseChannel::Stable => {
+            let tag_ver = parse_semver(&manifest.tag)
+                .with_context(|| format!("invalid manifest tag `{}`", manifest.tag))?;
+            ensure!(
+                tag_ver == manifest_ver,
+                "release manifest tag `{}` does not match version `{}`",
+                manifest.tag,
+                manifest.version
+            );
+        }
+        ReleaseChannel::Beta => {
+            ensure!(
+                !manifest_ver.pre.is_empty(),
+                "beta release manifest version `{}` must include a pre-release identifier",
+                manifest.version
+            );
+            if manifest.tag.trim() != "beta" {
+                let tag_ver = parse_semver(&manifest.tag)
+                    .with_context(|| format!("invalid beta manifest tag `{}`", manifest.tag))?;
+                ensure!(
+                    tag_ver == manifest_ver,
+                    "beta release manifest tag `{}` does not match version `{}`",
+                    manifest.tag,
+                    manifest.version
+                );
+            }
+        }
+    }
+
+    if let Some(req) = requested_ver {
+        ensure!(
+            &manifest_ver == req,
+            "requested version `{req}` does not match release manifest version `{}`",
+            manifest.version
+        );
+    }
+
+    Ok((manifest_ver, manifest_channel))
+}
+
 async fn fetch_and_validate_manifest(
     client: &reqwest::Client,
     manifest_url: &str,
     target_triple: &str,
     requested_ver: Option<&SemVer>,
+    expected_channel: Option<ReleaseChannel>,
 ) -> Result<ReleaseManifest> {
     let response = client
         .get(manifest_url)
@@ -460,38 +694,7 @@ async fn fetch_and_validate_manifest(
         .await
         .with_context(|| format!("parse release manifest JSON from `{manifest_url}`"))?;
 
-    ensure!(
-        manifest.schema_version == 1,
-        "unsupported release manifest schema_version `{}` (expected 1)",
-        manifest.schema_version
-    );
-    ensure!(
-        manifest.product == "alan",
-        "unexpected release manifest product `{}` (expected `alan`)",
-        manifest.product
-    );
-    let manifest_ver = parse_semver(&manifest.version)
-        .with_context(|| format!("invalid manifest version `{}`", manifest.version))?;
-    ensure!(
-        !manifest.tag.trim().is_empty(),
-        "release manifest `tag` cannot be empty"
-    );
-    let tag_ver = parse_semver(&manifest.tag)
-        .with_context(|| format!("invalid manifest tag `{}`", manifest.tag))?;
-    ensure!(
-        tag_ver == manifest_ver,
-        "release manifest tag `{}` does not match version `{}`",
-        manifest.tag,
-        manifest.version
-    );
-
-    if let Some(req) = requested_ver {
-        ensure!(
-            &manifest_ver == req,
-            "requested version `{req}` does not match release manifest version `{}`",
-            manifest.version
-        );
-    }
+    validate_manifest_metadata(&manifest, requested_ver, expected_channel)?;
 
     let artifact = manifest.targets.get(target_triple).with_context(|| {
         let available = manifest
@@ -633,13 +836,41 @@ fn existing_regular_file_sha256(path: &Path) -> Option<String> {
 fn print_human_report(report: &UpdateReport) {
     if report.checked_only {
         if report.update_available {
+            if let Some(prev) = &report.previous_channel {
+                println!(
+                    "Update available (channel switch {prev} -> {}): {} -> {} ({})",
+                    report.channel,
+                    display_tag(&report.current_version),
+                    display_tag(&report.target_version),
+                    report.target
+                );
+                println!(
+                    "Run `alan update --channel {}` to install into {}.",
+                    report.channel, report.install_dir
+                );
+            } else {
+                println!(
+                    "Update available ({} channel): {} -> {} ({})",
+                    report.channel,
+                    display_tag(&report.current_version),
+                    display_tag(&report.target_version),
+                    report.target
+                );
+                println!("Run `alan update` to install into {}.", report.install_dir);
+            }
+        } else if report.status == "channel_switch" {
+            let prev = report.previous_channel.as_deref().unwrap_or("current");
             println!(
-                "Update available: {} -> {} ({})",
+                "Channel switch available ({prev} -> {}): {} -> {} ({})",
+                report.channel,
                 display_tag(&report.current_version),
                 display_tag(&report.target_version),
                 report.target
             );
-            println!("Run `alan update` to install into {}.", report.install_dir);
+            println!(
+                "Run `alan update --channel {}` to install into {}.",
+                report.channel, report.install_dir
+            );
         } else if report.status == "downgrade_selected" {
             println!(
                 "Selected version {} is older than installed {}.",
@@ -648,8 +879,9 @@ fn print_human_report(report: &UpdateReport) {
             );
         } else {
             println!(
-                "alan is up to date ({}).",
-                display_tag(&report.current_version)
+                "alan is up to date ({}, {} channel).",
+                display_tag(&report.current_version),
+                report.channel
             );
         }
         return;
@@ -657,19 +889,32 @@ fn print_human_report(report: &UpdateReport) {
 
     if !report.updated {
         println!(
-            "alan is already up to date ({}).",
-            display_tag(&report.current_version)
+            "alan is already up to date ({}, {} channel).",
+            display_tag(&report.current_version),
+            report.channel
         );
         return;
     }
 
-    println!(
-        "Updated alan {} -> {} ({}) at {}.",
-        display_tag(&report.current_version),
-        display_tag(&report.target_version),
-        report.target,
-        report.installed_binary
-    );
+    if let Some(prev) = &report.previous_channel {
+        println!(
+            "Updated alan {} -> {} ({}, switched {prev} -> {} channel) at {}.",
+            display_tag(&report.current_version),
+            display_tag(&report.target_version),
+            report.target,
+            report.channel,
+            report.installed_binary
+        );
+    } else {
+        println!(
+            "Updated alan {} -> {} ({}, {} channel) at {}.",
+            display_tag(&report.current_version),
+            display_tag(&report.target_version),
+            report.target,
+            report.channel,
+            report.installed_binary
+        );
+    }
     if !report.retired_legacy.is_empty() {
         println!(
             "Retired legacy installation files: {}.",
