@@ -457,10 +457,14 @@ case "$all_args" in
     printf 'HTTP/1.1 200 OK\r\n\r\n[]'
     ;;
   *"repos/acme/alan/issues?"*)
+    if [[ "$all_args" != *"state=open"* ]]; then
+      echo "expected state=open for issues listing: $all_args" >&2
+      exit 1
+    fi
     if [[ "$all_args" == *"page=2"* ]]; then
       printf 'HTTP/1.1 200 OK\r\n\r\n[{"number":31,"title":"Issue 31","user":{"login":"morris"},"state":"open","labels":[],"updated_at":"2026-11-22T01:00:00Z","body":"b","html_url":"https://github.com/acme/alan/issues/31"}]'
     else
-      printf 'HTTP/1.1 200 OK\r\nLink: <repos/acme/alan/issues?state=all&per_page=100&page=2>; rel="next"\r\n\r\n[{"number":1,"title":"Issue 1","user":{"login":"morris"},"state":"open","labels":[],"updated_at":"2026-11-22T01:00:00Z","body":"b","html_url":"https://github.com/acme/alan/issues/1"}]'
+      printf 'HTTP/1.1 200 OK\r\nLink: <repos/acme/alan/issues?state=open&per_page=100&page=2>; rel="next"\r\n\r\n[{"number":1,"title":"Issue 1","user":{"login":"morris"},"state":"open","labels":[],"updated_at":"2026-11-22T01:00:00Z","body":"b","html_url":"https://github.com/acme/alan/issues/1"}]'
     fi
     ;;
   *"repos/acme/alan/pulls/30/reviews"*)
@@ -474,10 +478,14 @@ case "$all_args" in
     printf 'HTTP/1.1 200 OK\r\n\r\n{"number":30,"title":"Multi-page","user":{"login":"morris"},"state":"open","draft":false,"mergeable":true,"head":{"ref":"fix","sha":"sha-multi"},"base":{"ref":"main"},"updated_at":"2026-11-22T01:00:00Z","html_url":"https://github.com/acme/alan/pull/30"}'
     ;;
   *"repos/acme/alan/pulls?"*)
+    if [[ "$all_args" != *"state=open"* ]]; then
+      echo "expected state=open for pulls listing: $all_args" >&2
+      exit 1
+    fi
     if [[ "$all_args" == *"page=2"* ]]; then
       printf 'HTTP/1.1 200 OK\r\n\r\n[{"number":32,"title":"PR 32","user":{"login":"morris"},"state":"open","draft":false,"mergeable":true,"head":{"ref":"fix-32","sha":"sha-32"},"base":{"ref":"main"},"updated_at":"2026-11-22T01:00:00Z","html_url":"https://github.com/acme/alan/pull/32"}]'
     else
-      printf 'HTTP/1.1 200 OK\r\nLink: <repos/acme/alan/pulls?state=all&per_page=100&page=2>; rel="next"\r\n\r\n[{"number":30,"title":"Multi-page","user":{"login":"morris"},"state":"open","draft":false,"mergeable":true,"head":{"ref":"fix","sha":"sha-multi"},"base":{"ref":"main"},"updated_at":"2026-11-22T01:00:00Z","html_url":"https://github.com/acme/alan/pull/30"}]'
+      printf 'HTTP/1.1 200 OK\r\nLink: <repos/acme/alan/pulls?state=open&per_page=100&page=2>; rel="next"\r\n\r\n[{"number":30,"title":"Multi-page","user":{"login":"morris"},"state":"open","draft":false,"mergeable":true,"head":{"ref":"fix","sha":"sha-multi"},"base":{"ref":"main"},"updated_at":"2026-11-22T01:00:00Z","html_url":"https://github.com/acme/alan/pull/30"}]'
     fi
     ;;
   *"repos/acme/alan/commits/sha-multi/check-runs"*)
@@ -732,4 +740,99 @@ esac
         DispatchOutcome::DispatchedWorker { event_id, .. }
             if event_id == "ev-human-sync"
     ));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gh_cli_caches_host_token_and_invalidates_once_on_unauthorized() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let gh_script = dir.path().join("gh");
+    let token_count_file = dir.path().join("token_calls.log");
+    let token_phase_file = dir.path().join("token_phase.txt");
+    std::fs::write(&token_phase_file, "v1").unwrap();
+
+    let script = format!(
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${{1:-}}" == "auth" && "${{2:-}}" == "token" ]]; then
+  echo "1" >> "{count_file}"
+  if [[ "$(cat "{phase_file}")" == "v1" ]]; then
+    echo "ghp_cached_token_v1"
+  else
+    echo "ghp_cached_token_v2"
+  fi
+  exit 0
+fi
+phase="$(cat "{phase_file}")"
+if [[ "$phase" == "v1" && "${{GH_TOKEN:-}}" != "ghp_cached_token_v1" ]]; then
+  printf 'HTTP/1.1 401 Unauthorized\r\n\r\n{{"message":"Bad credentials"}}'
+  exit 0
+fi
+if [[ "$phase" == "v2" && "${{GH_TOKEN:-}}" != "ghp_cached_token_v2" ]]; then
+  printf 'HTTP/1.1 401 Unauthorized\r\n\r\n{{"message":"Bad credentials"}}'
+  exit 0
+fi
+all_args="$*"
+case "$all_args" in
+  *"repos/acme/alan/events"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n[]'
+    ;;
+  *"repos/acme/alan/issues?"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n[{{"number":7}}]'
+    ;;
+  *"repos/acme/alan/pulls?"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n[{{"number":9}}]'
+    ;;
+  *)
+    echo "unexpected args: $all_args" >&2
+    exit 1
+    ;;
+esac
+"#,
+        count_file = token_count_file.display(),
+        phase_file = token_phase_file.display(),
+    );
+    std::fs::write(&gh_script, script).unwrap();
+    let mut perms = std::fs::metadata(&gh_script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gh_script, perms).unwrap();
+
+    let backend = GhCliGithubBackend::with_binary(&gh_script);
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+
+    // Multiple API calls (including concurrent sync_repo issues+pulls) invoke `gh auth token` only ONCE.
+    assert!(matches!(
+        backend.sync_repo(&slug, None).await.unwrap(),
+        SyncRepoOutcome::Updated(_)
+    ));
+    assert_eq!(backend.list_issue_numbers(&slug).await.unwrap(), vec![7]);
+    assert_eq!(backend.list_pull_numbers(&slug).await.unwrap(), vec![9]);
+    let token_calls_1 = std::fs::read_to_string(&token_count_file)
+        .unwrap()
+        .lines()
+        .count();
+    assert_eq!(token_calls_1, 1);
+
+    let debug_text = format!("{backend:?}");
+    assert!(!debug_text.contains("ghp_cached_token_v1"), "{debug_text}");
+    assert!(debug_text.contains("[REDACTED]"), "{debug_text}");
+
+    // Rotating token causes cached v1 to get 401, invalidate, re-fetch v2 once, and succeed.
+    std::fs::write(&token_phase_file, "v2").unwrap();
+    assert_eq!(backend.list_issue_numbers(&slug).await.unwrap(), vec![7]);
+    let token_calls_2 = std::fs::read_to_string(&token_count_file)
+        .unwrap()
+        .lines()
+        .count();
+    assert_eq!(token_calls_2, 2);
+
+    // Subsequent calls reuse cached v2 without spawning `gh auth token` again.
+    assert_eq!(backend.list_pull_numbers(&slug).await.unwrap(), vec![9]);
+    let token_calls_3 = std::fs::read_to_string(&token_count_file)
+        .unwrap()
+        .lines()
+        .count();
+    assert_eq!(token_calls_3, 2);
 }
