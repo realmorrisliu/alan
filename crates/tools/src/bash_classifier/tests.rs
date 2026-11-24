@@ -552,3 +552,29 @@ fn test_classify_project_local_dev_build_format_and_git_commands() {
         assert_ne!(classify_bash_command(cmd), ToolCapability::Read, "{cmd}");
     }
 }
+
+#[test]
+fn test_classify_bash_command_gh_network_and_local_queries() {
+    use alan_agent_protocol::ToolCapability;
+    for cmd in [
+        "gh issue list",
+        "gh pr view",
+        "gh pr view 123",
+        "/opt/homebrew/bin/gh api repos/realmorrisliu/alan",
+        "GH_TOKEN=tok /opt/homebrew/bin/gh issue list",
+    ] {
+        assert_eq!(classify_bash_command(cmd), ToolCapability::Network, "{cmd}");
+    }
+
+    for cmd in [
+        "gh",
+        "gh --version",
+        "gh -v",
+        "gh version",
+        "gh help",
+        "gh --help",
+        "gh -h",
+    ] {
+        assert_ne!(classify_bash_command(cmd), ToolCapability::Network, "{cmd}");
+    }
+}

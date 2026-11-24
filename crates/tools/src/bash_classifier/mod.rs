@@ -85,6 +85,11 @@ fn is_network_command(fragment: &str, tokens: &[&str]) -> bool {
 
     let pair = tokens.get(1).copied().unwrap_or_default();
     if (head == "git" && is_git_network_command(tokens))
+        || (head == "gh"
+            && !matches!(
+                pair,
+                "" | "--version" | "-v" | "version" | "help" | "--help" | "-h"
+            ))
         || (head == "docker" && pair == "pull")
         || (head == "npm" && pair == "install")
         || (head == "pnpm" && pair == "add")

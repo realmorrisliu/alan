@@ -348,3 +348,271 @@ time.sleep(30)
         assert!(srvfs.lookup("fail-sock").await.is_none());
     }
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn github_fileserver_injects_host_gh_token_and_falls_back_gracefully() {
+    use crate::{CLI_IMPORT_MOUNT_PATH, run_q_command_with_package_service};
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg_dir = tmp.path().join("pkg");
+    std::fs::create_dir_all(pkg_dir.join("bin")).unwrap();
+    let manifest = "\
+schema_version = 1
+kind = \"fileserver\"
+
+[fileserver]
+id = \"github\"
+entrypoint = \"bin/server.py\"
+allow_network = true
+
+[fileserver.transport]
+type = \"stdio\"
+command = \"bin/server.py\"
+";
+    let server_script = r#"#!/usr/bin/env python3
+import json, os, sys
+
+PAYLOAD = json.dumps({
+    "gh_token": os.environ.get("GH_TOKEN"),
+    "github_token": os.environ.get("GITHUB_TOKEN"),
+}).encode("utf-8")
+
+def qid(kind, path):
+    return {"kind": kind, "version": 0, "path": path}
+
+fids = {0: "root"}
+
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    frame = json.loads(line)
+    req = frame["request"]
+    op = req.get("op")
+    if op == "stat":
+        is_env = fids.get(req["fid"]) == "env"
+        resp = {
+            "status": "ok",
+            "tag": frame["tag"],
+            "response": {
+                "op": "stat",
+                "stat": {
+                    "name": "env" if is_env else "",
+                    "qid": qid("file" if is_env else "dir", 2 if is_env else 1),
+                    "length": len(PAYLOAD) if is_env else 0,
+                    "executable": False,
+                    "writable": False,
+                },
+            },
+        }
+    elif op == "walk":
+        names = req.get("names", [])
+        base = fids.get(req["fid"], "root")
+        if names == ["env"] and base == "root":
+            fids[req["newfid"]] = "env"
+            resp = {"status": "ok", "tag": frame["tag"], "response": {"op": "walk", "qid": qid("file", 2)}}
+        elif not names:
+            fids[req["newfid"]] = base
+            is_env = base == "env"
+            resp = {"status": "ok", "tag": frame["tag"], "response": {"op": "walk", "qid": qid("file" if is_env else "dir", 2 if is_env else 1)}}
+        else:
+            resp = {"status": "error", "tag": frame["tag"], "code": "not_found"}
+    elif op == "open":
+        is_env = fids.get(req["fid"]) == "env"
+        resp = {"status": "ok", "tag": frame["tag"], "response": {"op": "open", "qid": qid("file" if is_env else "dir", 2 if is_env else 1)}}
+    elif op == "read":
+        off = req["offset"]
+        cnt = req["count"]
+        chunk = PAYLOAD[off : off + cnt] if fids.get(req["fid"]) == "env" else b""
+        resp = {"status": "ok", "tag": frame["tag"], "response": {"op": "read", "data": list(chunk)}}
+    elif op == "clunk":
+        fids.pop(req["fid"], None)
+        resp = {"status": "ok", "tag": frame["tag"], "response": {"op": "clunk"}}
+    else:
+        resp = {"status": "error", "tag": frame["tag"], "code": "unsupported"}
+    sys.stdout.write(json.dumps(resp) + "\n")
+    sys.stdout.flush()
+"#;
+    std::fs::write(pkg_dir.join("alan-package.toml"), manifest).unwrap();
+    std::fs::write(pkg_dir.join("bin/server.py"), server_script).unwrap();
+    std::fs::set_permissions(
+        pkg_dir.join("bin/server.py"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+
+    let packages = PackageService::open(tmp.path().join("store")).unwrap();
+    let installed = run_q_command_with_package_service(
+        &packages,
+        Some(pkg_dir.as_path()),
+        &[
+            "install".to_string(),
+            "--name".to_string(),
+            "github-test-pack".to_string(),
+            CLI_IMPORT_MOUNT_PATH.to_string(),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(installed.exit_code, 0);
+
+    let srvfs = Arc::new(SrvFs::new());
+    let mgr = FileserverManager::new(packages, srvfs.clone());
+
+    let write_fake_gh = |name: &str, body: &str| {
+        let p = tmp.path().join(name);
+        std::fs::write(&p, body).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    };
+
+    async fn read_child_env(mgr: &FileserverManager) -> serde_json::Value {
+        let live = alan_kernel::LiveNamespace::new(Namespace::new());
+        mgr.mount_into_live_namespace("github", &live, Access::ReadOnly)
+            .await
+            .unwrap();
+        let shell = alan_shell::Shell::new(InProcessTransport::new(Arc::new(
+            alan_kernel::MountFs::from_live_namespace(live),
+        )));
+        serde_json::from_slice::<serde_json::Value>(&shell.cat("/mnt/github/env").await.unwrap())
+            .unwrap()
+    }
+
+    // 1. allow_network = true with no explicit token injects token from `gh auth token`.
+    let token_gh = write_fake_gh(
+        "gh-ok.sh",
+        "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"token\" ]; then printf 'fixture-keychain-token-123\\n'; exit 0; fi\nexit 1\n",
+    );
+    let mut env_ok = BTreeMap::new();
+    env_ok.insert(
+        "ALAN_GITHUBFS_GH_BIN".into(),
+        token_gh.display().to_string(),
+    );
+    let grant_ok = FileserverLaunchGrant::new("github-test-pack")
+        .with_allow_network(true)
+        .with_runtime_env(env_ok);
+    mgr.start(grant_ok).await.unwrap();
+    let child_env = read_child_env(&mgr).await;
+    assert_eq!(child_env["gh_token"], "fixture-keychain-token-123");
+    assert!(child_env["github_token"].is_null());
+    assert!(
+        !mgr.recent_stderr("github")
+            .await
+            .unwrap_or_default()
+            .contains("fixture-keychain-token-123")
+    );
+    mgr.stop("github").await.unwrap();
+
+    // 2. allow_network = false does NOT invoke `gh auth token` and does NOT inject GH_TOKEN.
+    let marker = tmp.path().join("gh-called.marker");
+    let tracking_gh = write_fake_gh(
+        "gh-track.sh",
+        &format!(
+            "#!/bin/sh\ntouch \"{}\"\nprintf 'should-not-inject\\n'\n",
+            marker.display()
+        ),
+    );
+    let mut env_no_net = BTreeMap::new();
+    env_no_net.insert(
+        "ALAN_GITHUBFS_GH_BIN".into(),
+        tracking_gh.display().to_string(),
+    );
+    mgr.start(
+        FileserverLaunchGrant::new("github-test-pack")
+            .with_allow_network(false)
+            .with_runtime_env(env_no_net),
+    )
+    .await
+    .unwrap();
+    assert!(!marker.exists(), "gh must not run when allow_network=false");
+    let child_env = read_child_env(&mgr).await;
+    assert!(child_env["gh_token"].is_null());
+    mgr.stop("github").await.unwrap();
+
+    // 3. Explicit GH_TOKEN or GITHUB_TOKEN skips host `gh auth token` lookup.
+    for (var, val, expected_gh, expected_github) in [
+        ("GH_TOKEN", "explicit-gh", Some("explicit-gh"), None),
+        (
+            "GITHUB_TOKEN",
+            "explicit-github",
+            None,
+            Some("explicit-github"),
+        ),
+    ] {
+        let mut env_supplied = BTreeMap::new();
+        env_supplied.insert(
+            "ALAN_GITHUBFS_GH_BIN".into(),
+            tracking_gh.display().to_string(),
+        );
+        env_supplied.insert(var.into(), val.into());
+        mgr.start(
+            FileserverLaunchGrant::new("github-test-pack")
+                .with_allow_network(true)
+                .with_runtime_env(env_supplied),
+        )
+        .await
+        .unwrap();
+        assert!(
+            !marker.exists(),
+            "gh must not run when {var} is already supplied"
+        );
+        let child_env = read_child_env(&mgr).await;
+        assert_eq!(child_env["gh_token"].as_str(), expected_gh);
+        assert_eq!(child_env["github_token"].as_str(), expected_github);
+        mgr.stop("github").await.unwrap();
+    }
+
+    // 4. Missing binary, non-zero exit, and multi-line stdout all fall back silently without failing startup.
+    let failing_gh = write_fake_gh("gh-fail.sh", "#!/bin/sh\nexit 1\n");
+    let multiline_gh = write_fake_gh("gh-multi.sh", "#!/bin/sh\nprintf 'tok1\\ntok2\\n'\n");
+    let missing_gh = tmp.path().join("does-not-exist-gh");
+    for gh_path in [&missing_gh, &failing_gh, &multiline_gh] {
+        let mut env_fb = BTreeMap::new();
+        env_fb.insert("ALAN_GITHUBFS_GH_BIN".into(), gh_path.display().to_string());
+        mgr.start(
+            FileserverLaunchGrant::new("github-test-pack")
+                .with_allow_network(true)
+                .with_runtime_env(env_fb),
+        )
+        .await
+        .unwrap();
+        let child_env = read_child_env(&mgr).await;
+        assert!(
+            child_env["gh_token"].is_null(),
+            "unexpected token for {}",
+            gh_path.display()
+        );
+        mgr.stop("github").await.unwrap();
+    }
+
+    // 5. Bounded timeout falls back cleanly to None without failing or hanging.
+    let slow_gh = write_fake_gh("gh-slow.sh", "#!/bin/sh\nsleep 10\n");
+    let export = FileserverPackageExport {
+        service_id: "github".into(),
+        description: None,
+        entrypoint: "bin/server.py".into(),
+        allow_network: true,
+        network_domains: Vec::new(),
+        timeout_secs: 5,
+        max_message_bytes: 65536,
+        descriptor_path: "fileservers/github/server.json".into(),
+        transport: FileserverTransportSpec::Stdio {
+            command: "bin/server.py".into(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+        },
+    };
+    let mut env_slow = BTreeMap::new();
+    env_slow.insert("ALAN_GITHUBFS_GH_BIN".into(), slow_gh.display().to_string());
+    let grant_slow = FileserverLaunchGrant::new("github-test-pack")
+        .with_allow_network(true)
+        .with_runtime_env(env_slow);
+    let timed_out = resolve_github_fileserver_token_with_timeout(
+        &export,
+        &grant_slow,
+        Duration::from_millis(100),
+    )
+    .await;
+    assert_eq!(timed_out, None);
+}

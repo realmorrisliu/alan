@@ -35,6 +35,7 @@ use proxy::{BoundedLineReader, SupervisedFileserver};
 const MINIMAL_SAFE_PATH: &str = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin";
 const MAX_STDERR_LINES: usize = 64;
 const UNIX_SOCKET_MAX_PATH_LEN: usize = 96;
+const GITHUB_FILESERVER_TOKEN_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Explicit launch-time authorization grant for starting a Quartermaster `fileserver` package.
 #[derive(Clone, Debug)]
@@ -495,6 +496,7 @@ impl RunningFileserver {
         mounts.extend(grant.host_mounts.iter().cloned());
 
         let spec = SandboxSpec::from_host_mounts(&mounts);
+        let injected_gh_token = resolve_github_fileserver_token(&export, grant).await;
         let mut command = prepare_confined_command(
             grant,
             &export,
@@ -502,6 +504,7 @@ impl RunningFileserver {
             &executable,
             &runtime_path,
             socket_path.as_deref(),
+            injected_gh_token.as_deref(),
         )?;
 
         let sid = &export.service_id;
@@ -629,6 +632,65 @@ fn create_private_socket_dir() -> Result<tempfile::TempDir> {
     Ok(dir)
 }
 
+async fn resolve_github_fileserver_token(
+    export: &FileserverPackageExport,
+    grant: &FileserverLaunchGrant,
+) -> Option<String> {
+    resolve_github_fileserver_token_with_timeout(export, grant, GITHUB_FILESERVER_TOKEN_TIMEOUT)
+        .await
+}
+
+async fn resolve_github_fileserver_token_with_timeout(
+    export: &FileserverPackageExport,
+    grant: &FileserverLaunchGrant,
+    timeout: Duration,
+) -> Option<String> {
+    if export.service_id != "github" || !export.allow_network || !grant.allow_network {
+        return None;
+    }
+    let has_explicit_token = ["GH_TOKEN", "GITHUB_TOKEN"].into_iter().any(|key| {
+        grant
+            .runtime_env
+            .get(key)
+            .is_some_and(|val| !val.is_empty())
+    });
+    if has_explicit_token {
+        return None;
+    }
+
+    let gh_bin = grant
+        .runtime_env
+        .get("ALAN_GITHUBFS_GH_BIN")
+        .map(String::as_str)
+        .filter(|val| !val.is_empty())
+        .unwrap_or("gh");
+    let mut cmd = Command::new(gh_bin);
+    cmd.args(["auth", "token"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    for key in ["GH_HOST", "GH_CONFIG_DIR"] {
+        if let Some(val) = grant.runtime_env.get(key).filter(|val| !val.is_empty()) {
+            cmd.env(key, val);
+        }
+    }
+
+    let output = match tokio::time::timeout(timeout, cmd.output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(_)) | Err(_) => return None,
+    };
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let token = stdout.trim();
+    if token.is_empty() || token.contains(['\0', '\n', '\r']) {
+        return None;
+    }
+    Some(token.to_string())
+}
+
 fn prepare_confined_command(
     grant: &FileserverLaunchGrant,
     export: &FileserverPackageExport,
@@ -636,6 +698,7 @@ fn prepare_confined_command(
     executable: &Path,
     runtime_dir: &Path,
     socket_path: Option<&Path>,
+    injected_gh_token: Option<&str>,
 ) -> Result<Command> {
     let allow_network = export.allow_network && grant.allow_network;
     let (args, manifest_env) = match &export.transport {
@@ -682,6 +745,9 @@ fn prepare_confined_command(
         .kill_on_drop(true);
     for (k, v) in manifest_env.into_iter().flatten().chain(&grant.runtime_env) {
         command.env(k, v);
+    }
+    if let Some(token) = injected_gh_token {
+        command.env("GH_TOKEN", token);
     }
     if let Some(sock) = socket_path {
         command.env("ALAN_FILESERVER_SOCKET", sock);
