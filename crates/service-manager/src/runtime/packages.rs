@@ -440,9 +440,13 @@ pub fn prepare_fileserver_launch_grant(
         }
     }
 
+    let allow_host_gh_token =
+        package_id == "github-fileserver" && service_id == "github" && allow_network;
+
     FileserverLaunchGrant::new(package_id)
         .with_mount_access(access.into_kernel_access())
         .with_allow_network(allow_network)
+        .with_allow_host_gh_token(allow_host_gh_token)
         .with_trust_posture(trust_posture)
         .with_host_mounts(host_mounts)
         .with_runtime_env(runtime_env)
@@ -688,4 +692,44 @@ fn push_ro_parent_dir_mount(
         host_path: parent,
         access: ReifiedMountAccess::ReadOnly,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepare_fileserver_launch_grant_requires_github_fileserver_identity_and_network_for_host_token()
+     {
+        let granted = prepare_fileserver_launch_grant(
+            "github-fileserver",
+            "github",
+            FileserverMountAccess::ReadOnly,
+            true,
+            TrustPosture::Governed,
+            None,
+            None,
+        );
+        assert!(granted.allow_host_gh_token);
+
+        for (pkg, svc, net) in [
+            ("github-fileserver", "github", false),
+            ("third-party-pack", "github", true),
+            ("github-fileserver", "other", true),
+        ] {
+            let denied = prepare_fileserver_launch_grant(
+                pkg,
+                svc,
+                FileserverMountAccess::ReadOnly,
+                net,
+                TrustPosture::Governed,
+                None,
+                None,
+            );
+            assert!(
+                !denied.allow_host_gh_token,
+                "expected allow_host_gh_token=false for ({pkg}, {svc}, net={net})"
+            );
+        }
+    }
 }

@@ -44,6 +44,7 @@ pub struct FileserverLaunchGrant {
     pub expected_service_id: Option<String>,
     pub mount_access: Access,
     pub allow_network: bool,
+    pub allow_host_gh_token: bool,
     pub host_mounts: Vec<SandboxHostMount>,
     pub runtime_env: BTreeMap<String, String>,
     pub trust_posture: TrustPosture,
@@ -57,6 +58,7 @@ impl FileserverLaunchGrant {
             expected_service_id: None,
             mount_access: Access::ReadOnly,
             allow_network: false,
+            allow_host_gh_token: false,
             host_mounts: Vec::new(),
             runtime_env: BTreeMap::new(),
             trust_posture: TrustPosture::Governed,
@@ -72,6 +74,12 @@ impl FileserverLaunchGrant {
     /// Authorize outbound network inside the OS sandbox (only effective if manifest allows it).
     pub fn with_allow_network(mut self, allow_network: bool) -> Self {
         self.allow_network = allow_network;
+        self
+    }
+
+    /// Authorize resolving a host `gh auth token` into `GH_TOKEN` for the confined `github` fileserver.
+    pub fn with_allow_host_gh_token(mut self, allow_host_gh_token: bool) -> Self {
+        self.allow_host_gh_token = allow_host_gh_token;
         self
     }
 
@@ -645,7 +653,11 @@ async fn resolve_github_fileserver_token_with_timeout(
     grant: &FileserverLaunchGrant,
     timeout: Duration,
 ) -> Option<String> {
-    if export.service_id != "github" || !export.allow_network || !grant.allow_network {
+    if !grant.allow_host_gh_token
+        || export.service_id != "github"
+        || !export.allow_network
+        || !grant.allow_network
+    {
         return None;
     }
     let has_explicit_token = ["GH_TOKEN", "GITHUB_TOKEN"].into_iter().any(|key| {

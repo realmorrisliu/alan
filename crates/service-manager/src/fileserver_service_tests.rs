@@ -479,7 +479,34 @@ for line in sys.stdin:
             .unwrap()
     }
 
-    // 1. allow_network = true with no explicit token injects token from `gh auth token`.
+    // 1. allow_network = true WITHOUT allow_host_gh_token must NOT invoke `gh auth token` or inject GH_TOKEN.
+    let marker = tmp.path().join("gh-called.marker");
+    let tracking_gh = write_fake_gh(
+        "gh-track.sh",
+        &format!(
+            "#!/bin/sh\ntouch \"{}\"\nprintf 'should-not-inject\\n'\n",
+            marker.display()
+        ),
+    );
+    let mut env_ungranted = BTreeMap::new();
+    env_ungranted.insert(
+        "ALAN_GITHUBFS_GH_BIN".into(),
+        tracking_gh.display().to_string(),
+    );
+    let grant_ungranted = FileserverLaunchGrant::new("github-test-pack")
+        .with_allow_network(true)
+        .with_runtime_env(env_ungranted);
+    assert!(!grant_ungranted.allow_host_gh_token);
+    mgr.start(grant_ungranted).await.unwrap();
+    assert!(
+        !marker.exists(),
+        "gh must not run when allow_host_gh_token=false"
+    );
+    let child_env = read_child_env(&mgr).await;
+    assert!(child_env["gh_token"].is_null());
+    mgr.stop("github").await.unwrap();
+
+    // 2. allow_network = true WITH allow_host_gh_token = true and no explicit token injects token from `gh auth token`.
     let token_gh = write_fake_gh(
         "gh-ok.sh",
         "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"token\" ]; then printf 'fixture-keychain-token-123\\n'; exit 0; fi\nexit 1\n",
@@ -491,6 +518,7 @@ for line in sys.stdin:
     );
     let grant_ok = FileserverLaunchGrant::new("github-test-pack")
         .with_allow_network(true)
+        .with_allow_host_gh_token(true)
         .with_runtime_env(env_ok);
     mgr.start(grant_ok).await.unwrap();
     let child_env = read_child_env(&mgr).await;
@@ -504,15 +532,7 @@ for line in sys.stdin:
     );
     mgr.stop("github").await.unwrap();
 
-    // 2. allow_network = false does NOT invoke `gh auth token` and does NOT inject GH_TOKEN.
-    let marker = tmp.path().join("gh-called.marker");
-    let tracking_gh = write_fake_gh(
-        "gh-track.sh",
-        &format!(
-            "#!/bin/sh\ntouch \"{}\"\nprintf 'should-not-inject\\n'\n",
-            marker.display()
-        ),
-    );
+    // 3. allow_network = false does NOT invoke `gh auth token` and does NOT inject GH_TOKEN even if allow_host_gh_token = true.
     let mut env_no_net = BTreeMap::new();
     env_no_net.insert(
         "ALAN_GITHUBFS_GH_BIN".into(),
@@ -521,6 +541,7 @@ for line in sys.stdin:
     mgr.start(
         FileserverLaunchGrant::new("github-test-pack")
             .with_allow_network(false)
+            .with_allow_host_gh_token(true)
             .with_runtime_env(env_no_net),
     )
     .await
@@ -530,7 +551,7 @@ for line in sys.stdin:
     assert!(child_env["gh_token"].is_null());
     mgr.stop("github").await.unwrap();
 
-    // 3. Explicit GH_TOKEN or GITHUB_TOKEN skips host `gh auth token` lookup.
+    // 4. Explicit GH_TOKEN or GITHUB_TOKEN skips host `gh auth token` lookup.
     for (var, val, expected_gh, expected_github) in [
         ("GH_TOKEN", "explicit-gh", Some("explicit-gh"), None),
         (
@@ -549,6 +570,7 @@ for line in sys.stdin:
         mgr.start(
             FileserverLaunchGrant::new("github-test-pack")
                 .with_allow_network(true)
+                .with_allow_host_gh_token(true)
                 .with_runtime_env(env_supplied),
         )
         .await
@@ -563,7 +585,7 @@ for line in sys.stdin:
         mgr.stop("github").await.unwrap();
     }
 
-    // 4. Missing binary, non-zero exit, and multi-line stdout all fall back silently without failing startup.
+    // 5. Missing binary, non-zero exit, and multi-line stdout all fall back silently without failing startup.
     let failing_gh = write_fake_gh("gh-fail.sh", "#!/bin/sh\nexit 1\n");
     let multiline_gh = write_fake_gh("gh-multi.sh", "#!/bin/sh\nprintf 'tok1\\ntok2\\n'\n");
     let missing_gh = tmp.path().join("does-not-exist-gh");
@@ -573,6 +595,7 @@ for line in sys.stdin:
         mgr.start(
             FileserverLaunchGrant::new("github-test-pack")
                 .with_allow_network(true)
+                .with_allow_host_gh_token(true)
                 .with_runtime_env(env_fb),
         )
         .await
@@ -586,7 +609,7 @@ for line in sys.stdin:
         mgr.stop("github").await.unwrap();
     }
 
-    // 5. Bounded timeout falls back cleanly to None without failing or hanging.
+    // 6. Bounded timeout falls back cleanly to None without failing or hanging.
     let slow_gh = write_fake_gh("gh-slow.sh", "#!/bin/sh\nsleep 10\n");
     let export = FileserverPackageExport {
         service_id: "github".into(),
@@ -607,6 +630,7 @@ for line in sys.stdin:
     env_slow.insert("ALAN_GITHUBFS_GH_BIN".into(), slow_gh.display().to_string());
     let grant_slow = FileserverLaunchGrant::new("github-test-pack")
         .with_allow_network(true)
+        .with_allow_host_gh_token(true)
         .with_runtime_env(env_slow);
     let timed_out = resolve_github_fileserver_token_with_timeout(
         &export,
