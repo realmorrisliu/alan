@@ -225,7 +225,8 @@ async fn duplicate_during_promotion(namespace: bool) {
     assert_eq!(
         requests
             .iter()
-            .filter(|r| r.max_tokens == Some(768))
+            .filter(|r| r.max_tokens
+                == Some(crate::runtime::memory_promotion::MEMORY_PROMOTION_MAX_TOKENS))
             .count(),
         3,
         "one cancelled promotion, one new turn promotion, and one retained promotion retry"
@@ -256,7 +257,8 @@ async fn duplicate_during_promotion(namespace: bool) {
             r.messages
                 .iter()
                 .any(|m| m.content == "exact deferred duplicate payload")
-                && r.max_tokens != Some(768)
+                && r.max_tokens
+                    != Some(crate::runtime::memory_promotion::MEMORY_PROMOTION_MAX_TOKENS)
         })
         .collect();
     assert_eq!(actual.len(), 1, "single actual input generation effect");

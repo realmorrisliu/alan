@@ -24,10 +24,15 @@ pub(crate) use self::context::{
     DEGRADED_COMPACTION_SUMMARY_MAX_CHARS, sanitize_tool_text_for_compaction,
 };
 pub(crate) use self::context::{
-    build_degraded_compaction_summary, sanitize_messages_for_compaction,
+    build_degraded_compaction_summary, build_tool_free_llm_messages,
+    sanitize_messages_for_compaction,
 };
 use self::pressure::{CompactionPressure, evaluate_compaction_pressure};
 pub(crate) use self::runtime_inputs::{CompactionMemory, CompactionRuntime, CompactionSettings};
+
+const COMPACTION_MAX_TOKENS: i32 = 8_192;
+const COMPACTION_TRAILING_DIRECTIVE: &str =
+    "Summarize the conversation above into a concise checkpoint handoff.";
 
 #[derive(Debug, Clone)]
 pub(crate) struct CompactionRequest {
@@ -155,6 +160,7 @@ struct CompactionFailureContext<'a> {
     input_prompt_tokens: usize,
     pressure_level: Option<CompactionPressureLevel>,
     memory_flush_attempt_id: Option<String>,
+    allow_degraded_fallback: bool,
     retry_count: u32,
     error_message: String,
     started_at: std::time::Instant,
@@ -407,14 +413,16 @@ where
         input_prompt_tokens,
         pressure_level,
         memory_flush_attempt_id,
+        allow_degraded_fallback,
         retry_count,
         error_message,
         started_at,
     } = failure;
     let reference_context_revision = machine.context_revision();
 
-    if let Some(summary) =
-        build_degraded_compaction_summary(sanitized_to_summarize, machine.tape_summary())
+    if allow_degraded_fallback
+        && let Some(summary) =
+            build_degraded_compaction_summary(sanitized_to_summarize, machine.tape_summary())
     {
         let attempt_id = uuid::Uuid::new_v4().to_string();
         let failure_streak = machine.note_compaction_failure();
@@ -644,22 +652,28 @@ where
     );
 
     let started_at = std::time::Instant::now();
-    let mut llm_messages = Vec::new();
+    let allow_degraded_fallback =
+        pressure.requires_degraded_fallback(runtime.settings.context_window_tokens);
+    let mut preamble = Vec::new();
 
     if let Some(existing_summary) = runtime.machine.tape_summary() {
-        llm_messages.push(crate::llm::Message::context(format!(
+        preamble.push(crate::llm::Message::context(format!(
             "[Previous compaction summary (compaction #{})]\n{}",
             compaction_count, existing_summary
         )));
     }
 
     if let Some(focus) = request.focus() {
-        llm_messages.push(crate::llm::Message::context(format!(
+        preamble.push(crate::llm::Message::context(format!(
             "[Compaction focus]\nPreserve and emphasize: {focus}"
         )));
     }
 
-    llm_messages.extend(crate::llm::project_messages(&sanitized_to_summarize, true));
+    let mut llm_messages = build_tool_free_llm_messages(
+        preamble,
+        &sanitized_to_summarize,
+        COMPACTION_TRAILING_DIRECTIVE,
+    );
 
     let max_trim_retries = 5;
     let mut trimmed_count = 0usize;
@@ -669,23 +683,26 @@ where
             llm_messages.clone(),
             Vec::new(),
             Some(0.2),
-            Some(2048),
+            Some(COMPACTION_MAX_TOKENS),
         );
 
-        match runtime
+        let step_error = match runtime
             .generation
             .generate_once_with_cancel(generation_request, cancel, "Compaction cancelled")
             .await
         {
             Ok(resp) => {
                 let text = resp.content.trim().to_string();
-                if trimmed_count > 0 {
-                    info!(
-                        trimmed_count,
-                        "Trimmed oldest messages from compaction input to fit context window"
-                    );
+                if !text.is_empty() {
+                    if trimmed_count > 0 {
+                        info!(
+                            trimmed_count,
+                            "Trimmed oldest messages from compaction input to fit context window"
+                        );
+                    }
+                    break text;
                 }
-                break text;
+                anyhow::anyhow!("compaction summary was empty")
             }
             Err(err) => {
                 if err.is::<super::NamespaceOperationUncertainty>()
@@ -693,59 +710,43 @@ where
                 {
                     return Err(err);
                 }
-                if cancel.is_cancelled() {
-                    return Ok(skipped_outcome(
-                        request,
-                        estimated_prompt_tokens,
-                        CompactionSkipReason::Cancelled,
-                    ));
-                }
-
-                let removable_count = llm_messages
-                    .iter()
-                    .filter(|m| !matches!(m.role, crate::llm::MessageRole::Context))
-                    .count();
-
-                if trimmed_count < max_trim_retries
-                    && removable_count > 1
-                    && let Some(idx) = llm_messages
-                        .iter()
-                        .position(|m| !matches!(m.role, crate::llm::MessageRole::Context))
-                {
-                    llm_messages.remove(idx);
-                    trimmed_count += 1;
-                    warn!(
-                        error = %err,
-                        trimmed_count,
-                        remaining = llm_messages.len(),
-                        "Compaction failed, trimming oldest message and retrying"
-                    );
-                    continue;
-                }
-
-                warn!(error = %err, "Failed to generate compaction summary after retries");
-                return handle_compaction_generation_failure(
-                    &mut *runtime.machine,
-                    &runtime.agent_files,
-                    emit,
-                    CompactionFailureContext {
-                        request,
-                        sanitized_to_summarize: &sanitized_to_summarize,
-                        keep_last,
-                        input_prompt_tokens: estimated_prompt_tokens,
-                        pressure_level: compaction_pressure_level,
-                        memory_flush_attempt_id: memory_flush_attempt_id.clone(),
-                        retry_count: trimmed_count as u32,
-                        error_message: err.to_string(),
-                        started_at,
-                    },
-                )
-                .await;
+                err
             }
-        }
-    };
+        };
 
-    if summary.is_empty() {
+        if cancel.is_cancelled() {
+            return Ok(skipped_outcome(
+                request,
+                estimated_prompt_tokens,
+                CompactionSkipReason::Cancelled,
+            ));
+        }
+
+        // Protect Context messages AND the trailing User directive at the end of llm_messages.
+        let history_end = llm_messages.len().saturating_sub(1);
+        let removable_count = llm_messages[..history_end]
+            .iter()
+            .filter(|m| !matches!(m.role, crate::llm::MessageRole::Context))
+            .count();
+
+        if trimmed_count < max_trim_retries
+            && removable_count > 1
+            && let Some(idx) = llm_messages[..history_end]
+                .iter()
+                .position(|m| !matches!(m.role, crate::llm::MessageRole::Context))
+        {
+            llm_messages.remove(idx);
+            trimmed_count += 1;
+            warn!(
+                error = %step_error,
+                trimmed_count,
+                remaining = llm_messages.len(),
+                "Compaction failed, trimming oldest message and retrying"
+            );
+            continue;
+        }
+
+        warn!(error = %step_error, "Failed to generate compaction summary after retries");
         return handle_compaction_generation_failure(
             &mut *runtime.machine,
             &runtime.agent_files,
@@ -757,13 +758,14 @@ where
                 input_prompt_tokens: estimated_prompt_tokens,
                 pressure_level: compaction_pressure_level,
                 memory_flush_attempt_id: memory_flush_attempt_id.clone(),
+                allow_degraded_fallback,
                 retry_count: trimmed_count as u32,
-                error_message: "compaction summary was empty".to_string(),
+                error_message: step_error.to_string(),
                 started_at,
             },
         )
         .await;
-    }
+    };
 
     let input_prompt_tokens = estimated_prompt_tokens;
     let success_result = compaction_success_result(trimmed_count);
@@ -837,143 +839,5 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{Arc, Mutex};
-
-    use alan_agent_protocol::Event;
-    use alan_ap::InProcessTransport;
-    use alan_kernel::{Access, MountFs, Namespace};
-    use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
-    use alan_llmfs::LlmFs;
-    use tokio::sync::mpsc;
-
-    use crate::{
-        agent_machine::AgentMachine,
-        config::Config,
-        runtime::{
-            NamespaceRuntimeEnvironment, RuntimeConfig, prompt_cache::PromptAssemblyCache,
-            transition::RuntimeLoopState,
-        },
-    };
-
-    struct RecordingProvider {
-        requests: Arc<Mutex<Vec<GenerationRequest>>>,
-        response: String,
-    }
-
-    #[async_trait::async_trait]
-    impl LlmProvider for RecordingProvider {
-        async fn generate(&mut self, _: GenerationRequest) -> anyhow::Result<GenerationResponse> {
-            unimplemented!()
-        }
-
-        async fn chat(&mut self, _: Option<&str>, _: &str) -> anyhow::Result<String> {
-            unimplemented!()
-        }
-
-        async fn generate_stream(
-            &mut self,
-            request: GenerationRequest,
-        ) -> anyhow::Result<mpsc::Receiver<StreamChunk>> {
-            self.requests.lock().unwrap().push(request);
-            let (tx, rx) = mpsc::channel(4);
-            let response = self.response.clone();
-            tokio::spawn(async move {
-                let _ = tx
-                    .send(StreamChunk {
-                        text: Some(response),
-                        thinking: None,
-                        thinking_signature: None,
-                        redacted_thinking: None,
-                        usage: None,
-                        provider_response_id: None,
-                        provider_response_status: None,
-                        sequence_number: None,
-                        tool_call_delta: None,
-                        is_finished: true,
-                        finish_reason: Some("stop".to_string()),
-                    })
-                    .await;
-            });
-            Ok(rx)
-        }
-
-        fn provider_name(&self) -> &'static str {
-            "recording"
-        }
-    }
-
-    fn namespace_state_with_provider(provider: impl LlmProvider + 'static) -> RuntimeLoopState {
-        let llmfs = Arc::new(LlmFs::new());
-        llmfs.register_connection("default", Box::new(provider));
-
-        let mut namespace = Namespace::new();
-        namespace.mount(
-            "/mnt/llm",
-            InProcessTransport::new(llmfs),
-            Access::ReadWrite,
-        );
-        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-
-        RuntimeLoopState {
-            machine: AgentMachine::new(),
-            environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
-            core_config: Config::default(),
-            runtime_config: RuntimeConfig {
-                compaction_trigger_messages: 1,
-                compaction_keep_last: 1,
-                ..RuntimeConfig::default()
-            },
-            prompt_cache: PromptAssemblyCache::new(Vec::new()),
-        }
-    }
-
-    #[tokio::test]
-    async fn compaction_generation_uses_namespace_llmfs() {
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let mut state = namespace_state_with_provider(RecordingProvider {
-            requests: Arc::clone(&requests),
-            response: "namespace compaction summary".to_string(),
-        });
-        state.core_config.memory.enabled = false;
-        state.machine.add_user_message("first detail to compact");
-        state.machine.add_assistant_message("first answer", None);
-        state.machine.add_user_message("second detail to compact");
-        state.machine.add_assistant_message("second answer", None);
-
-        let mut events = Vec::new();
-        let mut emit = |event: Event| {
-            events.push(event);
-            async {}
-        };
-
-        let runtime = crate::runtime::transition::compaction_runtime(&mut state);
-        let outcome = maybe_compact_context_with_cancel(
-            runtime,
-            &mut emit,
-            &CompactionRequest::manual(None),
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap();
-
-        assert!(matches!(outcome, CompactionOutcome::Applied { .. }));
-        assert_eq!(
-            state.machine.tape_summary(),
-            Some("namespace compaction summary")
-        );
-        let recorded = requests.lock().unwrap();
-        assert_eq!(recorded.len(), 1);
-        assert_eq!(
-            recorded[0].system_prompt.as_deref(),
-            Some(prompts::COMPACT_PROMPT)
-        );
-        assert!(
-            recorded[0]
-                .messages
-                .iter()
-                .any(|message| message.content.contains("first detail to compact"))
-        );
-    }
-}
+#[path = "compaction/tests.rs"]
+mod tests;

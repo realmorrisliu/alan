@@ -28,7 +28,7 @@ use storage::{acquire_promotion_lock, write_text_file};
 const DEFAULT_PROMOTED_FACTS_HEADER: &str = "## Promoted Facts";
 const DEFAULT_TOPIC_SUMMARY: &str = "Promoted from inbox entries.";
 const DEFAULT_EVIDENCE_ITEM: &str = "No evidence recorded.";
-const MEMORY_PROMOTION_MAX_TOKENS: i32 = 768;
+pub(crate) const MEMORY_PROMOTION_MAX_TOKENS: i32 = 2048;
 const MEMORY_PROMOTION_MAX_WRITES: usize = 6;
 const MEMORY_PROMOTION_MAX_OBSERVATION_CHARS: usize = 240;
 const MEMORY_PROMOTION_MAX_RATIONALE_CHARS: usize = 320;

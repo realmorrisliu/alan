@@ -15,6 +15,7 @@ use crate::{
     prompts::{self, MEMORY_STORE_FILENAME},
 };
 
+use super::compaction::build_tool_free_llm_messages;
 use super::memory_promotion::{InboxEntryDraft, stage_inbox_entry};
 use super::transition::NamespaceGeneration;
 use crate::prompts::MEMORY_DAILY_DIRNAME;
@@ -22,7 +23,9 @@ use crate::prompts::MEMORY_DAILY_DIRNAME;
 const MEMORY_FLUSH_MAX_SECTION_ITEMS: usize = 6;
 const MEMORY_FLUSH_MAX_ITEM_CHARS: usize = 240;
 const MEMORY_FLUSH_MAX_WHY_CHARS: usize = 320;
-const MEMORY_FLUSH_MAX_TOKENS: i32 = 1024;
+const MEMORY_FLUSH_MAX_TOKENS: i32 = 4096;
+const MEMORY_FLUSH_TRAILING_DIRECTIVE: &str =
+    "Extract the durable memory entries from the conversation above as a single JSON object.";
 
 #[derive(Debug, Deserialize)]
 struct MemoryFlushModelOutput {
@@ -330,13 +333,17 @@ async fn generate_flush_content(
     sanitized_messages: &[crate::tape::Message],
     cancel: &CancellationToken,
 ) -> Result<Option<MemoryFlushContent>> {
-    let mut llm_messages = Vec::new();
+    let mut preamble = Vec::new();
     if let Some(existing_summary) = machine.tape_summary() {
-        llm_messages.push(Message::context(format!(
+        preamble.push(Message::context(format!(
             "[Current compaction summary]\n{existing_summary}"
         )));
     }
-    llm_messages.extend(crate::llm::project_messages(sanitized_messages, true));
+    let llm_messages = build_tool_free_llm_messages(
+        preamble,
+        sanitized_messages,
+        MEMORY_FLUSH_TRAILING_DIRECTIVE,
+    );
 
     let request = build_generation_request(
         Some(prompts::MEMORY_FLUSH_PROMPT.to_string()),
@@ -668,6 +675,7 @@ mod tests {
         assert_eq!(content.key_decisions, vec!["via llmfs"]);
         let recorded = requests.lock().unwrap();
         assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].max_tokens, Some(MEMORY_FLUSH_MAX_TOKENS));
         assert_eq!(
             recorded[0].system_prompt.as_deref(),
             Some(prompts::MEMORY_FLUSH_PROMPT)
@@ -678,6 +686,9 @@ mod tests {
                 .iter()
                 .any(|message| message.content.contains("remember this namespace fact"))
         );
+        let last = recorded[0].messages.last().unwrap();
+        assert_eq!(last.role, crate::llm::MessageRole::User);
+        assert_eq!(last.content, MEMORY_FLUSH_TRAILING_DIRECTIVE);
     }
 
     #[test]
