@@ -7,6 +7,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-11-24
+
+### Fixed
+
+- Fix TUI startup screen clearing on interactive non-`dumb` terminals without purging scrollback, and preserve committed transcript lines across partial upward inline viewport expansions (#1159).
+- Fix `githubfs` on-demand read-only repository queries without writing `/mnt/github/ctl`, surface active fileserver permissions and descriptions across `alan-agent-engine` and `alan-service-manager`, and clarify `Activate`/`Upgrade` scope tags in `request_service` confirmations (#1160).
+
 ## [0.1.8] - 2026-11-24
 
 ### Added
