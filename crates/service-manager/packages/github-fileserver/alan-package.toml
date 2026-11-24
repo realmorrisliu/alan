@@ -5,7 +5,7 @@ description = "Reference GitHub aP file-server package exposing issues, pulls, c
 
 [fileserver]
 id = "github"
-description = "Mounts GitHub repositories, issues, pull requests, and event streams under /mnt/github over aP."
+description = "Mounts GitHub repos at /mnt/github: read repos/<owner>/<repo>/{issues,pulls} on demand with read_only + network; write ctl or issues/new with read_write."
 entrypoint = "bin/githubfs"
 allow_network = true
 network_domains = ["api.github.com", "github.com"]

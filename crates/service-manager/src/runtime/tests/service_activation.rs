@@ -326,6 +326,17 @@ async fn request_service_hot_mounts_github_fileserver_for_session_and_persists_o
         .await
         .unwrap();
     let req2 = wait_for_pending_request_id(&root_shell, &mut seen_requests).await;
+    let prompt2 = String::from_utf8(
+        root_shell
+            .cat(&format!("/agent/root/requests/{req2}/prompt"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        prompt2.trim(),
+        "Activate 'github-fileserver' at /mnt/github (read-only, no-network)?"
+    );
     root_shell
         .write(
             &format!("/agent/root/requests/{req2}/response"),
@@ -360,6 +371,17 @@ async fn request_service_hot_mounts_github_fileserver_for_session_and_persists_o
         .await
         .unwrap();
     let req3 = wait_for_pending_request_id(&root_shell, &mut seen_requests).await;
+    let prompt3 = String::from_utf8(
+        root_shell
+            .cat(&format!("/agent/root/requests/{req3}/prompt"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        prompt3.trim(),
+        "Upgrade 'github-fileserver' at /mnt/github (read-write, network)?"
+    );
     root_shell
         .write(
             &format!("/agent/root/requests/{req3}/response"),
@@ -424,6 +446,63 @@ async fn request_service_hot_mounts_github_fileserver_for_session_and_persists_o
             .tools
             .iter()
             .any(|tool| tool.name == "request_service")
+    );
+    let initial_context = root_req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == alan_llm::MessageRole::Context)
+        .expect("expected initial service activation context");
+    assert!(
+        initial_context
+            .content
+            .contains("- `github-fileserver` -> `/mnt/github` (network capable) — Mounts GitHub under /mnt/github"),
+        "{}",
+        initial_context.content
+    );
+    let turn3_req = recorded
+        .iter()
+        .find(|req| {
+            req.messages
+                .iter()
+                .any(|m| m.content.contains("Turn 3 upgrade persistently"))
+        })
+        .expect("expected Turn 3 request");
+    let turn3_context = turn3_req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == alan_llm::MessageRole::Context)
+        .expect("expected Turn 3 dynamic context");
+    assert!(
+        turn3_context.content.contains(
+            "- `github-fileserver` -> `/mnt/github` (active: read-only, no-network) — Mounts GitHub under /mnt/github"
+        ),
+        "{}",
+        turn3_context.content
+    );
+    let turn3_tool_reply_req = recorded
+        .iter()
+        .find(|req| {
+            req.messages.iter().any(|m| {
+                m.role == alan_llm::MessageRole::Tool
+                    && m.content.contains("\"status\":\"activated\"")
+            })
+        })
+        .expect("expected Turn 3 post-activation tool response");
+    let activated_msg = turn3_tool_reply_req
+        .messages
+        .iter()
+        .find(|m| {
+            m.role == alan_llm::MessageRole::Tool && m.content.contains("\"status\":\"activated\"")
+        })
+        .unwrap();
+    assert!(
+        activated_msg
+            .content
+            .contains("\"description\":\"Mounts GitHub under /mnt/github\""),
+        "{}",
+        activated_msg.content
     );
     let child_req = recorded.last().unwrap();
     assert!(

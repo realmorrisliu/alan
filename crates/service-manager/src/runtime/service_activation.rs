@@ -58,12 +58,21 @@ pub(crate) struct ProcessServiceActivation {
 }
 
 impl ProcessServiceActivation {
-    fn is_mounted_and_running(&self, package_id: &str, service_id: &str) -> bool {
+    fn active_grant_for_package(
+        &self,
+        package_id: &str,
+        service_id: &str,
+    ) -> Option<(ServiceMountAccess, bool)> {
         let mount_path = format!("/mnt/{service_id}");
-        self.fileserver_manager
-            .status_snapshot(service_id)
-            .is_some_and(|status| status.running && status.package_id == package_id)
-            && self.root_namespace.snapshot().resolve(&mount_path).is_ok()
+        let status = self.fileserver_manager.status_snapshot(service_id)?;
+        if !status.running || status.package_id != package_id {
+            return None;
+        }
+        self.root_namespace.snapshot().resolve(&mount_path).ok()?;
+        Some((
+            kernel_to_service_access(status.mount_access),
+            status.allow_network,
+        ))
     }
 }
 
@@ -86,7 +95,7 @@ impl ServiceActivationAuthority for ProcessServiceActivation {
                     return None;
                 }
                 let mount_path = format!("/mnt/{}", export.service_id);
-                let active = self.is_mounted_and_running(&record.id, &export.service_id);
+                let active_grant = self.active_grant_for_package(&record.id, &export.service_id);
                 Some(AvailableFileserverPackage {
                     package_id: record.id,
                     service_id: export.service_id,
@@ -94,7 +103,10 @@ impl ServiceActivationAuthority for ProcessServiceActivation {
                     description: export.description.or(record.description),
                     allow_network: export.allow_network,
                     network_domains: export.network_domains,
-                    active,
+                    active: active_grant.is_some(),
+                    active_access: active_grant.map(|(access, _)| access),
+                    active_allow_network: active_grant
+                        .is_some_and(|(_, allow_network)| allow_network),
                 })
             })
             .collect::<Vec<_>>();
@@ -146,7 +158,7 @@ impl ServiceActivationAuthority for ProcessServiceActivation {
             ));
         }
         let mount_path = format!("/mnt/{}", export.service_id);
-        let active = self.is_mounted_and_running(&record.id, &export.service_id);
+        let active_grant = self.active_grant_for_package(&record.id, &export.service_id);
         Ok(AvailableFileserverPackage {
             package_id: record.id,
             service_id: export.service_id.clone(),
@@ -154,7 +166,9 @@ impl ServiceActivationAuthority for ProcessServiceActivation {
             description: export.description.clone().or(record.description),
             allow_network: export.allow_network,
             network_domains: export.network_domains.clone(),
-            active,
+            active: active_grant.is_some(),
+            active_access: active_grant.map(|(access, _)| access),
+            active_allow_network: active_grant.is_some_and(|(_, allow_network)| allow_network),
         })
     }
 
@@ -310,6 +324,7 @@ impl ServiceActivationAuthority for ProcessServiceActivation {
             package_id: available.package_id,
             service_id: status.service_id,
             mount_path: status.mount_path,
+            description: available.description.unwrap_or_default(),
             access: kernel_to_service_access(effective),
             allow_network: status.allow_network,
             persisted: persist_for_root,

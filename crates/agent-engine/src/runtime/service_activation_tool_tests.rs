@@ -54,6 +54,8 @@ impl MockServiceAuthority {
                 allow_network: true,
                 network_domains: vec!["api.github.com".to_string(), "github.com".to_string()],
                 active: false,
+                active_access: None,
+                active_allow_network: false,
             }]),
             ..Default::default()
         })
@@ -64,6 +66,8 @@ impl MockServiceAuthority {
         for pkg in pkgs.iter_mut() {
             if pkg.service_id == service_id {
                 pkg.active = true;
+                pkg.active_access = Some(access);
+                pkg.active_allow_network = allow_network;
             }
         }
         self.active_grants
@@ -122,6 +126,7 @@ impl ServiceActivationAuthority for MockServiceAuthority {
             package_id: pkg.package_id,
             service_id: pkg.service_id,
             mount_path: pkg.mount_path,
+            description: pkg.description.unwrap_or_default(),
             access: request.access,
             allow_network: request.allow_network,
             persisted: persist_for_root,
@@ -230,6 +235,7 @@ async fn request_service_already_active_with_sufficient_grant_skips_prompt() {
         .tool_payload_by_call_id("call_active")
         .unwrap();
     assert_eq!(payload["status"], "already_active");
+    assert_eq!(payload["description"], "GitHub aP fileserver");
     assert!(!events.iter().any(|e| matches!(e, Event::Yield { .. })));
 }
 
@@ -278,7 +284,7 @@ async fn request_service_is_always_human_even_under_confined_trusted_and_session
     );
     assert_eq!(
         pending.summary,
-        "Activate 'github-fileserver' at /mnt/github?"
+        "Activate 'github-fileserver' at /mnt/github (read-write, network)?"
     );
     let prompt_text = pending.details["prompt"].as_str().unwrap();
     assert!(prompt_text.contains("github-fileserver"));
@@ -372,12 +378,14 @@ async fn request_service_resume_handles_approve_allow_persistent_and_reject() {
                 assert_eq!(recorded.len(), 1);
                 assert!(!recorded[0].1);
                 assert_eq!(tool_payload["status"], "activated");
+                assert_eq!(tool_payload["description"], "GitHub aP fileserver");
                 assert_eq!(tool_payload["persisted"], false);
             }
             "allow_persistent" => {
                 assert_eq!(recorded.len(), 1);
                 assert!(recorded[0].1);
                 assert_eq!(tool_payload["status"], "activated");
+                assert_eq!(tool_payload["description"], "GitHub aP fileserver");
                 assert_eq!(tool_payload["persisted"], true);
             }
             "reject" | "modify" => {
@@ -588,4 +596,102 @@ async fn child_agent_without_authority_excludes_request_service_and_dynamic_cont
         .expect("expected dynamic context message");
     assert!(trailing_context.content.contains("request_service"));
     assert!(trailing_context.content.contains("github-fileserver"));
+}
+
+#[tokio::test]
+async fn request_service_upgrade_summary_reflects_active_mount_and_scope() {
+    let authority = MockServiceAuthority::with_github_inactive();
+    authority.set_active("github", ServiceMountAccess::ReadOnly, false);
+    let mut state = create_state(Some(authority));
+    let cancel = CancellationToken::new();
+    let mut emit = |_event: Event| async {};
+
+    let args = json!({
+        "package_id": "github-fileserver",
+        "access": "read_write",
+        "allow_network": true,
+        "reason": "Need write and network access"
+    });
+    let tc = NormalizedToolCall {
+        id: "call_upgrade".to_string(),
+        name: "request_service".to_string(),
+        arguments: args.clone(),
+    };
+    let outcome =
+        dispatch_virtual_tool_call(&mut state, &tc, &args, &cancel, &cancel, false, &mut emit)
+            .await
+            .unwrap();
+    assert!(matches!(outcome, VirtualToolOutcome::PauseTurn));
+    let pending = state.machine.pending_confirmation().unwrap();
+    assert_eq!(
+        pending.summary,
+        "Upgrade 'github-fileserver' at /mnt/github (read-write, network)?"
+    );
+}
+
+#[test]
+fn render_service_activation_context_formats_active_and_inactive_packages() {
+    let packages = vec![
+        AvailableFileserverPackage {
+            package_id: "github-fileserver".to_string(),
+            service_id: "github".to_string(),
+            mount_path: "/mnt/github".to_string(),
+            description: Some("GitHub aP fileserver".to_string()),
+            allow_network: true,
+            network_domains: vec!["api.github.com".to_string()],
+            active: true,
+            active_access: Some(ServiceMountAccess::ReadOnly),
+            active_allow_network: false,
+        },
+        AvailableFileserverPackage {
+            package_id: "notes-fileserver".to_string(),
+            service_id: "notes".to_string(),
+            mount_path: "/mnt/notes".to_string(),
+            description: Some("Local notes mount".to_string()),
+            allow_network: false,
+            network_domains: Vec::new(),
+            active: false,
+            active_access: None,
+            active_allow_network: false,
+        },
+        AvailableFileserverPackage {
+            package_id: "remote-fileserver".to_string(),
+            service_id: "remote".to_string(),
+            mount_path: "/mnt/remote".to_string(),
+            description: Some("Remote API mount".to_string()),
+            allow_network: true,
+            network_domains: vec!["example.com".to_string()],
+            active: false,
+            active_access: None,
+            active_allow_network: false,
+        },
+    ];
+    let rendered = render_service_activation_context(&packages).unwrap();
+    assert!(rendered.contains(
+        "- `github-fileserver` -> `/mnt/github` (active: read-only, no-network) — GitHub aP fileserver"
+    ));
+    assert!(
+        rendered.contains("- `notes-fileserver` -> `/mnt/notes` (local only) — Local notes mount")
+    );
+    assert!(
+        rendered.contains(
+            "- `remote-fileserver` -> `/mnt/remote` (network capable) — Remote API mount"
+        )
+    );
+
+    let active_rw_net = vec![AvailableFileserverPackage {
+        package_id: "github-fileserver".to_string(),
+        service_id: "github".to_string(),
+        mount_path: "/mnt/github".to_string(),
+        description: Some("GitHub aP fileserver".to_string()),
+        allow_network: true,
+        network_domains: vec![],
+        active: true,
+        active_access: Some(ServiceMountAccess::ReadWrite),
+        active_allow_network: true,
+    }];
+    let rendered_rw = render_service_activation_context(&active_rw_net).unwrap();
+    assert!(rendered_rw.contains(
+        "- `github-fileserver` -> `/mnt/github` (active: read-write, network) — GitHub aP fileserver"
+    ));
 }
