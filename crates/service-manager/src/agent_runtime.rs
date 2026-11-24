@@ -28,7 +28,10 @@ use anyhow::{Context, Result, ensure};
 use crate::{
     BootUnit, ConnectionService, HostMountService, ProcessLaunchContext,
     process_runner::SystemProcessRunner,
-    runtime::{namespace_with_package_references, validate_package_reference_mounts},
+    runtime::{
+        namespace_with_package_references, service_activation::ServiceActivationDeps,
+        validate_package_reference_mounts,
+    },
 };
 
 mod child_wait;
@@ -158,6 +161,7 @@ pub(crate) struct AgentRuntimeService {
     active_root_pid: Mutex<Option<u64>>,
     next_root_rollout: Mutex<Option<history_discovery::PendingRootRolloutSwitch>>,
     history_bound: tokio::sync::OnceCell<()>,
+    pub(crate) service_activation: std::sync::OnceLock<ServiceActivationDeps>,
 }
 
 struct PendingRootLaunch {
@@ -202,6 +206,7 @@ impl AgentRuntimeService {
             active_root_pid: Mutex::new(None),
             next_root_rollout: Mutex::new(None),
             history_bound: tokio::sync::OnceCell::new(),
+            service_activation: std::sync::OnceLock::new(),
         })
     }
 
@@ -536,6 +541,14 @@ impl AgentRuntimeService {
         ))
         .with_namespace_cwd(&launch.template.launch_context.cwd)
         .with_tool_process_context(pid.0, self.tool_runner.clone());
+        if launch.is_primary_root
+            && let Some(deps) = self.service_activation.get()
+        {
+            environment = environment.with_service_activation_authority(deps.for_root(
+                launch.namespace.clone(),
+                launch.template.process.trust_posture,
+            ));
+        }
         if let Some(selection) = &launch.template.input_shadow {
             let captured = evaluator.context("selected evaluator was not captured")?;
             environment = environment.with_shadow_evaluation(

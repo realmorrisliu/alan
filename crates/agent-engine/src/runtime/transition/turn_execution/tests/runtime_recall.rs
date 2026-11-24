@@ -283,8 +283,12 @@ async fn test_run_turn_pre_turn_compaction_accounts_for_runtime_recall_budget() 
         Some(memory_dir.as_path()),
         Some(&user_input),
     );
-    let pending_prompt_tokens =
-        estimate_pending_turn_prompt_tokens(Some(&user_input), turn_recall_bundle.as_deref(), None);
+    let pending_prompt_tokens = estimate_pending_turn_prompt_tokens(
+        Some(&user_input),
+        turn_recall_bundle.as_deref(),
+        None,
+        None,
+    );
     assert!(pending_prompt_tokens > 0);
 
     let base_prompt_tokens = state.machine.estimated_prompt_tokens();
@@ -497,6 +501,7 @@ async fn test_maybe_compact_mid_turn_accounts_for_runtime_prompt_overhead() {
     let additional_prompt_tokens = estimate_request_prompt_overhead_tokens(
         None,
         Some(pending_guardrail_instruction.as_str()),
+        None,
         None,
     );
     assert!(additional_prompt_tokens > 0);

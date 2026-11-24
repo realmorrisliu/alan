@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 pub(crate) mod embed_mounts;
 mod packages;
+pub(crate) mod service_activation;
 pub(crate) mod sessions;
 mod supervisor;
 mod trust;
@@ -812,6 +813,15 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         package_service.clone(),
         srvfs.clone(),
     ));
+    let _ = agent_runtime
+        .service_activation
+        .set(service_activation::ServiceActivationDeps {
+            packages: package_service.clone(),
+            fileserver_manager: fileserver_manager.clone(),
+            srvfs: srvfs.clone(),
+            system_namespace: system_namespace.clone(),
+            local_entry: local_entry.clone(),
+        });
     let post_bind = async {
         packages::apply_root_package_bindings(
             &package_service,

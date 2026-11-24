@@ -7,11 +7,13 @@ use super::interaction_tools::{
     update_plan_tool_definition,
 };
 use super::mount_request_tool::request_mount_tool_definition;
+use super::service_activation_tool::request_service_tool_definition;
 use super::subagent_tool::spawn_subagent_tool_definition;
 
 pub(super) fn virtual_tool_definitions(
     include_delegated_skill: bool,
     include_subagent_spawn: bool,
+    include_service_activation: bool,
 ) -> Vec<ToolDefinition> {
     let mut defs = vec![
         request_confirmation_tool_definition(),
@@ -26,6 +28,9 @@ pub(super) fn virtual_tool_definitions(
     if include_subagent_spawn {
         defs.push(spawn_subagent_tool_definition());
     }
+    if include_service_activation {
+        defs.push(request_service_tool_definition());
+    }
     defs
 }
 
@@ -35,7 +40,7 @@ mod definition_tests {
 
     #[test]
     fn definitions_exclude_optional_delegation_tools_by_default() {
-        let defs = virtual_tool_definitions(false, false);
+        let defs = virtual_tool_definitions(false, false, false);
         assert_eq!(defs.len(), 4);
         assert!(
             defs.iter()
@@ -63,11 +68,16 @@ mod definition_tests {
                 .iter()
                 .any(|definition| definition.name == "spawn_subagent")
         );
+        assert!(
+            !defs
+                .iter()
+                .any(|definition| definition.name == "request_service")
+        );
     }
 
     #[test]
     fn definitions_include_delegation_tools_when_supported() {
-        let defs = virtual_tool_definitions(true, false);
+        let defs = virtual_tool_definitions(true, false, false);
         assert!(
             defs.iter()
                 .any(|definition| definition.name == "invoke_delegated_skill")
@@ -81,12 +91,22 @@ mod definition_tests {
                 .iter()
                 .any(|definition| definition.name == "spawn_subagent")
         );
+        assert!(
+            !defs
+                .iter()
+                .any(|definition| definition.name == "request_service")
+        );
 
-        let root_defs = virtual_tool_definitions(true, true);
+        let root_defs = virtual_tool_definitions(true, true, true);
         assert!(
             root_defs
                 .iter()
                 .any(|definition| definition.name == "spawn_subagent")
+        );
+        assert!(
+            root_defs
+                .iter()
+                .any(|definition| definition.name == "request_service")
         );
     }
 }

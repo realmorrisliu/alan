@@ -22,9 +22,9 @@ pub use turn_execution::validate_response_schema;
 
 pub(crate) use accepted_submission::{accepts_inband_submissions, advance_accepted_submission};
 #[cfg(test)]
-use turn_execution::orchestrate_tool_batch;
+pub(in crate::runtime) use turn_execution::orchestrate_tool_batch;
 #[cfg(test)]
-use turn_execution::run_turn_with_cancel;
+pub(in crate::runtime) use turn_execution::run_turn_with_cancel;
 use turn_execution::run_turn_with_writer;
 
 #[cfg(test)]
@@ -261,6 +261,20 @@ pub(super) fn agent_interaction_runtime(
 ) -> super::interaction_tools::AgentInteractionRuntime<'_> {
     let agent_files = state.agent_files();
     super::interaction_tools::AgentInteractionRuntime::new(&mut state.machine, agent_files)
+}
+
+pub(super) fn service_activation_runtime(
+    state: &mut RuntimeLoopState,
+) -> Option<super::service_activation_tool::ServiceActivationRuntime<'_>> {
+    let authority = state.environment.service_activation().cloned()?;
+    let agent_files = state.agent_files();
+    Some(
+        super::service_activation_tool::ServiceActivationRuntime::new(
+            &mut state.machine,
+            agent_files,
+            authority,
+        ),
+    )
 }
 
 pub(super) async fn dispatch_virtual_tool_call<E, F>(
@@ -813,14 +827,24 @@ where
                 }
             }
             ToolOrchestratorOutcome::PauseTurn => {
-                if let Some(pending) = state.machine.pending_confirmation()
-                    && replays_tool_calls(&pending.checkpoint_type)
-                {
-                    state.machine.set_tool_replay_batch(
-                        pending.checkpoint_id,
-                        tool_calls[idx..].to_vec(),
-                        true,
-                    );
+                if let Some(pending) = state.machine.pending_confirmation() {
+                    if replays_tool_calls(&pending.checkpoint_type) {
+                        state.machine.set_tool_replay_batch(
+                            pending.checkpoint_id,
+                            tool_calls[idx..].to_vec(),
+                            true,
+                        );
+                    } else if pending.checkpoint_type
+                        == crate::approval::SERVICE_ACTIVATION_CHECKPOINT_TYPE
+                        && idx + 1 < tool_calls.len()
+                    {
+                        super::service_activation_tool::record_skipped_trailing_tool_calls(
+                            &mut state.machine,
+                            &tool_calls[idx + 1..],
+                            emit,
+                        )
+                        .await;
+                    }
                 }
                 return Ok(ToolBatchOrchestratorOutcome::PauseTurn);
             }
@@ -878,7 +902,9 @@ fn submission_runtime(state: &mut RuntimeLoopState) -> SubmissionRuntime<'_> {
     } = state;
     let agent_files = environment.agent_files();
     let host_mount_requests = environment.host_mount_requests();
+    let service_activation = environment.service_activation().cloned();
     SubmissionRuntime::new(machine, agent_files, host_mount_requests)
+        .with_service_activation(service_activation)
 }
 
 #[cfg(test)]

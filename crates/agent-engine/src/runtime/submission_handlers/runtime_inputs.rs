@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use crate::{
     agent_machine::{AgentMachine, PendingHostMountRequest},
     runtime::{
+        service_activation::ServiceActivationAuthority,
         transition::{HostMountTerminalResult, NamespaceAgentFiles, NamespaceHostMountRequests},
         turn_support::{
             cancel_current_task, preserve_approved_host_mount,
@@ -16,6 +19,7 @@ pub(crate) struct SubmissionRuntime<'a> {
     pub(super) machine: &'a mut AgentMachine,
     pub(super) agent_files: NamespaceAgentFiles,
     pub(super) host_mount_requests: NamespaceHostMountRequests,
+    pub(super) service_activation: Option<Arc<dyn ServiceActivationAuthority>>,
 }
 
 impl<'a> SubmissionRuntime<'a> {
@@ -28,7 +32,16 @@ impl<'a> SubmissionRuntime<'a> {
             machine,
             agent_files,
             host_mount_requests,
+            service_activation: None,
         }
+    }
+
+    pub(crate) fn with_service_activation(
+        mut self,
+        service_activation: Option<Arc<dyn ServiceActivationAuthority>>,
+    ) -> Self {
+        self.service_activation = service_activation;
+        self
     }
 
     pub(super) async fn cancel_current_task<E, F>(&mut self, emit: &mut E) -> Result<()>

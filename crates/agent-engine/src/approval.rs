@@ -14,6 +14,7 @@ pub const EFFECT_REPLAY_CONTROL_KIND: &str = "effect_replay_confirmation";
 pub const TASK_BUDGET_CHECKPOINT_TYPE: &str = "task_budget_extension";
 /// Request kind a delegated child publishes when only an ancestor can lift its stop.
 pub const INHERITED_BUDGET_CHECKPOINT_TYPE: &str = "inherited_budget";
+pub const SERVICE_ACTIVATION_CHECKPOINT_TYPE: &str = "service_activation";
 
 pub const RUNTIME_CONFIRMATION_CONTROL_SOURCE: &str = "runtime/submission_handlers";
 pub const RUNTIME_CONFIRMATION_CONTROL_VERSION: u64 = 1;
@@ -71,6 +72,22 @@ pub struct PendingConfirmation {
     pub summary: String,
     pub details: serde_json::Value,
     pub options: Vec<String>,
+}
+
+/// Whether a user confirmation choice grants approval.
+pub fn is_approved_confirmation_choice(choice_str: &str) -> bool {
+    matches!(choice_str, "approve" | "allow_session" | "allow_persistent")
+}
+
+/// Normalize a user confirmation choice string for durable rollout checkpoints.
+pub fn checkpoint_choice_for_rollout(choice_str: &str) -> &str {
+    match choice_str {
+        "approve" => "approved",
+        "allow_session" => "allow_session",
+        "allow_persistent" => "allow_persistent",
+        "reject" => "rejected",
+        _ => choice_str,
+    }
 }
 
 /// Budget extension requires an explicit approval rather than an empty response.
@@ -326,5 +343,26 @@ mod tests {
             hints[0]["permission_hints"][0],
             "may require network approval"
         );
+    }
+
+    #[test]
+    fn service_activation_approval_choices_and_rollout_mapping() {
+        assert_eq!(SERVICE_ACTIVATION_CHECKPOINT_TYPE, "service_activation");
+        assert!(is_approved_confirmation_choice("approve"));
+        assert!(is_approved_confirmation_choice("allow_session"));
+        assert!(is_approved_confirmation_choice("allow_persistent"));
+        assert!(!is_approved_confirmation_choice("reject"));
+        assert!(!is_approved_confirmation_choice("modify"));
+
+        assert_eq!(checkpoint_choice_for_rollout("approve"), "approved");
+        assert_eq!(
+            checkpoint_choice_for_rollout("allow_session"),
+            "allow_session"
+        );
+        assert_eq!(
+            checkpoint_choice_for_rollout("allow_persistent"),
+            "allow_persistent"
+        );
+        assert_eq!(checkpoint_choice_for_rollout("reject"), "rejected");
     }
 }

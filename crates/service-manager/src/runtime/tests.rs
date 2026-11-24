@@ -982,5 +982,6 @@ mod four_kind_projection;
 mod input_shadow;
 mod manpages;
 mod root_bindings;
+mod service_activation;
 
 mod root_abort;

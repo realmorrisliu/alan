@@ -5,7 +5,9 @@ use serde_json::json;
 use crate::ROLLBACK_NON_DURABLE_WARNING;
 use crate::approval::{
     RUNTIME_CONFIRMATION_CONTROL_SOURCE, RUNTIME_CONFIRMATION_CONTROL_VERSION,
-    is_effect_replay_confirmation, replays_tool_calls, runtime_confirmation_control_kind,
+    SERVICE_ACTIVATION_CHECKPOINT_TYPE, checkpoint_choice_for_rollout,
+    is_approved_confirmation_choice, is_effect_replay_confirmation, replays_tool_calls,
+    runtime_confirmation_control_kind,
 };
 use crate::tape::ContentPart;
 
@@ -482,19 +484,6 @@ fn first_resume_text(content: &[ContentPart]) -> Option<String> {
     })
 }
 
-fn is_approved_confirmation_choice(choice_str: &str) -> bool {
-    matches!(choice_str, "approve" | "allow_session")
-}
-
-fn checkpoint_choice_for_rollout(choice_str: &str) -> &str {
-    match choice_str {
-        "approve" => "approved",
-        "allow_session" => "allow_session",
-        "reject" => "rejected",
-        _ => choice_str,
-    }
-}
-
 async fn persist_runtime_confirmation_checkpoint(
     machine: &mut AgentMachine,
     agent_files: &NamespaceAgentFiles,
@@ -531,6 +520,31 @@ async fn handle_confirmation_resolution(
     choice_str: &str,
     modifications: Option<String>,
 ) -> Result<RuntimeOpAction> {
+    if pending.checkpoint_type == SERVICE_ACTIVATION_CHECKPOINT_TYPE {
+        let result_json = resolve_service_activation_confirmation(
+            runtime,
+            &pending,
+            choice_str,
+            modifications.as_deref(),
+        )
+        .await;
+        runtime
+            .machine
+            .add_tool_message(&pending.checkpoint_id, "request_service", result_json);
+        persist_runtime_confirmation_checkpoint(
+            runtime.machine,
+            &runtime.agent_files,
+            &pending,
+            choice_str,
+        )
+        .await;
+        return Ok(RuntimeOpAction::RunTurn {
+            turn_kind: TurnRunKind::ResumeTurn,
+            user_input: None,
+            activate_task: false,
+        });
+    }
+
     let replay_tool_batch = if replays_tool_calls(&pending.checkpoint_type) {
         runtime
             .machine
@@ -689,6 +703,67 @@ async fn handle_confirmation_resolution(
         user_input: None,
         activate_task: false,
     })
+}
+
+async fn resolve_service_activation_confirmation(
+    runtime: &SubmissionRuntime<'_>,
+    pending: &crate::approval::PendingConfirmation,
+    choice_str: &str,
+    modifications: Option<&str>,
+) -> serde_json::Value {
+    let request = pending.details.get("request").cloned().and_then(|value| {
+        serde_json::from_value::<crate::runtime::service_activation::ServiceActivationRequest>(
+            value,
+        )
+        .ok()
+    });
+    let Some(req) = request else {
+        return json!({
+            "status": "error",
+            "error": "Pending service activation request payload is missing or invalid.",
+            "choice": choice_str,
+        });
+    };
+
+    if matches!(choice_str, "approve" | "allow_persistent") && modifications.is_none() {
+        let persist_for_root = choice_str == "allow_persistent";
+        let Some(authority) = runtime.service_activation.as_ref() else {
+            return json!({
+                "status": "unavailable",
+                "package_id": req.package_id,
+                "error": "ServiceActivationAuthority is unavailable in this Process.",
+                "choice": choice_str,
+            });
+        };
+        match authority.activate_fileserver(&req, persist_for_root).await {
+            Ok(mounted) => json!({
+                "status": "activated",
+                "package_id": mounted.package_id,
+                "service_id": mounted.service_id,
+                "mount_path": mounted.mount_path,
+                "access": mounted.access.as_str(),
+                "allow_network": mounted.allow_network,
+                "persisted": mounted.persisted,
+                "choice": choice_str,
+            }),
+            Err(error) => json!({
+                "status": "activation_failed",
+                "package_id": req.package_id,
+                "error": error,
+                "choice": choice_str,
+            }),
+        }
+    } else {
+        let mut rejected = json!({
+            "status": "rejected",
+            "package_id": req.package_id,
+            "choice": choice_str,
+        });
+        if let Some(modifications) = modifications {
+            rejected["modifications"] = serde_json::Value::String(modifications.to_string());
+        }
+        rejected
+    }
 }
 
 async fn handle_host_mount_terminal(

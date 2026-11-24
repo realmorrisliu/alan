@@ -127,15 +127,31 @@ pub(super) async fn reset_turn_after_cancelling_host_mounts(
         }
     }
     for request_id in machine.pending_request_ids() {
-        if matches!(
-            machine.pending_yield(&request_id),
-            Some(
-                crate::agent_machine::PendingYield::Confirmation(_)
-                    | crate::agent_machine::PendingYield::StructuredInput(_)
-            )
-        ) {
-            agent_files.cancel_request(&request_id).await?;
-            machine.take_pending(&request_id);
+        let pending = machine.pending_yield(&request_id).cloned();
+        match pending {
+            Some(crate::agent_machine::PendingYield::Confirmation(pending)) => {
+                if pending.checkpoint_type == crate::approval::SERVICE_ACTIVATION_CHECKPOINT_TYPE
+                    && machine
+                        .tool_payload_by_call_id(&pending.checkpoint_id)
+                        .is_none()
+                {
+                    machine.add_tool_message(
+                        &pending.checkpoint_id,
+                        "request_service",
+                        serde_json::json!({
+                            "status": "cancelled",
+                            "error": "Service activation request was cancelled before user approval.",
+                        }),
+                    );
+                }
+                agent_files.cancel_request(&request_id).await?;
+                machine.take_pending(&request_id);
+            }
+            Some(crate::agent_machine::PendingYield::StructuredInput(_)) => {
+                agent_files.cancel_request(&request_id).await?;
+                machine.take_pending(&request_id);
+            }
+            Some(crate::agent_machine::PendingYield::HostMount(_)) | None => {}
         }
     }
     let pending_host_mounts = machine

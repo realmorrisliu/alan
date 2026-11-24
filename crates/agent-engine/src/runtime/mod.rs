@@ -27,6 +27,8 @@ mod mount_request_tool;
 mod prompt_cache;
 pub(crate) mod queue_publication;
 mod response_guardrails;
+pub mod service_activation;
+mod service_activation_tool;
 mod shadow_evaluation;
 mod steering_queue;
 mod subagent_tool;
