@@ -458,9 +458,9 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
             request.system_prompt.as_deref() == Some(alan_agent_engine::prompts::COMPACT_PROMPT)
         })
         .count();
-    // The added command crosses the existing message-count compaction threshold.
-    assert_eq!(compactions, 1);
-    assert_eq!(requests.len() - compactions, 11);
+    // With a 128k context window, low token utilization does not trigger message-count compaction.
+    assert_eq!(compactions, 0);
+    assert_eq!(requests.len(), 11);
     let persisted_id = submit_command(&shell,
         "printf 'retained stdout\\n'; printf 'retained stderr\\n' >&2; printf x >> restart-marker.txt; exit 7"
     ).await;
