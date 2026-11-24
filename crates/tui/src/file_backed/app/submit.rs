@@ -88,7 +88,7 @@ impl FileBackedApp {
 
         let text = self.composer.text().to_owned();
         if text.trim().is_empty()
-            && !(self.input_intent == InputIntent::Agent && !self.pending_attachments.is_empty())
+            && !(self.input_intent != InputIntent::Command && !self.pending_attachments.is_empty())
         {
             if self.input_intent != InputIntent::Agent {
                 self.notice = Some("Enter content after the input prefix.".into());
@@ -248,7 +248,7 @@ impl FileBackedApp {
         }
         let text = self.composer.text().trim();
         let has_agent_attachments =
-            self.input_intent == InputIntent::Agent && !self.pending_attachments.is_empty();
+            self.input_intent != InputIntent::Command && !self.pending_attachments.is_empty();
         (!text.is_empty() || has_agent_attachments)
             && (self.input_intent != InputIntent::Agent || !looks_like_slash_command(text))
     }

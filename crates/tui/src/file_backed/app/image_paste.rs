@@ -115,7 +115,7 @@ impl FileBackedApp {
             String::new()
         };
         let show_remove_hint =
-            self.composer.text().is_empty() && self.input_intent == InputIntent::Agent;
+            self.composer.text().is_empty() && self.input_intent != InputIntent::Command;
         let remove_hint = if show_remove_hint {
             " · Backspace remove"
         } else {

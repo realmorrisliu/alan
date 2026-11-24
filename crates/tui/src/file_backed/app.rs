@@ -714,7 +714,7 @@ impl FileBackedApp {
                     && !key.modifiers.contains(KeyModifiers::ALT)
                     && self.composer.text().is_empty()
                 {
-                    if self.input_intent == InputIntent::Agent
+                    if self.input_intent != InputIntent::Command
                         && !self.pending_attachments.is_empty()
                     {
                         self.pop_last_pending_attachment();

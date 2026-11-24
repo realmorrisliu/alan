@@ -74,6 +74,10 @@ pub(crate) struct StreamReconciler {
     /// client attached. If it was only hydrated, output bytes before the live
     /// tail edge cannot arrive later.
     current_turn_live_boundary: bool,
+    /// Whether the session attached mid-turn after a hydrated `user` record
+    /// before its `assistant` record arrived (so its output bytes sit behind
+    /// the live tail edge and will never arrive).
+    hydrated_mid_turn: bool,
 }
 
 impl StreamReconciler {
@@ -97,6 +101,7 @@ impl StreamReconciler {
         self.held.clear();
         self.current_turn_live_boundary = false;
         self.awaiting_boundary = role == "assistant";
+        self.hydrated_mid_turn = role == "user";
     }
 
     /// Filter and place a stream chunk. Suppression consumes bytes a record
@@ -143,6 +148,7 @@ impl StreamReconciler {
     pub(crate) fn on_user_record(&mut self) {
         self.awaiting_boundary = false;
         self.current_turn_live_boundary = true;
+        self.hydrated_mid_turn = false;
     }
 
     /// After a user record, return buffered next-turn stream bytes to render
@@ -168,6 +174,7 @@ impl StreamReconciler {
         self.preview_open = false;
         self.awaiting_boundary = true;
         self.current_turn_live_boundary = false;
+        self.hydrated_mid_turn = false;
         decision
     }
 
@@ -185,11 +192,11 @@ impl StreamReconciler {
                     return AssistantDecision::Push(content);
                 }
             }
-            if self.current_turn_live_boundary {
-                // The turn started after attach; if the tape beat the output
-                // tail, the missing bytes can still arrive and must be
-                // consumed. Hydrated turns do not get this suppression: their
-                // old output bytes are behind the live tail edge.
+            if self.current_turn_live_boundary || !self.hydrated_mid_turn {
+                // Live turns (including text-less attachment turns whose user tape record
+                // is omitted) emit their output on `io/output`; arm suppression so late
+                // bytes are consumed instead of leaking into the next turn. Hydrated
+                // mid-turn attachments (`hydrated_mid_turn`) never arm suppression.
                 self.suppress.push_str(&content);
             } else {
                 self.suppress.clear();
@@ -371,6 +378,51 @@ mod tests {
         );
         assert_eq!(rec.on_stream("hel".to_string()), StreamAction::Drop);
         assert_eq!(rec.on_stream("lo".to_string()), StreamAction::Drop);
+    }
+
+    #[test]
+    fn tape_first_turn_without_user_boundary_suppresses_late_output_without_leaking() {
+        let mut m = Model::default();
+        m.user_record("turn 1");
+        m.stream("ok 1");
+        m.assistant_record("ok 1");
+        // Image-only turn omits user_record; assistant tape arrives before io/output.
+        m.assistant_record("image answer");
+        m.stream("image ");
+        m.stream("answer");
+        m.user_record("turn 3");
+        m.stream("ok 3");
+        m.assistant_record("ok 3");
+
+        assert_eq!(
+            m.messages(),
+            vec![
+                Cell::User("turn 1".into()),
+                Cell::Assistant("ok 1".into()),
+                Cell::Assistant("image answer".into()),
+                Cell::User("turn 3".into()),
+                Cell::Assistant("ok 3".into()),
+            ]
+        );
+
+        // Also works right after a hydrated completed session (on_hydrated_message_record("assistant")).
+        let mut hydrated = Model::default();
+        hydrated.rec.on_hydrated_message_record("user");
+        hydrated.rec.on_hydrated_message_record("assistant");
+        hydrated.assistant_record("first live image answer");
+        hydrated.stream("first live ");
+        hydrated.stream("image answer");
+        hydrated.user_record("next");
+        hydrated.stream("next answer");
+        hydrated.assistant_record("next answer");
+        assert_eq!(
+            hydrated.messages(),
+            vec![
+                Cell::Assistant("first live image answer".into()),
+                Cell::User("next".into()),
+                Cell::Assistant("next answer".into()),
+            ]
+        );
     }
 
     #[test]

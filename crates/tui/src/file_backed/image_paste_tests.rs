@@ -324,12 +324,12 @@ fn attaching_second_image_before_queue_ack_does_not_get_wiped_and_reconciles_cle
         "newly pasted second image must survive first submit acknowledgement"
     );
 
-    // Image-only turn response without a user tape line still settles without leaking to next turn.
+    // Image-only turn response (tape-first: assistant tape arrives before io/output) settles cleanly.
     app.apply_tape_record(super::super::tests::tape_message("user", "turn 1"));
+    app.push_output("ok 1".into());
     app.apply_tape_record(super::super::tests::tape_message("assistant", "ok 1"));
-    app.push_output("image answer".into());
-    let mut rec = super::super::file_surface::TapeRecordV1 {
-        end_offset: 0,
+    app.apply_tape_record(super::super::file_surface::TapeRecordV1 {
+        end_offset: 100,
         version: 1,
         kind: "message".into(),
         role: "assistant".into(),
@@ -337,21 +337,110 @@ fn attaching_second_image_before_queue_ack_does_not_get_wiped_and_reconciles_cle
         input_intent: None,
         submission_id: Some(first_record.submission_id.clone()),
         related_submission_ids: Vec::new(),
-    };
-    rec.end_offset = 100;
-    app.apply_tape_record(rec);
+    });
+    app.push_output("image ".into());
+    app.push_output("answer".into());
     assert!(
         app.local_inputs[&first_record.submission_id].tape_seen,
         "correlated assistant record settles local attachment input"
     );
     app.apply_tape_record(super::super::tests::tape_message("user", "turn 3"));
+    app.push_output("ok 3".into());
+    assert!(
+        !app.transcript
+            .iter()
+            .any(|c| matches!(c, HistoryCell::Assistant(t) if t.contains("image answerok 3"))),
+        "tape-first image answer must not leak into turn 3: {:?}",
+        app.transcript
+    );
     assert_eq!(
         app.transcript
             .iter()
-            .filter(|c| matches!(c, HistoryCell::Assistant(t) if t == "image answer"))
+            .filter(|c| matches!(c, HistoryCell::Assistant(t) if t.contains("image answer")))
             .count(),
         1,
-        "held image answer must not duplicate into turn 3: {:?}",
+        "tape-first image answer must appear exactly once: {:?}",
         app.transcript
     );
+
+    // Stream-first case also settles cleanly without leaking.
+    app.apply_tape_record(super::super::tests::tape_message("assistant", "ok 3"));
+    app.push_output("stream-first answer".into());
+    app.apply_tape_record(super::super::file_surface::TapeRecordV1 {
+        end_offset: 200,
+        version: 1,
+        kind: "message".into(),
+        role: "assistant".into(),
+        content: "stream-first answer".into(),
+        input_intent: None,
+        submission_id: Some(first_record.submission_id.clone()),
+        related_submission_ids: Vec::new(),
+    });
+    app.apply_tape_record(super::super::tests::tape_message("user", "turn 4"));
+    app.push_output("ok 4".into());
+    assert!(
+        !app.transcript.iter().any(
+            |c| matches!(c, HistoryCell::Assistant(t) if t.contains("stream-first answerok 4"))
+        ),
+        "stream-first image answer must not leak into turn 4: {:?}",
+        app.transcript
+    );
+    assert_eq!(
+        app.transcript
+            .iter()
+            .filter(|c| matches!(c, HistoryCell::Assistant(t) if t.contains("stream-first answer")))
+            .count(),
+        1,
+        "stream-first image answer must appear exactly once: {:?}",
+        app.transcript
+    );
+}
+
+#[test]
+fn force_agent_prefix_supports_image_only_submit_steer_preview_and_backspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let img = dir.path().join("force-agent.png");
+    std::fs::write(&img, MINIMAL_PNG).unwrap();
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.handle_key(key(KeyCode::Char(':'), KeyModifiers::NONE));
+    assert_eq!(app.input_intent, InputIntent::ForceAgent);
+    assert!(app.composer.text().is_empty());
+
+    app.dispatch(FileBackedEvent::Terminal(TerminalEvent::Paste(
+        img.display().to_string(),
+    )));
+    assert_eq!(app.pending_attachments.len(), 1);
+    assert!(app.enter_submits_agent_task());
+
+    let preview = app.attachment_preview_lines(80)[0].to_string();
+    assert!(preview.contains("Backspace remove"), "{preview}");
+
+    let Some(FileBackedAction::Submit(follow)) =
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE))
+    else {
+        panic!("expected ForceAgent FollowUp submit");
+    };
+    assert_eq!(follow.intent, InputIntent::ForceAgent);
+    assert_eq!(follow.mode, InputMode::FollowUp);
+    assert!(follow.body.is_empty());
+    assert_eq!(follow.parts.len(), 1);
+    follow.validate().unwrap();
+
+    // Ctrl+S Steer also succeeds with ForceAgent image-only attachment.
+    app.activity = UiActivitySnapshot::running(10);
+    let Some(FileBackedAction::Submit(steer)) =
+        app.handle_key(key(KeyCode::Char('s'), KeyModifiers::CONTROL))
+    else {
+        panic!("expected ForceAgent Steer submit");
+    };
+    assert_eq!(steer.intent, InputIntent::ForceAgent);
+    assert_eq!(steer.mode, InputMode::Steer);
+    assert_eq!(steer.parts.len(), 1);
+    steer.validate().unwrap();
+
+    // Backspace pops attachment while keeping ForceAgent intent untouched.
+    app.handle_key(key(KeyCode::Backspace, KeyModifiers::NONE));
+    assert!(app.pending_attachments.is_empty());
+    assert_eq!(app.input_intent, InputIntent::ForceAgent);
 }
