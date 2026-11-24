@@ -251,6 +251,19 @@ fn should_enable_kitty_keyboard(term: &str, is_tty: bool) -> bool {
     is_tty && term != "dumb"
 }
 
+/// Clear the visible screen and move the cursor to `(0, 0)` on interactive VT terminals without
+/// purging terminal scrollback history.
+pub(crate) fn clear_startup_screen<W: Write>(
+    writer: &mut W,
+    term: &str,
+    interactive: bool,
+) -> std::io::Result<()> {
+    if interactive && !term.eq_ignore_ascii_case("dumb") {
+        execute!(writer, Clear(ClearType::All), MoveTo(0, 0))?;
+    }
+    Ok(())
+}
+
 fn push_kitty_keyboard_flags<W: Write>(writer: &mut W) -> std::io::Result<()> {
     execute!(
         writer,
@@ -416,6 +429,8 @@ impl TerminalSession {
         {
             KITTY_KEYBOARD_ACTIVE.store(true, Ordering::SeqCst);
         }
+        clear_startup_screen(&mut out, &term, is_interactive_terminal())
+            .context("failed to clear startup screen")?;
         let mut terminal = build_inline_terminal(out, 1)?;
         terminal.clear().context("failed to clear terminal")?;
         startup_guard.disarm();
@@ -479,12 +494,11 @@ impl TerminalSession {
         }
 
         let top = self.terminal.get_frame().area().y;
-        let clear_y = inline_clear_y(top, terminal_size.height, height);
-        execute!(
+        prepare_inline_height_transition(
             self.terminal.backend_mut(),
-            MoveTo(0, clear_y),
-            Clear(ClearType::FromCursorDown),
-            MoveTo(0, clear_y)
+            top,
+            terminal_size.height,
+            height,
         )
         .context("failed to clear the previous inline viewport")?;
 
@@ -541,6 +555,34 @@ impl TerminalSession {
 /// clearing from `min(top, screen_height - new_height)` wipes prior scrollback/banner cells.
 pub(crate) fn inline_clear_y(top: u16, screen_height: u16, new_height: u16) -> u16 {
     top.min(screen_height.saturating_sub(new_height))
+}
+
+/// Prepare the terminal for rebuilding an inline viewport of `new_height` rows starting from `top`.
+pub(crate) fn prepare_inline_height_transition<W: Write>(
+    writer: &mut W,
+    top: u16,
+    screen_height: u16,
+    new_height: u16,
+) -> std::io::Result<()> {
+    let clear_y = inline_clear_y(top, screen_height, new_height);
+    if new_height < screen_height && top.saturating_add(new_height) > screen_height {
+        // Partial upward expansion at the bottom of the screen: clear only the old live viewport,
+        // then scroll committed rows above `top` into terminal scrollback instead of erasing them.
+        let deficit = top.saturating_add(new_height).saturating_sub(screen_height);
+        execute!(
+            writer,
+            MoveTo(0, top),
+            Clear(ClearType::FromCursorDown),
+            MoveTo(0, screen_height.saturating_sub(1))
+        )?;
+        writer.write_all("\n".repeat(deficit as usize).as_bytes())?;
+    }
+    execute!(
+        writer,
+        MoveTo(0, clear_y),
+        Clear(ClearType::FromCursorDown),
+        MoveTo(0, clear_y)
+    )
 }
 
 /// Restore terminal modes, write `\r\n`, and suspend the current foreground process via `SIGTSTP`.
@@ -772,5 +814,81 @@ mod tests {
         assert_eq!(inline_clear_y(2, 24, 5), 2);
         // Zero-anchored expansion stays at 0.
         assert_eq!(inline_clear_y(0, 24, 15), 0);
+    }
+
+    #[test]
+    fn clear_startup_screen_clears_visible_screen_without_purging_scrollback() {
+        let mut vt_out = Vec::new();
+        clear_startup_screen(&mut vt_out, "xterm-256color", true).unwrap();
+        assert_eq!(vt_out, b"\x1b[2J\x1b[1;1H");
+        assert!(!vt_out.windows(4).any(|w| w == b"\x1b[3J"));
+
+        for (term, interactive) in [("dumb", true), ("DUMB", true), ("xterm-256color", false)] {
+            let mut out = Vec::new();
+            clear_startup_screen(&mut out, term, interactive).unwrap();
+            assert!(
+                out.is_empty(),
+                "expected no bytes for ({term}, {interactive})"
+            );
+        }
+    }
+
+    #[test]
+    fn prepare_inline_height_transition_handles_fullscreen_upward_scroll_and_in_bounds() {
+        // Case 1: full-screen overlay clears from row 0 without extra scrolling.
+        let mut fullscreen = Vec::new();
+        prepare_inline_height_transition(&mut fullscreen, 4, 24, 24).unwrap();
+        assert_eq!(fullscreen, b"\x1b[1;1H\x1b[J\x1b[1;1H");
+
+        // Case 2: partial upward expansion clears old live viewport, scrolls committed rows up,
+        // and leaves the rebuilt viewport anchored at clear_y.
+        let mut partial = Vec::new();
+        prepare_inline_height_transition(&mut partial, 12, 24, 15).unwrap();
+        assert_eq!(
+            partial,
+            b"\x1b[13;1H\x1b[J\x1b[24;1H\n\n\n\x1b[10;1H\x1b[J\x1b[10;1H"
+        );
+
+        let mut parser = vt100::Parser::new(
+            std::num::NonZeroU16::new(24).unwrap(),
+            std::num::NonZeroU16::new(80).unwrap(),
+            16,
+        );
+        for row in 0..12 {
+            parser.process(format!("committed-{row:02}\r\n").as_bytes());
+        }
+        for row in 12..16 {
+            parser.process(format!("old-live-{row:02}\r\n").as_bytes());
+        }
+        parser.process(&partial);
+        assert_eq!(parser.screen().cursor_position(), (9, 0));
+        let active = parser.screen().contents();
+        assert!(
+            !active.contains("old-live-"),
+            "old live viewport leaked:\n{active}"
+        );
+        for row in 3..12 {
+            assert!(
+                active.contains(&format!("committed-{row:02}")),
+                "missing committed-{row:02} on active screen:\n{active}"
+            );
+        }
+        parser.screen_mut().set_scrollback(usize::MAX);
+        let scrolled = parser.screen().contents();
+        for row in 0..3 {
+            assert!(
+                scrolled.contains(&format!("committed-{row:02}")),
+                "missing committed-{row:02} in scrollback:\n{scrolled}"
+            );
+        }
+
+        // Case 3: in-bounds growth and shrink keep clearing from `top` without scrolling.
+        let mut in_bounds_grow = Vec::new();
+        prepare_inline_height_transition(&mut in_bounds_grow, 10, 24, 8).unwrap();
+        assert_eq!(in_bounds_grow, b"\x1b[11;1H\x1b[J\x1b[11;1H");
+
+        let mut in_bounds_shrink = Vec::new();
+        prepare_inline_height_transition(&mut in_bounds_shrink, 2, 24, 5).unwrap();
+        assert_eq!(in_bounds_shrink, b"\x1b[3;1H\x1b[J\x1b[3;1H");
     }
 }

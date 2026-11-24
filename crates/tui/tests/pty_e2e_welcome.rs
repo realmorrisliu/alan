@@ -30,19 +30,31 @@ struct PtyScreen {
 
 impl PtyScreen {
     fn new(rows: u16, cols: u16) -> Self {
+        Self::new_with_scrollback(rows, cols, 0)
+    }
+
+    fn new_with_scrollback(rows: u16, cols: u16, scrollback_len: usize) -> Self {
         Self {
             shared: Arc::new((
                 Mutex::new(PtyState {
                     parser: vt100::Parser::new(
                         NonZeroU16::new(rows).expect("nonzero rows"),
                         NonZeroU16::new(cols).expect("nonzero cols"),
-                        0,
+                        scrollback_len,
                     ),
                     eof: false,
                 }),
                 Condvar::new(),
             )),
         }
+    }
+
+    fn scrollback_contents(&self) -> String {
+        let mut guard = self.shared.0.lock().expect("pty lock");
+        guard.parser.screen_mut().set_scrollback(usize::MAX);
+        let contents = guard.parser.screen().contents();
+        guard.parser.screen_mut().set_scrollback(0);
+        contents
     }
 
     fn push_bytes(&self, bytes: &[u8]) {
@@ -339,5 +351,74 @@ fn run_welcome_case(extra_env: &[(&str, &OsStr)], expect_banner: bool) -> Result
 fn pty_e2e_empty_session_welcome_and_no_welcome_flag() -> Result<()> {
     run_welcome_case(&[], true)?;
     run_welcome_case(&[("ALAN_NO_WELCOME", OsStr::new("1"))], false)?;
+    Ok(())
+}
+
+#[test]
+fn pty_e2e_startup_clears_noisy_screen_and_keeps_rabbit_banner() -> Result<()> {
+    let (master, slave) = open_pty(24, 80)?;
+    let master_fd = std::os::fd::AsRawFd::as_raw_fd(&master);
+    let master_read = master.try_clone().context("clone master")?;
+    let master_write = Arc::new(Mutex::new(std::fs::File::from(master)));
+
+    let screen = PtyScreen::new_with_scrollback(24, 80, 64);
+    let reader = spawn_reader(master_read, master_write.clone(), screen.clone());
+
+    {
+        let mut slave_out = std::fs::File::from(slave.try_clone().context("clone slave")?);
+        for idx in 0..8 {
+            writeln!(slave_out, "prior-scrollback-{idx:02}\r")?;
+        }
+        writeln!(slave_out, "--- noisy divider ---\r")?;
+        for idx in 0..20 {
+            writeln!(slave_out, "old output line {idx:02}\r")?;
+        }
+        slave_out.flush()?;
+    }
+
+    screen.wait_for("noisy pre-launch output", Duration::from_secs(3), |s| {
+        s.contains("--- noisy divider ---") && s.contains("old output line 19")
+    })?;
+
+    let child = spawn_child(&slave, master_fd, &[])?;
+    drop(slave);
+    let mut child = ChildGuard::new(child);
+
+    let screen_out = screen.wait_for(
+        "welcome frame after noisy screen",
+        Duration::from_secs(6),
+        |s| {
+            s.contains("Select project")
+                && s.contains(": ")
+                && s.contains("ALAN(1) · alan9")
+                && s.contains("(__)__)")
+        },
+    )?;
+
+    assert!(
+        !screen_out.contains("--- noisy") && !screen_out.contains("old output"),
+        "noisy pre-launch lines leaked onto active screen:\n{screen_out}"
+    );
+    for rabbit_line in ["(\\_/)", "=(o.o)=", "/ >[]", "(__)__)"] {
+        assert!(
+            screen_out.contains(rabbit_line),
+            "missing rabbit banner line `{rabbit_line}`:\n{screen_out}"
+        );
+    }
+    let scrollback = screen.scrollback_contents();
+    assert!(
+        scrollback.contains("prior-scrollback-00"),
+        "startup clear purged scrollback history:\n{scrollback}"
+    );
+
+    {
+        let mut w = master_write.lock().expect("write lock");
+        w.write_all(b"\x11")?;
+        w.flush()?;
+    }
+    let status = child.wait_with_timeout(Duration::from_secs(5))?;
+    assert!(status.success(), "welcome pty exited with {status:?}");
+    drop(master_write);
+    let _ = reader.join();
     Ok(())
 }
