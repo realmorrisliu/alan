@@ -129,6 +129,7 @@ pub(super) struct CachedPull {
 
 #[derive(Default)]
 pub(super) struct RepoCache {
+    pub(super) synced: bool,
     pub(super) etag: Option<String>,
     pub(super) issues: BTreeMap<u64, CachedIssue>,
     pub(super) pulls: BTreeMap<u64, CachedPull>,
@@ -235,6 +236,7 @@ impl FsState {
         self.last_error = None;
 
         let cache = self.repos.entry(slug.clone()).or_default();
+        cache.synced = true;
         if let Some(new_etag) = data.etag {
             cache.etag = Some(new_etag);
         }

@@ -358,15 +358,15 @@ impl<B: GithubBackend> GithubFs<B> {
                     .map(|r| r.repo),
             )),
             Node::IssuesDir(slug) => {
-                let mut nums: BTreeSet<u64> = self
-                    .state
-                    .lock()
-                    .await
-                    .repos
-                    .get(slug)
-                    .map(|r| r.issues.keys().copied().collect())
-                    .unwrap_or_default();
-                if let Ok(more) = self.backend.list_issue_numbers(slug).await {
+                let (synced, mut nums): (bool, BTreeSet<u64>) = {
+                    let state = self.state.lock().await;
+                    state
+                        .repos
+                        .get(slug)
+                        .map(|r| (r.synced, r.issues.keys().copied().collect()))
+                        .unwrap_or_default()
+                };
+                if !synced && let Ok(more) = self.backend.list_issue_numbers(slug).await {
                     nums.extend(more);
                 }
                 Ok(join_lines(
@@ -396,15 +396,15 @@ impl<B: GithubBackend> GithubFs<B> {
                 encode_pretty_json(&self.read_issue_record(slug, *n, true).await?.comments)
             }
             Node::PullsDir(slug) => {
-                let mut nums: BTreeSet<u64> = self
-                    .state
-                    .lock()
-                    .await
-                    .repos
-                    .get(slug)
-                    .map(|r| r.pulls.keys().copied().collect())
-                    .unwrap_or_default();
-                if let Ok(more) = self.backend.list_pull_numbers(slug).await {
+                let (synced, mut nums): (bool, BTreeSet<u64>) = {
+                    let state = self.state.lock().await;
+                    state
+                        .repos
+                        .get(slug)
+                        .map(|r| (r.synced, r.pulls.keys().copied().collect()))
+                        .unwrap_or_default()
+                };
+                if !synced && let Ok(more) = self.backend.list_pull_numbers(slug).await {
                     nums.extend(more);
                 }
                 Ok(join_lines(nums.into_iter().map(|n| n.to_string())))
@@ -719,6 +719,7 @@ impl<B: GithubBackend + 'static> FileServer for GithubFs<B> {
         };
         let length = match stream {
             Some(stream) => stream.len().await,
+            None if qid.kind == FileKind::Dir => 0,
             None => self.computed_bytes(&node).await?.len() as u64,
         };
         Ok(Stat {

@@ -521,16 +521,56 @@ async fn dispatcher_rolls_back_bookkeeping_and_recovers_after_route_failure() {
     );
 }
 
-struct OnDemandOnlyBackend(MemoryGithubBackend);
+struct CountingGithubBackend {
+    inner: MemoryGithubBackend,
+    empty_list_repos: bool,
+    list_repos_calls: std::sync::atomic::AtomicUsize,
+    list_issue_numbers_calls: std::sync::atomic::AtomicUsize,
+    list_pull_numbers_calls: std::sync::atomic::AtomicUsize,
+}
+
+impl CountingGithubBackend {
+    fn new(inner: MemoryGithubBackend) -> Self {
+        Self {
+            inner,
+            empty_list_repos: false,
+            list_repos_calls: std::sync::atomic::AtomicUsize::new(0),
+            list_issue_numbers_calls: std::sync::atomic::AtomicUsize::new(0),
+            list_pull_numbers_calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn on_demand_only(inner: MemoryGithubBackend) -> Self {
+        Self {
+            empty_list_repos: true,
+            ..Self::new(inner)
+        }
+    }
+
+    fn counts(&self) -> (usize, usize, usize) {
+        use std::sync::atomic::Ordering::SeqCst;
+        (
+            self.list_repos_calls.load(SeqCst),
+            self.list_issue_numbers_calls.load(SeqCst),
+            self.list_pull_numbers_calls.load(SeqCst),
+        )
+    }
+}
 
 #[async_trait::async_trait]
-impl GithubBackend for OnDemandOnlyBackend {
+impl GithubBackend for CountingGithubBackend {
     async fn list_repos(&self) -> Result<Vec<RepoSlug>, GithubBackendError> {
-        Ok(Vec::new())
+        self.list_repos_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.empty_list_repos {
+            Ok(Vec::new())
+        } else {
+            self.inner.list_repos().await
+        }
     }
 
     async fn has_repo(&self, repo: &RepoSlug) -> Result<bool, GithubBackendError> {
-        self.0.has_repo(repo).await
+        self.inner.has_repo(repo).await
     }
 
     async fn sync_repo(
@@ -538,11 +578,13 @@ impl GithubBackend for OnDemandOnlyBackend {
         repo: &RepoSlug,
         if_none_match: Option<&str>,
     ) -> Result<SyncRepoOutcome, GithubBackendError> {
-        self.0.sync_repo(repo, if_none_match).await
+        self.inner.sync_repo(repo, if_none_match).await
     }
 
     async fn list_issue_numbers(&self, repo: &RepoSlug) -> Result<Vec<u64>, GithubBackendError> {
-        self.0.list_issue_numbers(repo).await
+        self.list_issue_numbers_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.list_issue_numbers(repo).await
     }
 
     async fn get_issue(
@@ -550,7 +592,7 @@ impl GithubBackend for OnDemandOnlyBackend {
         repo: &RepoSlug,
         number: u64,
     ) -> Result<IssueRecord, GithubBackendError> {
-        self.0.get_issue(repo, number).await
+        self.inner.get_issue(repo, number).await
     }
 
     async fn create_issue(
@@ -558,7 +600,7 @@ impl GithubBackend for OnDemandOnlyBackend {
         repo: &RepoSlug,
         req: NewIssueRequest,
     ) -> Result<IssueRecord, GithubBackendError> {
-        self.0.create_issue(repo, req).await
+        self.inner.create_issue(repo, req).await
     }
 
     async fn add_issue_comment(
@@ -567,7 +609,7 @@ impl GithubBackend for OnDemandOnlyBackend {
         number: u64,
         body: String,
     ) -> Result<GithubComment, GithubBackendError> {
-        self.0.add_issue_comment(repo, number, body).await
+        self.inner.add_issue_comment(repo, number, body).await
     }
 
     async fn add_issue_label(
@@ -576,7 +618,7 @@ impl GithubBackend for OnDemandOnlyBackend {
         number: u64,
         label: String,
     ) -> Result<GithubIssueMeta, GithubBackendError> {
-        self.0.add_issue_label(repo, number, label).await
+        self.inner.add_issue_label(repo, number, label).await
     }
 
     async fn remove_issue_label(
@@ -585,7 +627,7 @@ impl GithubBackend for OnDemandOnlyBackend {
         number: u64,
         label: String,
     ) -> Result<GithubIssueMeta, GithubBackendError> {
-        self.0.remove_issue_label(repo, number, label).await
+        self.inner.remove_issue_label(repo, number, label).await
     }
 
     async fn close_issue(
@@ -593,11 +635,13 @@ impl GithubBackend for OnDemandOnlyBackend {
         repo: &RepoSlug,
         number: u64,
     ) -> Result<GithubIssueMeta, GithubBackendError> {
-        self.0.close_issue(repo, number).await
+        self.inner.close_issue(repo, number).await
     }
 
     async fn list_pull_numbers(&self, repo: &RepoSlug) -> Result<Vec<u64>, GithubBackendError> {
-        self.0.list_pull_numbers(repo).await
+        self.list_pull_numbers_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.list_pull_numbers(repo).await
     }
 
     async fn get_pull(
@@ -605,7 +649,7 @@ impl GithubBackend for OnDemandOnlyBackend {
         repo: &RepoSlug,
         number: u64,
     ) -> Result<PullRecord, GithubBackendError> {
-        self.0.get_pull(repo, number).await
+        self.inner.get_pull(repo, number).await
     }
 
     async fn get_pull_checks(
@@ -614,7 +658,7 @@ impl GithubBackend for OnDemandOnlyBackend {
         number: u64,
         head_sha: &str,
     ) -> Result<GithubPullChecks, GithubBackendError> {
-        self.0.get_pull_checks(repo, number, head_sha).await
+        self.inner.get_pull_checks(repo, number, head_sha).await
     }
 
     async fn add_pull_comment(
@@ -623,7 +667,7 @@ impl GithubBackend for OnDemandOnlyBackend {
         number: u64,
         body: String,
     ) -> Result<GithubComment, GithubBackendError> {
-        self.0.add_pull_comment(repo, number, body).await
+        self.inner.add_pull_comment(repo, number, body).await
     }
 }
 
@@ -675,7 +719,9 @@ async fn on_demand_readonly_mount_walks_and_reads_without_ctl_write() {
         },
     );
 
-    let fs = Arc::new(GithubFs::new(Arc::new(OnDemandOnlyBackend(inner))));
+    let fs = Arc::new(GithubFs::new(Arc::new(
+        CountingGithubBackend::on_demand_only(inner),
+    )));
     let mut ns = Namespace::new();
     ns.mount(
         "/mnt/github",
@@ -741,4 +787,194 @@ async fn on_demand_readonly_mount_walks_and_reads_without_ctl_write() {
             "bad owner `{bad_owner}` should fail"
         );
     }
+}
+
+#[tokio::test]
+async fn directory_stat_skips_backend_listing_calls() {
+    let inner = MemoryGithubBackend::new();
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+    inner.seed_issue(
+        &slug,
+        IssueRecord {
+            meta: GithubIssueMeta {
+                number: 1,
+                title: "Stat check".to_string(),
+                author: "morris".to_string(),
+                state: "open".to_string(),
+                labels: vec![],
+                updated_at: "2026-11-24T00:00:00Z".to_string(),
+                url: "https://github.com/acme/alan/issues/1".to_string(),
+            },
+            body: "body".to_string(),
+            comments: vec![],
+        },
+    );
+    inner.push_event(
+        &slug,
+        GithubEvent {
+            cursor: 0,
+            event_id: "ev-stat-1".to_string(),
+            kind: "issue_opened".to_string(),
+            actor: "morris".to_string(),
+            repo: "acme/alan".to_string(),
+            number: Some(1),
+            labels: vec![],
+            head_sha: None,
+            target_kind: Some("issue".to_string()),
+            branch: None,
+            timestamp: None,
+        },
+    );
+    let backend = Arc::new(CountingGithubBackend::new(inner));
+    let fs = Arc::new(
+        GithubFs::with_watched_repos(backend.clone(), [slug])
+            .await
+            .unwrap(),
+    );
+    fs.sync_watched_repos().await.unwrap();
+    assert_eq!(backend.counts(), (0, 0, 0));
+
+    let dir_paths: &[&[&str]] = &[
+        &["repos"],
+        &["repos", "acme"],
+        &["repos", "acme", "alan"],
+        &["repos", "acme", "alan", "issues"],
+        &["repos", "acme", "alan", "pulls"],
+    ];
+    for (idx, path) in dir_paths.iter().enumerate() {
+        let fid = Fid((idx + 10) as u64);
+        let names: Vec<String> = path.iter().map(|s| (*s).to_string()).collect();
+        fs.walk(Fid::ROOT, fid, &names).await.unwrap();
+        let st = fs.stat(fid).await.unwrap();
+        assert_eq!(st.qid.kind, FileKind::Dir);
+        assert_eq!(st.length, 0);
+        fs.clunk(fid).await.unwrap();
+    }
+    assert_eq!(backend.counts(), (0, 0, 0));
+
+    // Events stream and regular files still report computed byte lengths.
+    fs.walk(Fid::ROOT, Fid(20), &["events".into()])
+        .await
+        .unwrap();
+    assert!(fs.stat(Fid(20)).await.unwrap().length > 0);
+    fs.clunk(Fid(20)).await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(21), &["status".into()])
+        .await
+        .unwrap();
+    assert!(fs.stat(Fid(21)).await.unwrap().length > 0);
+    fs.clunk(Fid(21)).await.unwrap();
+    assert_eq!(backend.counts(), (0, 0, 0));
+}
+
+#[tokio::test]
+async fn synced_repo_dirs_read_cache_first_while_unsynced_repo_queries_on_demand() {
+    let inner = MemoryGithubBackend::new();
+    let synced_slug = RepoSlug::parse("acme/alan").unwrap();
+    let unsynced_slug = RepoSlug::parse("acme/other").unwrap();
+    for (slug, issue_num, pull_num) in [(&synced_slug, 10, 20), (&unsynced_slug, 30, 40)] {
+        inner.seed_issue(
+            slug,
+            IssueRecord {
+                meta: GithubIssueMeta {
+                    number: issue_num,
+                    title: format!("Issue {issue_num}"),
+                    author: "morris".to_string(),
+                    state: "open".to_string(),
+                    labels: vec![],
+                    updated_at: "2026-11-24T00:00:00Z".to_string(),
+                    url: format!("https://github.com/{slug}/issues/{issue_num}"),
+                },
+                body: "body".to_string(),
+                comments: vec![],
+            },
+        );
+        inner.seed_pull(
+            slug,
+            PullRecord {
+                meta: GithubPullMeta {
+                    number: pull_num,
+                    title: format!("PR {pull_num}"),
+                    author: "morris".to_string(),
+                    head_ref: "feat/x".to_string(),
+                    head_sha: format!("sha-{pull_num}"),
+                    base_ref: "main".to_string(),
+                    state: "open".to_string(),
+                    mergeable: Some(true),
+                    labels: vec![],
+                    updated_at: "2026-11-24T00:00:00Z".to_string(),
+                    url: format!("https://github.com/{slug}/pull/{pull_num}"),
+                },
+                checks: GithubPullChecks {
+                    head_sha: format!("sha-{pull_num}"),
+                    checks: vec![],
+                },
+                reviews: GithubPullReviews {
+                    reviews: vec![],
+                    unresolved_threads: vec![],
+                },
+                comments: vec![],
+            },
+        );
+    }
+
+    let backend = Arc::new(CountingGithubBackend::new(inner));
+    let fs = Arc::new(
+        GithubFs::with_watched_repos(backend.clone(), [synced_slug])
+            .await
+            .unwrap(),
+    );
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/mnt/github",
+        InProcessTransport::new(fs),
+        Access::ReadWrite,
+    );
+    let shell = alan_shell::Shell::new(InProcessTransport::new(Arc::new(MountFs::new(ns))));
+
+    shell.write("/mnt/github/ctl", b"sync").await.unwrap();
+    assert_eq!(
+        shell
+            .ls("/mnt/github/repos/acme/alan/issues")
+            .await
+            .unwrap(),
+        vec!["new", "10"]
+    );
+    assert_eq!(
+        shell.ls("/mnt/github/repos/acme/alan/pulls").await.unwrap(),
+        vec!["20"]
+    );
+    assert_eq!(backend.counts(), (0, 0, 0));
+
+    // A subsequent 304 Not Modified sync preserves `synced = true`.
+    shell.write("/mnt/github/ctl", b"sync").await.unwrap();
+    assert_eq!(
+        shell
+            .ls("/mnt/github/repos/acme/alan/issues")
+            .await
+            .unwrap(),
+        vec!["new", "10"]
+    );
+    assert_eq!(
+        shell.ls("/mnt/github/repos/acme/alan/pulls").await.unwrap(),
+        vec!["20"]
+    );
+    assert_eq!(backend.counts(), (0, 0, 0));
+
+    // Unsynced repo still queries backend on demand for IssuesDir and PullsDir.
+    assert_eq!(
+        shell
+            .ls("/mnt/github/repos/acme/other/issues")
+            .await
+            .unwrap(),
+        vec!["new", "30"]
+    );
+    assert_eq!(
+        shell
+            .ls("/mnt/github/repos/acme/other/pulls")
+            .await
+            .unwrap(),
+        vec!["40"]
+    );
+    assert_eq!(backend.counts(), (0, 1, 1));
 }

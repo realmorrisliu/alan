@@ -65,7 +65,7 @@ async fn spawn_gh_with_retry(
 }
 
 /// Non-leaking wrapper holding an ephemeral Host token resolved via `gh auth token`.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct SecretToken(String);
 
 impl fmt::Debug for SecretToken {
@@ -79,6 +79,7 @@ impl fmt::Debug for SecretToken {
 pub struct GhCliGithubBackend {
     gh_binary: PathBuf,
     seen_event_ids: Arc<Mutex<HashSet<String>>>,
+    cached_token: Arc<tokio::sync::Mutex<Option<SecretToken>>>,
 }
 
 impl Default for GhCliGithubBackend {
@@ -98,10 +99,11 @@ impl GhCliGithubBackend {
         Self {
             gh_binary: gh_binary.into(),
             seen_event_ids: Arc::new(Mutex::new(HashSet::new())),
+            cached_token: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
-    async fn resolve_host_token(&self) -> Result<Option<SecretToken>, GithubBackendError> {
+    async fn fetch_host_token(&self) -> Result<SecretToken, GithubBackendError> {
         let child = spawn_gh_with_retry(|| {
             let mut cmd = Command::new(&self.gh_binary);
             cmd.args(["auth", "token"])
@@ -137,7 +139,25 @@ impl GhCliGithubBackend {
                 "Host `gh auth token` returned an empty credential",
             ));
         }
-        Ok(Some(SecretToken(token)))
+        Ok(SecretToken(token))
+    }
+
+    async fn resolve_host_token(&self) -> Result<(SecretToken, bool), GithubBackendError> {
+        // Hold the async mutex across fetch so concurrent calls share one `gh auth token` spawn.
+        let mut guard = self.cached_token.lock().await;
+        if let Some(token) = guard.as_ref() {
+            return Ok((token.clone(), true));
+        }
+        let token = self.fetch_host_token().await?;
+        *guard = Some(token.clone());
+        Ok((token, false))
+    }
+
+    async fn invalidate_cached_token(&self, used: &SecretToken) {
+        let mut guard = self.cached_token.lock().await;
+        if guard.as_ref() == Some(used) {
+            *guard = None;
+        }
     }
 
     async fn run_gh_api(
@@ -145,8 +165,25 @@ impl GhCliGithubBackend {
         args: &[&str],
         stdin_json: Option<&Value>,
     ) -> Result<GhHttpResponse, GithubBackendError> {
-        let secret = self.resolve_host_token().await?;
-        let secret_ref = secret.as_ref().map(|s| s.0.as_str());
+        let (secret, from_cache) = self.resolve_host_token().await?;
+        match self.run_gh_api_with_token(args, stdin_json, &secret).await {
+            Err(err) if from_cache && err.code == ErrorCode::NoAccess => {
+                self.invalidate_cached_token(&secret).await;
+                let (fresh_secret, _) = self.resolve_host_token().await?;
+                self.run_gh_api_with_token(args, stdin_json, &fresh_secret)
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    async fn run_gh_api_with_token(
+        &self,
+        args: &[&str],
+        stdin_json: Option<&Value>,
+        secret: &SecretToken,
+    ) -> Result<GhHttpResponse, GithubBackendError> {
+        let secret_ref = Some(secret.0.as_str());
         let mut child = spawn_gh_with_retry(|| {
             let mut cmd = Command::new(&self.gh_binary);
             cmd.args(args)
@@ -156,10 +193,8 @@ impl GhCliGithubBackend {
                     Stdio::piped()
                 } else {
                     Stdio::null()
-                });
-            if let Some(ref token) = secret {
-                cmd.env("GH_TOKEN", &token.0);
-            }
+                })
+                .env("GH_TOKEN", &secret.0);
             cmd
         })
         .await
@@ -669,11 +704,12 @@ impl GithubBackend for GhCliGithubBackend {
                 .collect()
         };
 
-        let (raw_issues, _) = self
-            .gh_get_paginated_array(&format!(
-                "repos/{repo}/issues?state=all&per_page={REST_PAGE_SIZE}"
-            ))
-            .await?;
+        let issues_path = format!("repos/{repo}/issues?state=open&per_page={REST_PAGE_SIZE}");
+        let pulls_path = format!("repos/{repo}/pulls?state=open&per_page={REST_PAGE_SIZE}");
+        let ((raw_issues, issues_rate_limit), (raw_pulls, pulls_rate_limit)) = tokio::try_join!(
+            self.gh_get_paginated_array(&issues_path),
+            self.gh_get_paginated_array(&pulls_path),
+        )?;
         let issues: Vec<IssueRecord> = raw_issues
             .iter()
             .filter(|item| !item["pull_request"].is_object())
@@ -684,11 +720,6 @@ impl GithubBackend for GhCliGithubBackend {
             })
             .collect();
 
-        let (raw_pulls, pulls_rate_limit) = self
-            .gh_get_paginated_array(&format!(
-                "repos/{repo}/pulls?state=all&per_page={REST_PAGE_SIZE}"
-            ))
-            .await?;
         let pulls: Vec<PullRecord> = raw_pulls
             .iter()
             .map(|item| {
@@ -726,7 +757,7 @@ impl GithubBackend for GhCliGithubBackend {
 
         Ok(SyncRepoOutcome::Updated(SyncRepoData {
             etag: events_etag,
-            rate_limit: pulls_rate_limit.or(events_rate_limit),
+            rate_limit: pulls_rate_limit.or(issues_rate_limit).or(events_rate_limit),
             issues,
             pulls,
             events: new_events,
@@ -737,7 +768,7 @@ impl GithubBackend for GhCliGithubBackend {
     async fn list_issue_numbers(&self, repo: &RepoSlug) -> Result<Vec<u64>, GithubBackendError> {
         let (items, _) = self
             .gh_get_paginated_array(&format!(
-                "repos/{repo}/issues?state=all&per_page={REST_PAGE_SIZE}"
+                "repos/{repo}/issues?state=open&per_page={REST_PAGE_SIZE}"
             ))
             .await?;
         Ok(items
@@ -855,7 +886,7 @@ impl GithubBackend for GhCliGithubBackend {
     async fn list_pull_numbers(&self, repo: &RepoSlug) -> Result<Vec<u64>, GithubBackendError> {
         let (items, _) = self
             .gh_get_paginated_array(&format!(
-                "repos/{repo}/pulls?state=all&per_page={REST_PAGE_SIZE}"
+                "repos/{repo}/pulls?state=open&per_page={REST_PAGE_SIZE}"
             ))
             .await?;
         Ok(items.iter().filter_map(|v| v["number"].as_u64()).collect())
