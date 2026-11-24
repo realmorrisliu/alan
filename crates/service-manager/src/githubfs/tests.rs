@@ -7,9 +7,10 @@ use alan_routefs::RouteFs;
 use tokio::sync::oneshot;
 
 use super::backend::{
-    GhCliGithubBackend, GithubBackend, GithubEvent, GithubIssueMeta, IssueRecord,
-    MemoryGithubBackend, NewIssueRequest, RepoSlug, SyncRepoOutcome, redact_github_tokens,
-    validate_label,
+    GhCliGithubBackend, GithubBackend, GithubBackendError, GithubComment, GithubEvent,
+    GithubIssueMeta, GithubPullChecks, GithubPullMeta, GithubPullReviews, IssueRecord,
+    MemoryGithubBackend, NewIssueRequest, PullRecord, RepoSlug, SyncRepoOutcome,
+    redact_github_tokens, validate_label,
 };
 use super::dispatch::{
     CoalesceKey, DispatchOutcome, GithubEventDispatcher, SkipReason, TriggerAllowlist,
@@ -518,4 +519,226 @@ async fn dispatcher_rolls_back_bookkeeping_and_recovers_after_route_failure() {
     assert!(
         matches!(out2, DispatchOutcome::EscalatedHumanReview { event_id, .. } if event_id == "ev-escalate-2")
     );
+}
+
+struct OnDemandOnlyBackend(MemoryGithubBackend);
+
+#[async_trait::async_trait]
+impl GithubBackend for OnDemandOnlyBackend {
+    async fn list_repos(&self) -> Result<Vec<RepoSlug>, GithubBackendError> {
+        Ok(Vec::new())
+    }
+
+    async fn has_repo(&self, repo: &RepoSlug) -> Result<bool, GithubBackendError> {
+        self.0.has_repo(repo).await
+    }
+
+    async fn sync_repo(
+        &self,
+        repo: &RepoSlug,
+        if_none_match: Option<&str>,
+    ) -> Result<SyncRepoOutcome, GithubBackendError> {
+        self.0.sync_repo(repo, if_none_match).await
+    }
+
+    async fn list_issue_numbers(&self, repo: &RepoSlug) -> Result<Vec<u64>, GithubBackendError> {
+        self.0.list_issue_numbers(repo).await
+    }
+
+    async fn get_issue(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+    ) -> Result<IssueRecord, GithubBackendError> {
+        self.0.get_issue(repo, number).await
+    }
+
+    async fn create_issue(
+        &self,
+        repo: &RepoSlug,
+        req: NewIssueRequest,
+    ) -> Result<IssueRecord, GithubBackendError> {
+        self.0.create_issue(repo, req).await
+    }
+
+    async fn add_issue_comment(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+        body: String,
+    ) -> Result<GithubComment, GithubBackendError> {
+        self.0.add_issue_comment(repo, number, body).await
+    }
+
+    async fn add_issue_label(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+        label: String,
+    ) -> Result<GithubIssueMeta, GithubBackendError> {
+        self.0.add_issue_label(repo, number, label).await
+    }
+
+    async fn remove_issue_label(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+        label: String,
+    ) -> Result<GithubIssueMeta, GithubBackendError> {
+        self.0.remove_issue_label(repo, number, label).await
+    }
+
+    async fn close_issue(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+    ) -> Result<GithubIssueMeta, GithubBackendError> {
+        self.0.close_issue(repo, number).await
+    }
+
+    async fn list_pull_numbers(&self, repo: &RepoSlug) -> Result<Vec<u64>, GithubBackendError> {
+        self.0.list_pull_numbers(repo).await
+    }
+
+    async fn get_pull(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+    ) -> Result<PullRecord, GithubBackendError> {
+        self.0.get_pull(repo, number).await
+    }
+
+    async fn get_pull_checks(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+        head_sha: &str,
+    ) -> Result<GithubPullChecks, GithubBackendError> {
+        self.0.get_pull_checks(repo, number, head_sha).await
+    }
+
+    async fn add_pull_comment(
+        &self,
+        repo: &RepoSlug,
+        number: u64,
+        body: String,
+    ) -> Result<GithubComment, GithubBackendError> {
+        self.0.add_pull_comment(repo, number, body).await
+    }
+}
+
+#[tokio::test]
+async fn on_demand_readonly_mount_walks_and_reads_without_ctl_write() {
+    let inner = MemoryGithubBackend::new();
+    let slug = RepoSlug::parse("acme/alan").unwrap();
+    inner.seed_issue(
+        &slug,
+        IssueRecord {
+            meta: GithubIssueMeta {
+                number: 12,
+                title: "On-demand read".to_string(),
+                author: "morris".to_string(),
+                state: "open".to_string(),
+                labels: vec!["bug".to_string()],
+                updated_at: "2026-11-24T00:00:00Z".to_string(),
+                url: "https://github.com/acme/alan/issues/12".to_string(),
+            },
+            body: "details".to_string(),
+            comments: vec![],
+        },
+    );
+    inner.seed_pull(
+        &slug,
+        PullRecord {
+            meta: GithubPullMeta {
+                number: 42,
+                title: "Lazy PR list".to_string(),
+                author: "morris".to_string(),
+                head_ref: "feat/lazy".to_string(),
+                head_sha: "sha-42".to_string(),
+                base_ref: "main".to_string(),
+                state: "open".to_string(),
+                mergeable: Some(true),
+                labels: vec![],
+                updated_at: "2026-11-24T00:00:00Z".to_string(),
+                url: "https://github.com/acme/alan/pull/42".to_string(),
+            },
+            checks: GithubPullChecks {
+                head_sha: "sha-42".to_string(),
+                checks: vec![],
+            },
+            reviews: GithubPullReviews {
+                reviews: vec![],
+                unresolved_threads: vec![],
+            },
+            comments: vec![],
+        },
+    );
+
+    let fs = Arc::new(GithubFs::new(Arc::new(OnDemandOnlyBackend(inner))));
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/mnt/github",
+        InProcessTransport::new(fs.clone()),
+        Access::ReadOnly,
+    );
+    let shell = alan_shell::Shell::new(InProcessTransport::new(Arc::new(MountFs::new(ns))));
+
+    // Precondition: list_repos() is empty, and we have NOT written /mnt/github/ctl.
+    assert!(shell.ls("/mnt/github/repos").await.unwrap().is_empty());
+
+    // On-demand walk/list/read succeeds on a ReadOnly mount without `watch` in ctl.
+    assert_eq!(
+        shell
+            .ls("/mnt/github/repos/acme/alan/issues")
+            .await
+            .unwrap(),
+        vec!["new", "12"]
+    );
+    let issue_meta: GithubIssueMeta = serde_json::from_slice(
+        &shell
+            .cat("/mnt/github/repos/acme/alan/issues/12/meta.json")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(issue_meta.number, 12);
+    assert_eq!(issue_meta.title, "On-demand read");
+    assert_eq!(
+        shell.ls("/mnt/github/repos/acme/alan/pulls").await.unwrap(),
+        vec!["42"]
+    );
+
+    // Mutating files still reject write opens with NoAccess under ReadOnly mount.
+    assert_eq!(
+        shell.write("/mnt/github/ctl", b"watch acme/alan").await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        shell
+            .write(
+                "/mnt/github/repos/acme/alan/issues/new",
+                br#"{"title":"Blocked","body":"ro"}"#,
+            )
+            .await,
+        Err(ErrorCode::NoAccess)
+    );
+
+    // Nonexistent repos still return NotFound, and invalid owner slugs are rejected.
+    assert_eq!(
+        shell.ls("/mnt/github/repos/acme/missing/issues").await,
+        Err(ErrorCode::NotFound)
+    );
+    assert_eq!(
+        shell.ls("/mnt/github/repos/unknown-owner/missing").await,
+        Err(ErrorCode::NotFound)
+    );
+    for bad_owner in ["", ".", "..", "bad/owner", "bad owner"] {
+        assert_eq!(
+            fs.walk(Fid::ROOT, Fid(99), &["repos".into(), bad_owner.into()])
+                .await,
+            Err(ErrorCode::NotFound),
+            "bad owner `{bad_owner}` should fail"
+        );
+    }
 }

@@ -68,7 +68,7 @@ impl fmt::Display for RepoSlug {
     }
 }
 
-fn valid_slug_part(part: &str) -> bool {
+pub(super) fn valid_slug_part(part: &str) -> bool {
     !part.is_empty()
         && part.len() <= 100
         && part != "."

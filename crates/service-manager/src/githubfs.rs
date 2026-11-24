@@ -176,8 +176,12 @@ impl<B: GithubBackend> GithubFs<B> {
                 "repos" => Ok(Node::ReposDir),
                 _ => Err(ErrorCode::NotFound),
             },
-            Node::ReposDir if self.known_repos().await?.iter().any(|s| s.owner == name) => {
-                Ok(Node::RepoOwnerDir(name.to_string()))
+            Node::ReposDir => {
+                if backend::valid_slug_part(name) {
+                    Ok(Node::RepoOwnerDir(name.to_string()))
+                } else {
+                    Err(ErrorCode::NotFound)
+                }
             }
             Node::RepoOwnerDir(owner) => {
                 let slug = RepoSlug::new(owner, name).map_err(|_| ErrorCode::NotFound)?;
@@ -220,7 +224,6 @@ impl<B: GithubBackend> GithubFs<B> {
                 "ctl" => Ok(Node::PullCtl(slug.clone(), *n)),
                 _ => Err(ErrorCode::NotFound),
             },
-            Node::ReposDir => Err(ErrorCode::NotFound),
             _ => Err(ErrorCode::NotDirectory),
         }
     }

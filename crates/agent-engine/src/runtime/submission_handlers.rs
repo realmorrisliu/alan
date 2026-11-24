@@ -741,6 +741,7 @@ async fn resolve_service_activation_confirmation(
                 "package_id": mounted.package_id,
                 "service_id": mounted.service_id,
                 "mount_path": mounted.mount_path,
+                "description": mounted.description,
                 "access": mounted.access.as_str(),
                 "allow_network": mounted.allow_network,
                 "persisted": mounted.persisted,

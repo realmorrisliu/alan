@@ -21,12 +21,28 @@ impl ServiceMountAccess {
         }
     }
 
+    /// Human-readable hyphenated label used in context and confirmation summaries.
+    pub const fn display_label(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::ReadWrite => "read-write",
+        }
+    }
+
     /// Returns whether `self` already grants at least `requested` access.
     pub const fn satisfies(self, requested: Self) -> bool {
         matches!(
             (self, requested),
             (Self::ReadWrite, Self::ReadOnly | Self::ReadWrite) | (Self::ReadOnly, Self::ReadOnly)
         )
+    }
+}
+
+pub(crate) const fn network_scope_label(allow_network: bool) -> &'static str {
+    if allow_network {
+        "network"
+    } else {
+        "no-network"
     }
 }
 
@@ -51,6 +67,10 @@ pub struct AvailableFileserverPackage {
     pub allow_network: bool,
     pub network_domains: Vec<String>,
     pub active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_access: Option<ServiceMountAccess>,
+    #[serde(default)]
+    pub active_allow_network: bool,
 }
 
 /// Result of activating and hot-mounting a fileserver package.
@@ -59,6 +79,7 @@ pub struct ActivatedServiceMount {
     pub package_id: String,
     pub service_id: String,
     pub mount_path: String,
+    pub description: String,
     pub access: ServiceMountAccess,
     pub allow_network: bool,
     pub persisted: bool,
@@ -104,14 +125,17 @@ pub(crate) fn render_service_activation_context(
     let mut inactive_lines = Vec::new();
 
     for pkg in &sorted {
-        let network_note = if pkg.allow_network {
-            if pkg.network_domains.is_empty() {
-                "network-capable".to_string()
-            } else {
-                format!("network-capable: {}", pkg.network_domains.join(", "))
-            }
+        let status_note = if pkg.active {
+            let access_label = pkg
+                .active_access
+                .map(ServiceMountAccess::display_label)
+                .unwrap_or("unknown");
+            let network_label = network_scope_label(pkg.active_allow_network);
+            format!("active: {access_label}, {network_label}")
+        } else if pkg.allow_network {
+            "network capable".to_string()
         } else {
-            "offline".to_string()
+            "local only".to_string()
         };
         let desc = pkg
             .description
@@ -121,7 +145,7 @@ pub(crate) fn render_service_activation_context(
             .map(|s| format!(" — {s}"))
             .unwrap_or_default();
         let line = format!(
-            "- `{}` -> `{}` ({network_note}){desc}",
+            "- `{}` -> `{}` ({status_note}){desc}",
             pkg.package_id, pkg.mount_path
         );
         if pkg.active {

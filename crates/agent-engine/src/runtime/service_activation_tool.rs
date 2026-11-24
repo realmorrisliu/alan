@@ -16,6 +16,7 @@ use crate::{
 use super::{
     service_activation::{
         ServiceActivationAuthority, ServiceActivationRequest, ServiceMountAccess,
+        network_scope_label,
     },
     transition::NamespaceAgentFiles,
     turn_support::tool_result_preview,
@@ -226,6 +227,7 @@ where
             "package_id": available.package_id,
             "service_id": available.service_id,
             "mount_path": available.mount_path,
+            "description": available.description.as_deref().unwrap_or_default(),
             "access": active_access.as_str(),
             "allow_network": active_network,
         });
@@ -284,13 +286,22 @@ where
         }),
         runtime.machine.active_skills(),
     );
+    let action_verb = if available.active {
+        "Upgrade"
+    } else {
+        "Activate"
+    };
+    let summary = format!(
+        "{action_verb} '{}' at {} ({}, {})?",
+        available.package_id,
+        available.mount_path,
+        req.access.display_label(),
+        network_scope_label(req.allow_network),
+    );
     let pending = PendingConfirmation {
         checkpoint_id: tool_call.id.clone(),
         checkpoint_type: SERVICE_ACTIVATION_CHECKPOINT_TYPE.to_string(),
-        summary: format!(
-            "Activate '{}' at {}?",
-            available.package_id, available.mount_path
-        ),
+        summary,
         details,
         options: vec![
             "approve".to_string(),
