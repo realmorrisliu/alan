@@ -7,6 +7,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-24
+
+### Added
+
+- Preinstall `github-fileserver` as catalog-only (zero ambient authority) in `PackageService`, surface failed command `hint:` stderr lines under TUI action summaries, and support `allow_persistent` confirmation options and receipts in the TUI (#1156).
+- Add approval-gated Root-only `request_service` virtual tool (`service_activation` checkpoint) with host-side `ProcessServiceActivation`, live fileserver hot-mounting into Root `LiveNamespace`, `system_namespace`, and `LocalEntryService`, multi-tool-batch pause safety, and optional persistent `RootBindingMode::Active` activation on `allow_persistent` (#1157).
+
 ## [0.1.7] - 2026-11-24
 
 ### Fixed
