@@ -751,3 +751,103 @@ async fn test_maybe_compact_context_allows_mid_turn_emergency_near_hard_limit() 
         Some("Summary from emergency mid-turn compaction")
     );
 }
+
+#[tokio::test]
+async fn test_many_short_messages_at_low_utilization_skip_auto_compaction() {
+    let config = Config::default();
+    let mut machine = AgentMachine::new();
+    for i in 0..80 {
+        machine.add_user_message(&format!("Short message {i}"));
+    }
+
+    let runtime_config = super::RuntimeConfig {
+        compaction_trigger_messages: 60,
+        compaction_keep_last: 12,
+        context_window_tokens: 1_000_000,
+        compaction_soft_trigger_ratio: 0.70,
+        compaction_hard_trigger_ratio: 0.85,
+        ..super::RuntimeConfig::default()
+    };
+
+    let mut state = RuntimeLoopState {
+        machine,
+        environment: namespace_environment_with_provider(DelayedMockProvider::new(
+            tokio::time::Duration::from_millis(0),
+            "Should not compact",
+        )),
+        core_config: config,
+        runtime_config,
+        prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+    };
+
+    let mut emit = |_event: Event| async {};
+    let pre_turn = maybe_compact_context_for_request(
+        &mut state,
+        &mut emit,
+        CompactionRequest::automatic_pre_turn(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        pre_turn,
+        CompactionOutcome::Skipped(ref skipped)
+            if skipped.reason == alan_agent_protocol::CompactionSkipReason::UnderThreshold
+    ));
+
+    let mid_turn = maybe_compact_context_for_request(
+        &mut state,
+        &mut emit,
+        CompactionRequest::automatic_mid_turn(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        mid_turn,
+        CompactionOutcome::Skipped(ref skipped)
+            if skipped.reason == alan_agent_protocol::CompactionSkipReason::UnderThreshold
+    ));
+    assert_eq!(state.machine.tape_len(), 80);
+    assert!(state.machine.tape_summary().is_none());
+}
+
+#[tokio::test]
+async fn test_unknown_window_falls_back_to_message_threshold_for_auto_compaction() {
+    let mut config = Config::default();
+    config.memory.enabled = false;
+    let mut machine = AgentMachine::new();
+    for i in 0..65 {
+        machine.add_user_message(&format!("Short message {i}"));
+    }
+
+    let runtime_config = super::RuntimeConfig {
+        compaction_trigger_messages: 60,
+        compaction_keep_last: 12,
+        context_window_tokens: 0,
+        ..super::RuntimeConfig::default()
+    };
+
+    let mut state = RuntimeLoopState {
+        machine,
+        environment: namespace_environment_with_provider(DelayedMockProvider::new(
+            tokio::time::Duration::from_millis(0),
+            "Unknown window compaction summary",
+        )),
+        core_config: config,
+        runtime_config,
+        prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+    };
+
+    let mut emit = |_event: Event| async {};
+    let outcome = maybe_compact_context_for_request(
+        &mut state,
+        &mut emit,
+        CompactionRequest::automatic_pre_turn(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(outcome, CompactionOutcome::Applied(_)));
+    assert_eq!(
+        state.machine.tape_summary(),
+        Some("Unknown window compaction summary")
+    );
+}

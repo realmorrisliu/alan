@@ -8,9 +8,74 @@ const COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT: usize = 80;
 const COMPACTION_TOOL_OUTPUT_RENDER_LINE_MAX_CHARS: usize = 240;
 const COMPACTION_TOOL_OUTPUT_RENDER_LINE_MIN_CHARS: usize = 32;
 const DEGRADED_COMPACTION_SNIPPET_CHARS: usize = 240;
+const DEGRADED_COMPACTION_USER_REQUEST_CHARS: usize = 400;
 const DEGRADED_COMPACTION_SUMMARY_MESSAGES: usize = 6;
 pub(crate) const DEGRADED_COMPACTION_PRIOR_SUMMARY_CHARS: usize = 800;
 pub(crate) const DEGRADED_COMPACTION_SUMMARY_MAX_CHARS: usize = 2_400;
+
+/// Build tool-free text-only LLM messages for internal summarization/extraction tasks
+/// (compaction and memory flush) where `tools` is empty, ending with an explicit User directive.
+pub(crate) fn build_tool_free_llm_messages(
+    preamble: Vec<crate::llm::Message>,
+    sanitized_messages: &[crate::tape::Message],
+    trailing_directive: &str,
+) -> Vec<crate::llm::Message> {
+    let mut llm_messages = preamble;
+    llm_messages.extend(
+        sanitized_messages
+            .iter()
+            .flat_map(project_tape_message_text_only),
+    );
+    llm_messages.push(crate::llm::Message::user(trailing_directive));
+    llm_messages
+}
+
+fn project_tape_message_text_only(message: &crate::tape::Message) -> Vec<crate::llm::Message> {
+    match message {
+        crate::tape::Message::User { .. } => {
+            vec![crate::llm::Message::user(message.text_content())]
+        }
+        crate::tape::Message::Assistant { tool_requests, .. } => {
+            let text = message.non_thinking_text_content();
+            let tool_note = (!tool_requests.is_empty()).then(|| {
+                let names: Vec<&str> = tool_requests.iter().map(|req| req.name.as_str()).collect();
+                format!("[called tools: {}]", names.join(", "))
+            });
+            let rendered = match (text.trim().is_empty(), tool_note) {
+                (false, Some(note)) => format!("{}\n{note}", text.trim_end()),
+                (false, None) => text,
+                (true, Some(note)) => note,
+                (true, None) => String::new(),
+            };
+            if rendered.trim().is_empty() {
+                Vec::new()
+            } else {
+                vec![crate::llm::Message::assistant(rendered)]
+            }
+        }
+        crate::tape::Message::Tool { responses } => responses
+            .iter()
+            .map(|response| {
+                let id = response.id.trim();
+                let header = if id.is_empty() {
+                    "[tool_result]".to_string()
+                } else {
+                    format!("[tool_result {id}]")
+                };
+                let body = response.text_content();
+                let content = if body.trim().is_empty() {
+                    header
+                } else {
+                    format!("{header}\n{body}")
+                };
+                crate::llm::Message::user(content)
+            })
+            .collect(),
+        crate::tape::Message::System { .. } | crate::tape::Message::Context { .. } => {
+            vec![crate::llm::Message::context(message.text_content())]
+        }
+    }
+}
 
 pub(crate) fn sanitize_messages_for_compaction(
     messages: &[crate::tape::Message],
@@ -155,9 +220,12 @@ pub(crate) fn build_degraded_compaction_summary(
         sections.push(summary.to_string());
     }
 
-    let snippets: Vec<String> = messages
+    let snippet_entries: Vec<(usize, String)> = messages
         .iter()
-        .filter_map(degraded_compaction_snippet)
+        .enumerate()
+        .filter_map(|(idx, message)| {
+            degraded_compaction_snippet(message).map(|snippet| (idx, snippet))
+        })
         .rev()
         .take(DEGRADED_COMPACTION_SUMMARY_MESSAGES)
         .collect::<Vec<_>>()
@@ -165,13 +233,38 @@ pub(crate) fn build_degraded_compaction_summary(
         .rev()
         .collect();
 
-    if snippets.is_empty() {
+    if snippet_entries.is_empty() {
         return bounded_existing_summary;
     }
 
+    let latest_user = messages
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(idx, message)| {
+            if !message.is_user() {
+                return None;
+            }
+            let text = message.text_content();
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| (idx, trimmed.to_string()))
+        });
+
     sections.push("Deterministic fallback summary after compaction failure:".to_string());
+    if let Some((user_idx, user_text)) = latest_user
+        && !snippet_entries.iter().any(|(idx, _)| *idx == user_idx)
+    {
+        sections.push(format!(
+            "Latest user request: {}",
+            truncate_compaction_text(&user_text, DEGRADED_COMPACTION_USER_REQUEST_CHARS)
+        ));
+    }
     sections.push("Recent preserved context:".to_string());
-    sections.extend(snippets.into_iter().map(|snippet| format!("- {snippet}")));
+    sections.extend(
+        snippet_entries
+            .into_iter()
+            .map(|(_, snippet)| format!("- {snippet}")),
+    );
     Some(truncate_compaction_text(
         &sections.join("\n"),
         DEGRADED_COMPACTION_SUMMARY_MAX_CHARS,
@@ -324,4 +417,120 @@ fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> Stri
         .collect::<String>();
     truncated.push_str(suffix);
     truncated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::MessageRole as LlmRole;
+    use crate::tape::{ContentPart, Message, ToolRequest};
+    use serde_json::json;
+
+    #[test]
+    fn tool_free_llm_messages_strip_tool_calls_thinking_and_end_with_directive() {
+        let preamble = vec![crate::llm::Message::context("[Previous summary]\nold")];
+        let messages = vec![
+            Message::system("system guidance"),
+            Message::context("reference context"),
+            Message::user("fix compaction"),
+            Message::Assistant {
+                parts: vec![
+                    ContentPart::thinking_with_signature("internal reasoning", "sig-1"),
+                    ContentPart::redacted_thinking("opaque"),
+                    ContentPart::text("Let me inspect the files."),
+                ],
+                tool_requests: vec![ToolRequest {
+                    id: "call_1".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: json!({"path": "src/lib.rs"}),
+                }],
+            },
+            Message::tool_text("call_1", "fn main() {}"),
+            Message::Assistant {
+                parts: vec![],
+                tool_requests: vec![ToolRequest {
+                    id: "call_2".to_string(),
+                    name: "run_tests".to_string(),
+                    arguments: json!({}),
+                }],
+            },
+            Message::tool_text("call_2", "all tests passed"),
+        ];
+
+        let llm_messages = build_tool_free_llm_messages(
+            preamble,
+            &messages,
+            "Summarize the conversation above into a concise checkpoint handoff.",
+        );
+
+        assert!(llm_messages.iter().all(|m| {
+            m.tool_calls.is_none()
+                && m.tool_call_id.is_none()
+                && m.thinking.is_none()
+                && m.thinking_signature.is_none()
+                && m.redacted_thinking.is_none()
+                && !matches!(m.role, LlmRole::Tool)
+        }));
+
+        assert_eq!(llm_messages[0].role, LlmRole::Context);
+        assert_eq!(llm_messages[1].role, LlmRole::Context);
+        assert_eq!(llm_messages[1].content, "system guidance");
+        assert_eq!(llm_messages[2].role, LlmRole::Context);
+        assert_eq!(llm_messages[2].content, "reference context");
+        assert_eq!(llm_messages[3].role, LlmRole::User);
+        assert_eq!(llm_messages[3].content, "fix compaction");
+        assert_eq!(llm_messages[4].role, LlmRole::Assistant);
+        assert_eq!(
+            llm_messages[4].content,
+            "Let me inspect the files.\n[called tools: read_file]"
+        );
+        assert_eq!(llm_messages[5].role, LlmRole::User);
+        assert_eq!(
+            llm_messages[5].content,
+            "[tool_result call_1]\nfn main() {}"
+        );
+        assert_eq!(llm_messages[6].role, LlmRole::Assistant);
+        assert_eq!(llm_messages[6].content, "[called tools: run_tests]");
+        assert_eq!(llm_messages[7].role, LlmRole::User);
+        assert_eq!(
+            llm_messages[7].content,
+            "[tool_result call_2]\nall tests passed"
+        );
+        let last = llm_messages.last().unwrap();
+        assert_eq!(last.role, LlmRole::User);
+        assert_eq!(
+            last.content,
+            "Summarize the conversation above into a concise checkpoint handoff."
+        );
+    }
+
+    #[test]
+    fn degraded_compaction_summary_preserves_original_user_request_across_long_tool_chain() {
+        let mut messages = vec![Message::user(
+            "Investigate why compaction fails on long tool chains and preserve this question.",
+        )];
+        for idx in 0..20 {
+            messages.push(Message::assistant_with_tools(
+                format!("Step {idx} reasoning"),
+                vec![ToolRequest {
+                    id: format!("call_{idx}"),
+                    name: "grep".to_string(),
+                    arguments: json!({"pattern": "compaction"}),
+                }],
+            ));
+            messages.push(Message::tool_text(
+                format!("call_{idx}"),
+                format!("Matched line {idx} in crates/agent-engine/src/runtime/compaction.rs"),
+            ));
+        }
+
+        let summary = build_degraded_compaction_summary(&messages, Some("Prior context summary."))
+            .expect("degraded summary");
+
+        assert!(summary.contains("Latest user request:"));
+        assert!(summary.contains(
+            "Investigate why compaction fails on long tool chains and preserve this question."
+        ));
+        assert!(summary.chars().count() <= DEGRADED_COMPACTION_SUMMARY_MAX_CHARS);
+    }
 }
