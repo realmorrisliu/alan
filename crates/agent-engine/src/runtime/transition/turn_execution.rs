@@ -52,6 +52,13 @@ fn process_directory_instruction(execution: &NamespaceToolExecution) -> Option<S
     ))
 }
 
+fn service_activation_instruction(
+    authority: Option<&Arc<dyn crate::runtime::service_activation::ServiceActivationAuthority>>,
+) -> Option<String> {
+    let packages = authority?.list_available_fileservers();
+    crate::runtime::service_activation::render_service_activation_context(&packages)
+}
+
 fn estimate_runtime_system_instruction_tokens(instruction: &str) -> usize {
     crate::tape::estimate_text_tokens(instruction).saturating_add(1)
 }
@@ -60,11 +67,13 @@ fn estimate_request_prompt_overhead_tokens(
     turn_recall_bundle: Option<&str>,
     pending_guardrail_instruction: Option<&str>,
     directory_instruction: Option<&str>,
+    service_activation_instruction: Option<&str>,
 ) -> usize {
     turn_recall_bundle
         .into_iter()
         .chain(pending_guardrail_instruction)
         .chain(directory_instruction)
+        .chain(service_activation_instruction)
         .map(estimate_runtime_system_instruction_tokens)
         .sum()
 }
@@ -73,6 +82,7 @@ fn estimate_pending_turn_prompt_tokens(
     pending_user_input: Option<&[crate::tape::ContentPart]>,
     turn_recall_bundle: Option<&str>,
     directory_instruction: Option<&str>,
+    service_activation_instruction: Option<&str>,
 ) -> usize {
     pending_user_input
         .map(crate::tape::estimate_user_message_tokens)
@@ -81,12 +91,14 @@ fn estimate_pending_turn_prompt_tokens(
             turn_recall_bundle,
             None,
             directory_instruction,
+            service_activation_instruction,
         ))
 }
 
 async fn turn_tool_definitions(
     include_runtime_delegated_tool: bool,
     include_subagent_spawn: bool,
+    include_service_activation: bool,
     tool_execution: &NamespaceToolExecution,
 ) -> anyhow::Result<(
     Vec<crate::runtime::ToolPackageManifest>,
@@ -100,6 +112,7 @@ async fn turn_tool_definitions(
     tools.extend(virtual_tool_definitions(
         include_runtime_delegated_tool,
         include_subagent_spawn,
+        include_service_activation,
     ));
     Ok((tool_packages, tools))
 }
@@ -132,7 +145,7 @@ fn build_domain_prompt_with_skills(
 
 /// Run a single agent turn
 #[cfg(test)]
-pub(super) async fn run_turn_with_cancel<E, F>(
+pub(in crate::runtime) async fn run_turn_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     turn_kind: TurnRunKind,
     user_input: Option<Vec<crate::tape::ContentPart>>,
@@ -235,6 +248,8 @@ where
     generation.ensure_callable()?;
 
     let initial_directory_instruction = process_directory_instruction(&tool_execution);
+    let initial_service_instruction =
+        service_activation_instruction(state.environment.service_activation());
 
     if !should_skip_auto_compaction_for_responses_continuation(state) {
         let compaction_request = CompactionRequest::automatic_pre_turn()
@@ -242,6 +257,7 @@ where
                 user_input_for_skills.as_deref(),
                 turn_recall_bundle.as_deref(),
                 initial_directory_instruction.as_deref(),
+                initial_service_instruction.as_deref(),
             ));
         let compaction = Box::pin(maybe_compact_context_with_turn_timeout(
             state,
@@ -319,9 +335,11 @@ where
     let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation();
     let include_subagent_tool =
         include_runtime_delegated_tool && state.runtime_config.ad_hoc_subagent_spawn_enabled;
+    let include_service_activation = state.environment.service_activation().is_some();
     let (tool_packages, tools) = turn_tool_definitions(
         include_runtime_delegated_tool,
         include_subagent_tool,
+        include_service_activation,
         &tool_execution,
     )
     .await?;
@@ -409,6 +427,8 @@ where
         }
 
         let directory_instruction = process_directory_instruction(&tool_execution);
+        let service_instruction =
+            service_activation_instruction(state.environment.service_activation());
         let prompt_view = state.machine.prompt_view();
         let estimated_prompt_tokens =
             prompt_view
@@ -417,12 +437,16 @@ where
                     turn_recall_bundle.as_deref(),
                     pending_guardrail_instruction.as_deref(),
                     directory_instruction.as_deref(),
+                    service_instruction.as_deref(),
                 ));
         let context_revision = prompt_view.reference_context.revision;
         let messages = prompt_view.messages;
         let mut llm_messages = crate::llm::project_messages(&messages, true);
         let mut trailing_context_parts = Vec::new();
         if let Some(instruction) = directory_instruction.as_deref() {
+            trailing_context_parts.push(instruction);
+        }
+        if let Some(instruction) = service_instruction.as_deref() {
             trailing_context_parts.push(instruction);
         }
         if let Some(recall_bundle) = turn_recall_bundle.as_deref() {
@@ -618,6 +642,7 @@ where
                         turn_recall_bundle.as_deref(),
                         pending_guardrail_instruction.as_deref(),
                         directory_instruction.as_deref(),
+                        service_instruction.as_deref(),
                     ),
                 ))
                 .await?;
@@ -738,6 +763,8 @@ where
                             turn_recall_bundle.as_deref(),
                             pending_guardrail_instruction.as_deref(),
                             process_directory_instruction(&tool_execution).as_deref(),
+                            service_activation_instruction(state.environment.service_activation())
+                                .as_deref(),
                         ),
                     ))
                     .await?;
@@ -868,7 +895,7 @@ where
 #[cfg(test)]
 mod tests;
 
-pub(super) async fn orchestrate_tool_batch<E, F>(
+pub(in crate::runtime) async fn orchestrate_tool_batch<E, F>(
     loop_guard: &mut ToolLoopGuard,
     state: &mut RuntimeLoopState,
     tool_calls: &[NormalizedToolCall],

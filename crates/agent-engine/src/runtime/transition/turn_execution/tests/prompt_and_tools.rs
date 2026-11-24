@@ -150,10 +150,11 @@ async fn generation_directory_context_refreshes_binding_and_escapes_path_data() 
             ),
         );
         let instruction = process_directory_instruction(&state.tool_execution()).unwrap();
-        let overhead = estimate_request_prompt_overhead_tokens(None, None, Some(&instruction));
+        let overhead =
+            estimate_request_prompt_overhead_tokens(None, None, Some(&instruction), None);
         assert!(overhead > 0);
         assert_eq!(
-            estimate_pending_turn_prompt_tokens(None, None, Some(&instruction)),
+            estimate_pending_turn_prompt_tokens(None, None, Some(&instruction), None),
             overhead
         );
         run_turn_with_cancel(
@@ -221,7 +222,7 @@ async fn test_turn_tool_definitions_include_runtime_delegated_schema_when_suppor
     );
 
     let tool_execution = state.tool_execution();
-    let (_, tools) = turn_tool_definitions(true, true, &tool_execution)
+    let (_, tools) = turn_tool_definitions(true, true, false, &tool_execution)
         .await
         .unwrap();
     assert!(
@@ -231,7 +232,7 @@ async fn test_turn_tool_definitions_include_runtime_delegated_schema_when_suppor
     );
     assert!(tools.iter().any(|tool| tool.name == "spawn_subagent"));
 
-    let (_, child_tools) = turn_tool_definitions(true, false, &tool_execution)
+    let (_, child_tools) = turn_tool_definitions(true, false, false, &tool_execution)
         .await
         .unwrap();
     assert!(!child_tools.iter().any(|tool| tool.name == "spawn_subagent"));
@@ -242,7 +243,7 @@ async fn unmounted_tool_is_not_model_callable() {
     let state = create_test_state_with_provider(ContentMockProvider::new("ok"));
 
     let tool_execution = state.tool_execution();
-    let (_, tools) = turn_tool_definitions(false, false, &tool_execution)
+    let (_, tools) = turn_tool_definitions(false, false, false, &tool_execution)
         .await
         .unwrap();
     assert!(!tools.iter().any(|tool| tool.name == "network_probe"));

@@ -189,6 +189,8 @@ pub struct NamespaceRuntimeEnvironment {
     pub(crate) shadow_evaluation: Option<Arc<super::super::shadow_evaluation::ShadowEvaluation>>,
     pub(crate) work_publisher: Option<super::super::shadow_evaluation::EvaluationPublisher>,
     pub(crate) evaluation_publisher: Option<super::super::shadow_evaluation::EvaluationPublisher>,
+    pub(crate) service_activation:
+        Option<Arc<dyn super::super::service_activation::ServiceActivationAuthority>>,
     root: InProcessTransport,
     agent_path: String,
     llm_connection: String,
@@ -354,6 +356,7 @@ impl NamespaceRuntimeEnvironment {
             shadow_evaluation: None,
             evaluation_publisher: None,
             work_publisher: None,
+            service_activation: None,
             root,
             agent_path: agent_path.into(),
             llm_connection: llm_connection.into(),
@@ -399,6 +402,21 @@ impl NamespaceRuntimeEnvironment {
             .expect("new environment")
             .authority = Some(authority);
         self
+    }
+
+    /// Attach the Root-only host service-activation authority.
+    pub fn with_service_activation_authority(
+        mut self,
+        authority: Arc<dyn super::super::service_activation::ServiceActivationAuthority>,
+    ) -> Self {
+        self.service_activation = Some(authority);
+        self
+    }
+
+    pub(crate) fn service_activation(
+        &self,
+    ) -> Option<&Arc<dyn super::super::service_activation::ServiceActivationAuthority>> {
+        self.service_activation.as_ref()
     }
 
     pub(crate) fn generation(&self) -> NamespaceGeneration {

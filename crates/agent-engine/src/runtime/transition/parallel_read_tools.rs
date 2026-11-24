@@ -42,6 +42,7 @@ fn is_virtual_tool(name: &str) -> bool {
         name,
         "request_confirmation"
             | "request_mount"
+            | "request_service"
             | "request_user_input"
             | "update_plan"
             | "invoke_delegated_skill"

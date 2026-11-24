@@ -398,6 +398,25 @@ impl FileserverManager {
         Some(complete_status(meta, &child).await)
     }
 
+    /// Synchronously snapshot runtime status for `service_id`, if started.
+    pub fn status_snapshot(&self, service_id: &str) -> Option<FileserverStatus> {
+        let (mut meta, child) = {
+            let guard = self
+                .instances
+                .lock()
+                .expect("fileserver instances lock poisoned");
+            match guard.get(service_id)? {
+                ServiceSlot::Running(inst) => inst.snapshot_parts(),
+                ServiceSlot::Starting(_) => return None,
+            }
+        };
+        meta.running = match child.try_lock() {
+            Ok(mut guard) => matches!(guard.as_mut().map(Child::try_wait), Some(Ok(None))),
+            Err(_) => true,
+        };
+        Some(meta)
+    }
+
     /// List all supervised `fileserver` instances.
     pub async fn list(&self) -> Vec<FileserverStatus> {
         let items: Vec<_> = {

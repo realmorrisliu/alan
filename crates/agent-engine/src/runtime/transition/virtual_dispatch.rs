@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     RuntimeLoopState, agent_interaction_runtime, child_run_termination_runtime,
-    delegated_skill_runtime, mount_request_runtime,
+    delegated_skill_runtime, mount_request_runtime, service_activation_runtime,
 };
 use crate::agent_machine::NormalizedToolCall;
 use crate::runtime::turn_support::check_turn_cancelled;
@@ -52,6 +52,18 @@ where
         "request_mount" => {
             let runtime = mount_request_runtime(state);
             crate::runtime::mount_request_tool::handle_request_mount(
+                runtime,
+                tool_call,
+                tool_arguments,
+                emit,
+            )
+            .await
+        }
+        "request_service" => {
+            let Some(runtime) = service_activation_runtime(state) else {
+                return Ok(VirtualToolOutcome::NotVirtual);
+            };
+            crate::runtime::service_activation_tool::handle_request_service(
                 runtime,
                 tool_call,
                 tool_arguments,
