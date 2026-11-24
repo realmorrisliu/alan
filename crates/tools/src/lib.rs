@@ -107,9 +107,23 @@ impl Tool for BashTool {
                 )
                 .await?;
 
+            let mut projected_stderr = adapter.project_text(&result.stderr);
+            if result.exit_code != 0
+                && let Some(hint) = sandbox.sensitive_read_deny_hint(&result.stderr)
+            {
+                if projected_stderr.is_empty() {
+                    projected_stderr = hint;
+                } else {
+                    if !projected_stderr.ends_with('\n') {
+                        projected_stderr.push('\n');
+                    }
+                    projected_stderr.push_str(&hint);
+                }
+            }
+
             Ok(json!({
                 "stdout": adapter.project_text(&result.stdout),
-                "stderr": adapter.project_text(&result.stderr),
+                "stderr": projected_stderr,
                 "exit_code": result.exit_code,
                 "success": result.exit_code == 0
             }))
@@ -503,5 +517,116 @@ mod tests {
         assert!(registry.get("grep").is_some());
         assert!(registry.get("glob").is_some());
         assert!(registry.get("list_dir").is_some());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_bash_tool_appends_non_leaking_sensitive_read_deny_hint_before_projection() {
+        use alan_agent_engine::tools::{
+            Sandbox, SandboxSpec, ToolExecutionAdapter, ToolExecutionBinding,
+        };
+        use std::os::unix::fs::PermissionsExt;
+        use std::path::Path;
+
+        #[derive(Debug)]
+        struct HomeMaskingAdapter {
+            host_root: PathBuf,
+            home_dir: PathBuf,
+        }
+
+        impl ToolExecutionAdapter for HomeMaskingAdapter {
+            fn namespace_cwd(&self) -> PathBuf {
+                PathBuf::from("/mnt/source")
+            }
+
+            fn cwd(&self) -> anyhow::Result<PathBuf> {
+                Ok(self.host_root.clone())
+            }
+
+            fn resolve_path(&self, _namespace_cwd: &Path, path: &Path) -> anyhow::Result<PathBuf> {
+                Ok(self.host_root.join(path))
+            }
+
+            fn visible_path(&self, _host_path: &Path) -> PathBuf {
+                PathBuf::from("/mnt/source")
+            }
+
+            fn project_text(&self, text: &str) -> String {
+                text.replace(
+                    self.home_dir.to_string_lossy().as_ref(),
+                    "<unmapped-host-path>",
+                )
+            }
+
+            fn sandbox(&self) -> anyhow::Result<Sandbox> {
+                Ok(Sandbox::from_spec(SandboxSpec::seed(
+                    self.host_root.clone(),
+                )))
+            }
+        }
+
+        let Some(home_dir) = std::env::var_os("HOME")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+        else {
+            return;
+        };
+        let temp = TempDir::new().unwrap();
+        let mount_root = temp.path().to_path_buf();
+
+        let deny_script = mount_root.join("emit_deny.sh");
+        std::fs::write(
+            &deny_script,
+            "#!/bin/sh\nprintf 'open %s/.config/gh/hosts.yml: operation not permitted\\n' \"$HOME\" >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&deny_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let ok_script = mount_root.join("emit_ok.sh");
+        std::fs::write(
+            &ok_script,
+            "#!/bin/sh\nprintf 'open %s/.config/gh/hosts.yml: operation not permitted\\n' \"$HOME\" >&2\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&ok_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let binding = ToolExecutionBinding::awaiting_host_projection(
+            PathBuf::from("/mnt/source"),
+            mount_root.join("tmp"),
+        )
+        .with_adapter(Arc::new(HomeMaskingAdapter {
+            host_root: mount_root,
+            home_dir: home_dir.clone(),
+        }));
+        let ctx = ToolContext::from_binding(binding, Arc::new(Config::default()));
+        let tool = BashTool::new();
+
+        let failed = tool
+            .execute(json!({"command": "./emit_deny.sh"}), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(failed["exit_code"], 1);
+        let stderr = failed["stderr"].as_str().unwrap();
+        assert!(
+            stderr.contains("hint: OS sandbox blocks host credentials (~/.config/gh). Mount /mnt/github (--fileserver github-fileserver:ro:net), pass a scoped GH_TOKEN, or run with --unsafe-host-account."),
+            "unexpected stderr: {stderr}"
+        );
+        assert!(
+            !stderr.contains(home_dir.to_string_lossy().as_ref()),
+            "raw home leaked in stderr: {stderr}"
+        );
+
+        let succeeded = tool
+            .execute(json!({"command": "./emit_ok.sh"}), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(succeeded["exit_code"], 0);
+        assert!(
+            !succeeded["stderr"]
+                .as_str()
+                .unwrap()
+                .contains("hint: OS sandbox blocks host credentials"),
+            "exit 0 must not emit hint"
+        );
     }
 }

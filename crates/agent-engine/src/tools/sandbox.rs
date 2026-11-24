@@ -609,6 +609,165 @@ impl Sandbox {
     fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         Ok(dunce::canonicalize(path)?)
     }
+
+    /// Return a concise, non-leaking diagnostic hint when a command fails due
+    /// to an OS sandbox read denial under the user's home directory.
+    pub fn sensitive_read_deny_hint(&self, stderr: &str) -> Option<String> {
+        self.sensitive_read_deny_hint_with_home(stderr, dirs::home_dir().as_deref())
+    }
+
+    pub(super) fn sensitive_read_deny_hint_with_home(
+        &self,
+        stderr: &str,
+        home_dir: Option<&Path>,
+    ) -> Option<String> {
+        if self.trust_posture.is_unsandboxed_host_account() || self.spec.read_denylist.is_empty() {
+            return None;
+        }
+        let stderr_lower = stderr.to_ascii_lowercase();
+        if !stderr_lower.contains("operation not permitted")
+            && !stderr_lower.contains("permission denied")
+        {
+            return None;
+        }
+        let home = home_dir?;
+        let home_variants = comparable_path_variants(home);
+
+        let mut best_match: Option<(usize, String)> = None;
+        for deny_path in &self.spec.read_denylist {
+            let deny_variants = comparable_path_variants(deny_path);
+            let Some(matched_len) = deny_variants
+                .iter()
+                .filter_map(|variant| {
+                    let needle = variant.to_str()?;
+                    stderr_contains_path_prefix(stderr, needle).then_some(needle.len())
+                })
+                .max()
+            else {
+                continue;
+            };
+            let Some(rel) = relative_suffix_under_home(&deny_variants, &home_variants) else {
+                continue;
+            };
+            let replace = match &best_match {
+                Some((best_len, best_rel)) => {
+                    matched_len > *best_len
+                        || (matched_len == *best_len
+                            && rel == ".config/gh"
+                            && best_rel != ".config/gh")
+                }
+                None => true,
+            };
+            if replace {
+                best_match = Some((matched_len, rel));
+            }
+        }
+
+        let (_, rel) = best_match?;
+        if rel == ".config/gh" {
+            Some(
+                "hint: OS sandbox blocks host credentials (~/.config/gh). Mount /mnt/github (--fileserver github-fileserver:ro:net), pass a scoped GH_TOKEN, or run with --unsafe-host-account."
+                    .to_string(),
+            )
+        } else {
+            Some(format!(
+                "hint: OS sandbox blocks host credentials (~/{rel}). Pass explicit scoped credentials or run with --unsafe-host-account."
+            ))
+        }
+    }
+}
+
+fn canonicalize_preserving_missing_suffix(path: &Path) -> Option<PathBuf> {
+    if let Ok(canonical) = dunce::canonicalize(path) {
+        return Some(canonical);
+    }
+    let mut suffix = Vec::new();
+    let mut current = Some(path);
+    while let Some(candidate) = current {
+        if let Ok(canonical_ancestor) = dunce::canonicalize(candidate) {
+            let mut resolved = canonical_ancestor;
+            for part in suffix.into_iter().rev() {
+                resolved.push(part);
+            }
+            return Some(resolved);
+        }
+        let file_name = candidate.file_name()?;
+        suffix.push(file_name.to_os_string());
+        current = candidate.parent();
+    }
+    None
+}
+
+pub(super) fn comparable_path_variants(path: &Path) -> Vec<PathBuf> {
+    let normalized = lexically_normalize_path(path);
+    let mut variants = vec![normalized.clone()];
+    if let Some(canonical) = canonicalize_preserving_missing_suffix(&normalized)
+        && !variants.contains(&canonical)
+    {
+        variants.push(canonical);
+    }
+    variants
+}
+
+pub(super) fn path_matches_read_denylist(path: &Path, read_denylist: &[PathBuf]) -> bool {
+    let path_variants = comparable_path_variants(path);
+    read_denylist.iter().any(|deny_path| {
+        let deny_variants = comparable_path_variants(deny_path);
+        path_variants
+            .iter()
+            .any(|candidate| deny_variants.iter().any(|deny| candidate.starts_with(deny)))
+    })
+}
+
+fn relative_suffix_under_home(
+    deny_variants: &[PathBuf],
+    home_variants: &[PathBuf],
+) -> Option<String> {
+    for deny in deny_variants {
+        for home in home_variants {
+            if let Ok(rel) = deny.strip_prefix(home)
+                && !rel.as_os_str().is_empty()
+            {
+                return Some(rel.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
+fn stderr_contains_path_prefix(stderr: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    stderr.match_indices(needle).any(|(start, _)| {
+        let prefix = &stderr[..start];
+        let suffix = &stderr[start + needle.len()..];
+        has_leading_path_boundary(prefix) && has_trailing_path_boundary(suffix)
+    })
+}
+
+fn has_leading_path_boundary(prefix: &str) -> bool {
+    prefix.is_empty()
+        || prefix.ends_with("file://")
+        || prefix.chars().next_back().is_some_and(|ch| {
+            ch.is_whitespace()
+                || ch.is_control()
+                || matches!(ch, ':' | '\'' | '"' | '`' | '(' | '[' | '{' | '=' | '<')
+        })
+}
+
+fn has_trailing_path_boundary(suffix: &str) -> bool {
+    suffix.is_empty()
+        || suffix.chars().next().is_some_and(|ch| {
+            ch == std::path::MAIN_SEPARATOR
+                || ch == '/'
+                || ch.is_whitespace()
+                || ch.is_control()
+                || matches!(
+                    ch,
+                    ':' | '\'' | '"' | '`' | ')' | ']' | '}' | ',' | ';' | '>'
+                )
+        })
 }
 
 #[cfg(test)]

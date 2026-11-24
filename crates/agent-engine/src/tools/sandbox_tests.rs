@@ -810,3 +810,89 @@ mod os_boundary_tests;
 #[cfg(feature = "tree-sitter-sandbox")]
 #[path = "sandbox/standalone_cd_tests.rs"]
 mod standalone_cd_tests;
+
+#[test]
+fn sensitive_read_deny_hint_formats_non_leaking_hints_and_keeps_denylist_intact() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("users/secret_alice");
+    std::fs::create_dir_all(home.join(".config/gh")).unwrap();
+    std::fs::create_dir_all(home.join(".ssh")).unwrap();
+    let denylist = SandboxSpec::sensitive_read_denylist_for_home(&home);
+    assert!(denylist.contains(&home.join(".config/gh")));
+    assert!(denylist.contains(&home.join("Library/Keychains")));
+
+    let sandbox = Sandbox::from_spec(SandboxSpec {
+        host_mounts: Vec::new(),
+        readable_roots: vec![temp.path().to_path_buf()],
+        writable_roots: vec![temp.path().to_path_buf()],
+        read_denylist: denylist,
+        network: NetworkPosture::Deny,
+    });
+    // Security invariant: read_denylist preserves .config/gh and Library/Keychains.
+    assert!(
+        sandbox
+            .spec()
+            .read_denylist
+            .contains(&home.join(".config/gh"))
+    );
+    assert!(
+        sandbox
+            .spec()
+            .read_denylist
+            .contains(&home.join("Library/Keychains"))
+    );
+
+    // Raw home path + operation not permitted -> ~/.config/gh hint with zero home/username leak.
+    let gh_stderr = format!(
+        "open {}/hosts.yml: operation not permitted",
+        home.join(".config/gh").display()
+    );
+    let gh_hint = sandbox
+        .sensitive_read_deny_hint_with_home(&gh_stderr, Some(&home))
+        .expect("expected gh credential hint");
+    assert_eq!(
+        gh_hint,
+        "hint: OS sandbox blocks host credentials (~/.config/gh). Mount /mnt/github (--fileserver github-fileserver:ro:net), pass a scoped GH_TOKEN, or run with --unsafe-host-account."
+    );
+    assert!(!gh_hint.contains("secret_alice"));
+    assert!(!gh_hint.contains(&home.display().to_string()));
+
+    // Canonicalized path (e.g. /private/var vs /var on macOS) + Permission denied also matches.
+    let canonical_ssh = dunce::canonicalize(home.join(".ssh")).unwrap();
+    let ssh_stderr = format!("cat: {}/id_rsa: Permission denied", canonical_ssh.display());
+    let ssh_hint = sandbox
+        .sensitive_read_deny_hint_with_home(&ssh_stderr, Some(&home))
+        .expect("expected ssh credential hint");
+    assert_eq!(
+        ssh_hint,
+        "hint: OS sandbox blocks host credentials (~/.ssh). Pass explicit scoped credentials or run with --unsafe-host-account."
+    );
+    assert!(!ssh_hint.contains("secret_alice"));
+
+    // Path-boundary check: `.alan-dev` matches `.alan-dev`, and non-denied `.ssh_backup` returns None.
+    let non_denied = format!(
+        "cat: {}_backup/id_rsa: Operation not permitted",
+        home.join(".ssh").display()
+    );
+    assert_eq!(
+        sandbox.sensitive_read_deny_hint_with_home(&non_denied, Some(&home)),
+        None
+    );
+
+    // Non-permission errors return None.
+    let enoent = format!(
+        "open {}/hosts.yml: no such file or directory",
+        home.join(".config/gh").display()
+    );
+    assert_eq!(
+        sandbox.sensitive_read_deny_hint_with_home(&enoent, Some(&home)),
+        None
+    );
+
+    // Unsandboxed posture returns None.
+    let unsandboxed = sandbox.with_trust_posture(crate::policy::TrustPosture::HostAccountTrusted);
+    assert_eq!(
+        unsandboxed.sensitive_read_deny_hint_with_home(&gh_stderr, Some(&home)),
+        None
+    );
+}
