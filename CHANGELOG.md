@@ -7,6 +7,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-24
+
+### Fixed
+
+- Fix TUI image paste, macOS `Ctrl+V` clipboard attach, slash-path disambiguation, and structural JSON command summaries, adding validated local/pasted/clipboard image attachment parsing, live preview strips, `Backspace` removal, and image-only turn submission (#1152).
+- Fix `gh` CLI and `github-fileserver` auth under OS sandboxing by classifying `gh` subcommands as `Network`, routing explicit `GH_TOKEN`/`GITHUB_TOKEN` runs past `~/.config/gh` read denials, emitting non-leaking `~/<rel>` sandbox credential-denial hints, and resolving host `gh auth token` for authorized network-enabled `github-fileserver` launches (#1153).
+
 ## [0.1.6] - 2026-11-23
 
 ### Added
