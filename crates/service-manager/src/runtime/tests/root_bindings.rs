@@ -392,3 +392,52 @@ async fn durable_root_binding_collision_rolls_back_all_partial_tool_projections(
         .collect();
     assert_eq!(ref_ids, vec!["a-pre-tool", "c-clean-tool"]);
 }
+
+#[tokio::test]
+async fn boot_preinstalls_github_fileserver_catalog_only_without_ambient_authority() {
+    let cfg = ServiceManagerConfig::ephemeral(
+        AgentProcessConfig::default(),
+        ProcessLaunchContext::root(),
+        LlmClient::new(MockLlmProvider::new()),
+        ToolRegistry::new(),
+    );
+    let manager = ServiceManager::boot(cfg).await.unwrap();
+    let local_shell = alan_shell::Shell::new(alan_ap::InProcessTransport::new(
+        manager.local_entry().namespace_for_local_client(),
+    ));
+
+    let srv_entries = local_shell.ls("/srv").await.unwrap();
+    assert!(
+        !srv_entries.contains(&"github".to_string()),
+        "catalog-only preinstalled github-fileserver must not publish /srv/github: {srv_entries:?}"
+    );
+    assert_eq!(
+        local_shell.ls("/mnt/github").await,
+        Err(ErrorCode::NotFound)
+    );
+    let root_shell = alan_shell::Shell::new(manager.root_namespace.clone());
+    let root_pkg_entries = root_shell.ls("/lib/pkg").await.unwrap();
+    assert!(
+        !root_pkg_entries.contains(&"github-fileserver".to_string()),
+        "catalog-only preinstalled github-fileserver must not be projected into Root: {root_pkg_entries:?}"
+    );
+    assert_eq!(root_shell.ls("/mnt/github").await, Err(ErrorCode::NotFound));
+
+    let catalog_bytes = local_shell.cat("/mnt/package/catalog").await.unwrap();
+    let catalog: crate::PackageCatalog = serde_json::from_slice(&catalog_bytes).unwrap();
+    let gh = catalog
+        .packages
+        .get("github-fileserver")
+        .expect("github-fileserver preinstalled in catalog");
+    assert_eq!(gh.kind, crate::PackageKind::Preinstalled);
+    assert_eq!(gh.export_kind, crate::PackageExportKind::Fileserver);
+    assert!(
+        manager
+            .package
+            .root_binding("github-fileserver")
+            .unwrap()
+            .is_none()
+    );
+
+    manager.shutdown().await.unwrap();
+}

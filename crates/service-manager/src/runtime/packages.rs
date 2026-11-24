@@ -26,10 +26,57 @@ use crate::fileserver_service::{FileserverLaunchGrant, FileserverManager};
 use crate::local_entry::LocalEntryService;
 use crate::process_launch::ProcessLaunchContext;
 use crate::{
-    FileserverMountAccess, McpPackageExport, McpTransportSpec, PackageExportKind,
-    PackageReferenceLease, PackageService, PackageSnapshot, RootBindingMode, RootPackageBinding,
-    ToolPackageExport,
+    FileserverMountAccess, McpPackageExport, McpTransportSpec, PackageExportKind, PackageKind,
+    PackageReferenceLease, PackageService, PackageSnapshot, PackageSnapshotEntry, RootBindingMode,
+    RootPackageBinding, ToolPackageExport,
 };
+
+const GITHUB_FILESERVER_PACKAGE_ID: &str = "github-fileserver";
+
+const GITHUB_FILESERVER_PREINSTALLED_FILES: &[(&str, &[u8], bool)] = &[
+    (
+        "alan-package.toml",
+        include_bytes!("../../packages/github-fileserver/alan-package.toml"),
+        false,
+    ),
+    (
+        "README.md",
+        include_bytes!("../../packages/github-fileserver/README.md"),
+        false,
+    ),
+    (
+        "bin/githubfs",
+        include_bytes!("../../packages/github-fileserver/bin/githubfs"),
+        true,
+    ),
+    (
+        "skills/github-setup/SKILL.md",
+        include_bytes!("../../packages/github-fileserver/skills/github-setup/SKILL.md"),
+        false,
+    ),
+    (
+        "skills/release-prep/SKILL.md",
+        include_bytes!("../../packages/github-fileserver/skills/release-prep/SKILL.md"),
+        false,
+    ),
+    (
+        "skills/self-iterate/SKILL.md",
+        include_bytes!("../../packages/github-fileserver/skills/self-iterate/SKILL.md"),
+        false,
+    ),
+];
+
+fn preinstalled_github_fileserver_snapshot() -> Result<PackageSnapshot> {
+    let entries = GITHUB_FILESERVER_PREINSTALLED_FILES
+        .iter()
+        .map(|(path, bytes, executable)| PackageSnapshotEntry {
+            path: (*path).to_string(),
+            bytes: bytes.to_vec(),
+            executable: *executable,
+        })
+        .collect();
+    PackageSnapshot::from_entries(GITHUB_FILESERVER_PACKAGE_ID, entries)
+}
 
 pub(crate) fn seed_preinstalled_packages(package_service: &Arc<PackageService>) -> Result<()> {
     package_service.retire_preinstalled("alan-shell-control")?;
@@ -41,6 +88,16 @@ pub(crate) fn seed_preinstalled_packages(package_service: &Arc<PackageService>) 
             )
         })?;
         package_service.seed_preinstalled(source.package_id, snapshot)?;
+    }
+    let operator_installed = package_service
+        .catalog()?
+        .packages
+        .get(GITHUB_FILESERVER_PACKAGE_ID)
+        .is_some_and(|record| record.kind != PackageKind::Preinstalled);
+    if !operator_installed {
+        let snapshot = preinstalled_github_fileserver_snapshot()
+            .context("snapshot first-party package `github-fileserver` for Package Service")?;
+        package_service.seed_preinstalled(GITHUB_FILESERVER_PACKAGE_ID, snapshot)?;
     }
     Ok(())
 }
@@ -731,5 +788,83 @@ mod tests {
                 "expected allow_host_gh_token=false for ({pkg}, {svc}, net={net})"
             );
         }
+    }
+
+    #[test]
+    fn preinstalled_github_fileserver_snapshot_matches_source_and_seeds_catalog_only() {
+        let pkg_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("packages/github-fileserver");
+        let embedded = preinstalled_github_fileserver_snapshot().unwrap();
+        #[cfg(unix)]
+        {
+            let from_dir = PackageSnapshot::from_directory(&pkg_dir).unwrap();
+            assert_eq!(embedded, from_dir);
+        }
+        assert!(
+            alan_agent_engine::skills::preinstalled_skill_package_ids()
+                .all(|id| id != GITHUB_FILESERVER_PACKAGE_ID)
+        );
+
+        let service = PackageService::ephemeral().unwrap();
+        seed_preinstalled_packages(&service).unwrap();
+
+        let record = service.resolve(GITHUB_FILESERVER_PACKAGE_ID).unwrap();
+        assert_eq!(record.kind, PackageKind::Preinstalled);
+        assert_eq!(record.export_kind, PackageExportKind::Fileserver);
+        assert_eq!(
+            record.fileserver_export.as_ref().unwrap().service_id,
+            "github"
+        );
+        assert!(
+            service
+                .root_binding(GITHUB_FILESERVER_PACKAGE_ID)
+                .unwrap()
+                .is_none(),
+            "preinstalled github-fileserver must seed catalog-only with no Root binding"
+        );
+
+        let listed = service
+            .execute(crate::PackageCommand::List {
+                request_id: "list-preinstalled".to_string(),
+            })
+            .unwrap();
+        assert!(listed.success);
+        let catalog = listed.catalog.unwrap();
+        let entry = catalog.packages.get(GITHUB_FILESERVER_PACKAGE_ID).unwrap();
+        assert_eq!(entry.kind, PackageKind::Preinstalled);
+        assert_eq!(entry.export_kind, PackageExportKind::Fileserver);
+
+        // Enabling after preinstalled seeding works without a local source checkout.
+        let binding = service
+            .bind_for_root(
+                GITHUB_FILESERVER_PACKAGE_ID,
+                RootBindingMode::Active,
+                Some(crate::RootFileserverActivation {
+                    access: FileserverMountAccess::ReadWrite,
+                    allow_network: true,
+                    host_grant_ids: Vec::new(),
+                }),
+            )
+            .unwrap();
+        assert_eq!(binding.mode, RootBindingMode::Active);
+        assert!(binding.fileserver.as_ref().unwrap().allow_network);
+    }
+
+    #[test]
+    fn seed_preinstalled_packages_preserves_operator_installed_github_fileserver() {
+        let pkg_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("packages/github-fileserver");
+        let snapshot = PackageSnapshot::from_directory(&pkg_dir).unwrap();
+        let service = PackageService::ephemeral().unwrap();
+        let installed = service
+            .execute(crate::PackageCommand::Install {
+                request_id: "operator-install-gh".to_string(),
+                package_id: GITHUB_FILESERVER_PACKAGE_ID.to_string(),
+                snapshot,
+            })
+            .unwrap();
+        assert!(installed.success, "{}", installed.message);
+
+        seed_preinstalled_packages(&service).unwrap();
+        let record = service.resolve(GITHUB_FILESERVER_PACKAGE_ID).unwrap();
+        assert_eq!(record.kind, PackageKind::Installed);
     }
 }

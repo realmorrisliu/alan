@@ -680,3 +680,61 @@ fn confirmation_expands_truncated_prompt_and_presentation_details_with_d() {
     assert!(!recollapsed.contains("+diff-line-12"), "{recollapsed}");
     assert!(app.composer.text().is_empty());
 }
+
+#[test]
+fn confirmation_supports_allow_persistent_display_submit_and_receipt() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    let mut pending = bash_confirmation();
+    pending.options = vec![
+        "approve".into(),
+        "allow_session".into(),
+        "allow_persistent".into(),
+        "reject".into(),
+    ];
+    app.set_pending_yield(pending);
+
+    let conf = app.confirmation.as_ref().unwrap();
+    let rendered = conf.render(app.theme, 100, false);
+    let persistent_line = rendered
+        .lines
+        .iter()
+        .find(|line| line.to_string().contains("[3]"))
+        .expect("option [3] rendered");
+    assert_eq!(persistent_line.to_string(), "  [3] allow & remember");
+    assert_eq!(persistent_line.spans[2].style, app.theme.accent_bold());
+
+    // Digit 3 submits the exact wire key `allow_persistent` and settles to `Approved & remembered`.
+    let action = app.handle_key(key(KeyCode::Char('3'), KeyModifiers::NONE));
+    let Some(FileBackedAction::Resume {
+        request_id,
+        response,
+        retry_input,
+    }) = action
+    else {
+        panic!("expected Resume action on digit 3, got {action:?}");
+    };
+    let val: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(val, serde_json::json!({ "choice": "allow_persistent" }));
+    assert_eq!(retry_input, "allow_persistent");
+
+    app.begin_resume_write(request_id.clone());
+    app.dispatch(FileBackedEvent::ResumeWriteCompleted {
+        request_id,
+        retry_input: "allow_persistent".into(),
+        result: Ok(()),
+    });
+    assert!(app.confirmation.is_none());
+    let settled_screen = render_lines(&app, 100, 16).join("\n");
+    assert!(
+        settled_screen.contains("✓ Approved & remembered · bash: cargo test -p alan-terminal-ui"),
+        "{settled_screen}"
+    );
+    assert_eq!(
+        crate::history::ConfirmationOutcome::from_choice("allow_persistent"),
+        crate::history::ConfirmationOutcome::AllowedPersistently
+    );
+    assert_eq!(
+        crate::history::ConfirmationOutcome::AllowedPersistently.label("allow_persistent"),
+        "Approved & remembered"
+    );
+}

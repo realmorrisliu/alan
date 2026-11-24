@@ -23,11 +23,25 @@ pub(super) const MAX_SOURCE_FILE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SOURCE_BYTES: usize = 12 * 1024 * 1024;
 
 impl PackageSnapshot {
+    /// Validate embedded entries through the ordinary snapshot boundary.
+    pub fn from_entries(
+        source_name: impl Into<String>,
+        mut entries: Vec<PackageSnapshotEntry>,
+    ) -> Result<Self> {
+        entries.sort_by(|left, right| left.path.cmp(&right.path));
+        let snapshot = Self {
+            source_name: source_name.into(),
+            entries,
+        };
+        validate_snapshot(&snapshot)?;
+        Ok(snapshot)
+    }
+
     /// Validate embedded first-party entries through the ordinary snapshot boundary.
     pub fn from_preinstalled(
         source: &alan_agent_engine::skills::PreinstalledSkillPackageSource,
     ) -> Result<Self> {
-        let mut entries = source
+        let entries = source
             .files
             .iter()
             .map(|file| {
@@ -43,13 +57,7 @@ impl PackageSnapshot {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        entries.sort_by(|left, right| left.path.cmp(&right.path));
-        let snapshot = Self {
-            source_name: source.source_name.to_string(),
-            entries,
-        };
-        validate_snapshot(&snapshot)?;
-        Ok(snapshot)
+        Self::from_entries(source.source_name, entries)
     }
 
     /// Snapshot a trusted embedded/preinstalled package tree.

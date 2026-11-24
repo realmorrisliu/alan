@@ -516,7 +516,7 @@ fn render_option_line(
     } else {
         match label {
             "approve" => theme.bold_if_capable(theme.run_style()),
-            "allow_session" => theme.accent_bold(),
+            "allow_session" | "allow_persistent" => theme.accent_bold(),
             "reject" => theme.block_style(),
             _ => Style::default(),
         }
@@ -533,10 +533,18 @@ fn render_option_line(
         label_style = label_style.add_modifier(Modifier::BOLD);
     }
 
+    let display_label = if is_reject_note {
+        label
+    } else {
+        match label {
+            "allow_persistent" => "allow & remember",
+            _ => label,
+        }
+    };
     let mut spans = vec![
         Span::styled(prefix, prefix_style),
         Span::styled(format!("[{}] ", idx + 1), num_style),
-        Span::styled(clean_text(label), label_style),
+        Span::styled(clean_text(display_label), label_style),
     ];
     if is_default {
         spans.push(Span::styled(" (default)", default_style));
