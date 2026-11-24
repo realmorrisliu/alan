@@ -352,6 +352,17 @@ impl FileBackedApp {
                 self.flush_held_stream_after_boundary();
             }
             "assistant" => {
+                for (id, input) in &mut self.local_inputs {
+                    if input.owner == self.queue.owner
+                        && !input.tape_seen
+                        && input.body.trim().is_empty()
+                        && record.belongs_to(id)
+                    {
+                        // A correlated assistant record settles any local text-less attachment input
+                        // whose user tape line was omitted by the runtime.
+                        input.tape_seen = true;
+                    }
+                }
                 let idx = self.current_assistant_cell();
                 let preview =
                     idx.and_then(|i| self.transcript[i].assistant_source().map(str::to_string));

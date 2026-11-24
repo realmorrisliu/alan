@@ -25,6 +25,7 @@ mod attachment;
 pub(in crate::file_backed) mod form_control;
 mod grouping;
 mod history;
+mod image_paste;
 mod model_control;
 mod notice;
 pub(in crate::file_backed) use notice::{Notice, humanize_protocol_message};
@@ -94,6 +95,7 @@ pub(super) struct FileBackedApp {
     pub(super) update_notice: Option<String>,
     pub(super) release_channel: Option<String>,
     pub(super) pending_attachments: Vec<alan_agent_protocol::ContentPart>,
+    pub(super) attachment_revision: u64,
     pub(super) namespace_cwd: std::path::PathBuf,
     pub(super) retained_project_mount: Option<(ProjectMountReceipt, std::path::PathBuf)>,
     pub(super) pending_project_control: Option<project::PendingProjectControl>,
@@ -198,6 +200,7 @@ impl FileBackedApp {
             update_notice: None,
             release_channel: None,
             pending_attachments: Vec::new(),
+            attachment_revision: 0,
             namespace_cwd: std::path::PathBuf::from("/"),
             retained_project_mount: None,
             pending_project_control: None,
@@ -360,6 +363,7 @@ impl FileBackedApp {
                     return None;
                 }
                 if self.modal.active
+                    || self.model_chooser.active
                     || self.resume_picker.active
                     || self.fork_picker.active
                     || self.login.is_active()
@@ -379,6 +383,9 @@ impl FileBackedApp {
                     for ch in text.chars().filter(|ch| !ch.is_control()) {
                         form.insert_char(ch);
                     }
+                } else if self.pending_yield.is_none() && self.input_intent != InputIntent::Command
+                {
+                    self.handle_composer_paste(&text);
                 } else {
                     self.insert_input_text(&text);
                     self.refresh_completion();
@@ -656,6 +663,19 @@ impl FileBackedApp {
                 self.submit_with_mode(alan_agent_protocol::InputMode::Steer)
             }
             KeyEvent {
+                code: KeyCode::Char('v'),
+                modifiers,
+                ..
+            } if !pending_input
+                && self.confirmation.is_none()
+                && self.input_intent != InputIntent::Command
+                && modifiers.contains(KeyModifiers::CONTROL)
+                && !modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.attach_from_clipboard();
+                None
+            }
+            KeyEvent {
                 code: KeyCode::Esc, ..
             } => {
                 if self.interruptible_work_active(has_pending_submission) {
@@ -691,8 +711,15 @@ impl FileBackedApp {
                 }
                 if self.pending_yield.is_none()
                     && key.code == KeyCode::Backspace
+                    && !key.modifiers.contains(KeyModifiers::ALT)
                     && self.composer.text().is_empty()
                 {
+                    if self.input_intent != InputIntent::Command
+                        && !self.pending_attachments.is_empty()
+                    {
+                        self.pop_last_pending_attachment();
+                        return None;
+                    }
                     self.input_intent = InputIntent::Agent;
                 }
                 let outcome = self.composer.handle_key(key);
@@ -933,6 +960,9 @@ impl FileBackedApp {
     }
 }
 
+#[cfg(test)]
+#[path = "image_paste_tests.rs"]
+mod image_paste_tests;
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;

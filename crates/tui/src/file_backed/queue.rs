@@ -89,8 +89,10 @@ pub(super) async fn read_queue(shell: &alan_shell::Shell, owner: &str) -> Option
 pub(super) struct LocalInput {
     pub owner: String,
     pub body: String,
+    pub attachment_summary: Option<String>,
     pub intent: alan_agent_protocol::InputIntent,
     draft_revision: u64,
+    attachment_revision: u64,
     pub acknowledged: bool,
     pub cell: Option<usize>,
     pub tape_seen: bool,
@@ -100,6 +102,14 @@ pub(super) struct LocalInput {
 }
 
 impl LocalInput {
+    pub(super) fn display_preview(&self) -> Option<&str> {
+        if !self.body.trim().is_empty() {
+            Some(&self.body)
+        } else {
+            self.attachment_summary.as_deref()
+        }
+    }
+
     pub(super) fn release_terminal_source(&mut self) {
         if self.terminal && (self.cell.is_some() || self.committed) {
             self.body = String::new();
@@ -219,8 +229,10 @@ impl FileBackedApp {
             LocalInput {
                 owner,
                 body,
+                attachment_summary: None,
                 intent,
                 draft_revision: self.composer.draft_revision(),
+                attachment_revision: self.attachment_revision,
                 acknowledged: false,
                 cell: None,
                 tape_seen: false,
@@ -229,6 +241,12 @@ impl FileBackedApp {
                 terminal: false,
             },
         );
+    }
+
+    pub(super) fn set_local_input_attachment_summary(&mut self, id: &str, summary: Option<String>) {
+        if let Some(input) = self.local_inputs.get_mut(id) {
+            input.attachment_summary = summary;
+        }
     }
 
     pub(super) fn show_submission_sent(&mut self, id: &str) {
@@ -374,8 +392,12 @@ impl FileBackedApp {
     pub(super) fn materialize_local_receipt_cell(&mut self, id: &str) {
         let Some((body, intent, cut, tape_seen, committed, has_cell)) =
             self.local_inputs.get(id).map(|input| {
+                let display = input
+                    .display_preview()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| input.body.clone());
                 (
-                    input.body.clone(),
+                    display,
                     input.intent,
                     input.source_cut,
                     input.tape_seen,
@@ -415,11 +437,12 @@ impl FileBackedApp {
         let body = input.body.clone();
         let intent = input.intent;
         let draft_revision = input.draft_revision;
+        let attachment_revision = input.attachment_revision;
         let tape_seen = input.tape_seen;
         if !tape_seen && !deferred {
             self.materialize_local_receipt_cell(id);
         }
-        self.consume_or_remember_local_input(&body, intent, draft_revision);
+        self.consume_or_remember_local_input(&body, intent, draft_revision, attachment_revision);
         self.refresh_local_input_hint(id, owner);
     }
 
@@ -437,7 +460,8 @@ impl FileBackedApp {
         let body = input.body.clone();
         let intent = input.intent;
         let draft_revision = input.draft_revision;
-        self.consume_or_remember_local_input(&body, intent, draft_revision);
+        let attachment_revision = input.attachment_revision;
+        self.consume_or_remember_local_input(&body, intent, draft_revision, attachment_revision);
     }
 
     fn consume_or_remember_local_input(
@@ -445,8 +469,10 @@ impl FileBackedApp {
         body: &str,
         intent: alan_agent_protocol::InputIntent,
         draft_revision: u64,
+        attachment_revision: u64,
     ) {
         if self.composer.draft_revision() == draft_revision
+            && self.attachment_revision == attachment_revision
             && self.composer.text() == body
             && self.input_intent == intent
         {

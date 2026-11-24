@@ -86,11 +86,11 @@ pub(crate) fn action_summary_with_theme(
                 format!(" · $ {}", bounded(cmdline, 160))
             },
             if *status == ToolStatus::Failed && !stderr.is_empty() {
-                format!(" · {}", bounded(stderr, 128))
+                format!(" · {}", bounded_command_preview(stderr, 128))
             } else if !stdout.is_empty() {
-                format!(" · {}", bounded(stdout, 128))
+                format!(" · {}", bounded_command_preview(stdout, 128))
             } else if !stderr.is_empty() {
-                format!(" · {}", bounded(stderr, 128))
+                format!(" · {}", bounded_command_preview(stderr, 128))
             } else {
                 String::new()
             },
@@ -310,16 +310,39 @@ fn distinct_path(title: &str, path: &str) -> String {
     }
 }
 
+fn clamp_bytes(text: &str, bytes: usize) -> String {
+    let mut end = text.len().min(bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
 pub(crate) fn bounded(text: &str, bytes: usize) -> String {
     text.lines()
         .find(|line| !clean_text(line).trim().is_empty())
-        .map_or_else(String::new, |line| {
-            let mut end = line.len().min(bytes);
-            while !line.is_char_boundary(end) {
-                end -= 1;
-            }
-            line[..end].to_string()
-        })
+        .map_or_else(String::new, |line| clamp_bytes(line, bytes))
+}
+
+fn bounded_command_preview(text: &str, bytes: usize) -> String {
+    let mut lines = text
+        .lines()
+        .filter(|line| !clean_text(line).trim().is_empty());
+    let Some(first) = lines.next() else {
+        return String::new();
+    };
+    if !matches!(first.trim(), "[" | "{" | "]" | "}" | "[," | "{,") {
+        return clamp_bytes(first, bytes);
+    }
+    let mut joined = first.trim().to_string();
+    for line in lines {
+        if joined.len() >= bytes {
+            break;
+        }
+        joined.push(' ');
+        joined.push_str(line.trim());
+    }
+    clamp_bytes(&joined, bytes)
 }
 
 #[cfg(test)]
@@ -477,6 +500,38 @@ mod tests {
                 assert!(rows[1].to_string().contains(expected), "{rows:?}");
                 assert!(rows.iter().all(|row| row.width() <= width));
             }
+        }
+    }
+
+    #[test]
+    fn command_excerpt_joins_subsequent_lines_when_first_line_is_json_punctuation() {
+        for (stdout, expected) in [
+            (
+                "[\n  {\n    \"number\": 42,\n    \"title\": \"Fix bug\"\n  }\n]",
+                "\"number\": 42",
+            ),
+            ("{\n  \"ok\": true,\n  \"count\": 3\n}", "\"ok\": true"),
+        ] {
+            let cell = HistoryCell::Tool {
+                action: None,
+                title: "Bash gh issue list".into(),
+                status: ToolStatus::Complete,
+                preview: None,
+                presentation: Some(ToolResultPresentation::Command {
+                    cmdline: "gh issue list --json number,title".into(),
+                    exit_code: Some(0),
+                    stdout: stdout.into(),
+                    stderr: String::new(),
+                    truncated: true,
+                }),
+            };
+            let rows = action_summary(&cell, 120);
+            assert_eq!(rows.len(), 2);
+            let line = rows[1].to_string();
+            assert!(line.contains("exit 0"), "{line}");
+            assert!(line.contains(expected), "{line}");
+            assert!(line.contains("truncated"), "{line}");
+            assert!(!line.contains("exit 0 · [ · truncated"), "{line}");
         }
     }
 }
