@@ -7,6 +7,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-11-24
+
+### Fixed
+
+- Fix `githubfs` latency and redundant GitHub CLI requests by skipping `computed_bytes()` on directory `stat()`, reading `IssuesDir`/`PullsDir` cache-first for synced repos while preserving on-demand queries for unsynced repos, caching `gh auth token` with single retry invalidation on unauthorized responses, scoping sync/directory listings to `state=open`, and fetching issues and pulls concurrently (#1162).
+- Fix compaction pressure evaluation, prompt framing, and failure handling by driving automatic compaction strictly from token utilization when `context_window_tokens > 0`, framing compaction and memory-flush inputs as tool-free text with protected trailing directives and raised output token budgets (`8192` / `4096` / `2048`), retrying empty compaction summaries inside the generation loop, keeping manual and soft pre-turn compaction failures non-destructive, and preserving the latest user prompt in degraded fallback summaries (#1163).
+
 ## [0.1.9] - 2026-11-24
 
 ### Fixed
