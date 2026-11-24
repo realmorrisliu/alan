@@ -419,6 +419,9 @@ fn live_region_lines_in(
     } else {
         if !app.login.is_entering_input() && app.project_selection.is_none() {
             lines.extend(queued_preview_lines(app, width));
+            if app.pending_yield.is_none() {
+                lines.extend(app.attachment_preview_lines(width));
+            }
         }
         let prompt_start = lines.len();
         lines.extend(app.composer_lines());
@@ -700,10 +703,9 @@ fn queued_preview_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>>
         let preview_raw = app
             .local_inputs
             .get(id)
-            .filter(|input| !input.body.trim().is_empty())
-            .map(|input| {
-                input
-                    .body
+            .and_then(|input| input.display_preview())
+            .map(|preview| {
+                preview
                     .lines()
                     .map(str::trim)
                     .filter(|l| !l.is_empty())

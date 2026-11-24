@@ -87,7 +87,9 @@ impl FileBackedApp {
         }
 
         let text = self.composer.text().to_owned();
-        if text.trim().is_empty() {
+        if text.trim().is_empty()
+            && !(self.input_intent == InputIntent::Agent && !self.pending_attachments.is_empty())
+        {
             if self.input_intent != InputIntent::Agent {
                 self.notice = Some("Enter content after the input prefix.".into());
             }
@@ -95,7 +97,7 @@ impl FileBackedApp {
         }
         self.notice = None;
         self.completion = None;
-        if self.input_intent == InputIntent::Agent && text.trim().starts_with('/') {
+        if self.input_intent == InputIntent::Agent && looks_like_slash_command(text.trim()) {
             if mode == alan_agent_protocol::InputMode::Steer {
                 self.notice = Some("Slash commands cannot be sent as live steer messages.".into());
                 return None;
@@ -104,12 +106,26 @@ impl FileBackedApp {
             self.composer.remember(&text);
             return self.handle_command(text.trim());
         }
-        let mut parts = self.pending_attachments.clone();
+        let mut parts = Vec::new();
+        let mut seen_hashes = std::collections::BTreeSet::new();
+        for part in self.pending_attachments.iter().cloned() {
+            super::super::attachment_io::push_deduped_attachment(
+                &mut parts,
+                &mut seen_hashes,
+                part,
+            );
+        }
         if self.input_intent != InputIntent::Command {
-            parts.extend(super::super::attachment_io::extract_at_image_attachments(
+            for part in super::super::attachment_io::extract_prompt_image_attachments(
                 &text,
                 self.project_host_root.as_deref(),
-            ));
+            ) {
+                super::super::attachment_io::push_deduped_attachment(
+                    &mut parts,
+                    &mut seen_hashes,
+                    part,
+                );
+            }
         }
         let record = alan_agent_protocol::UserInputRecord::new(self.input_intent, mode, text)
             .with_parts(parts);
@@ -190,6 +206,7 @@ impl FileBackedApp {
         self.last_input_failed = false;
         self.expected_terminal_error = None;
         self.pending_attachments.clear();
+        self.attachment_revision += 1;
         // Submission may be queued behind another client. Tape owns turn boundaries.
     }
 
@@ -230,6 +247,20 @@ impl FileBackedApp {
             return false;
         }
         let text = self.composer.text().trim();
-        !text.is_empty() && (self.input_intent != InputIntent::Agent || !text.starts_with('/'))
+        let has_agent_attachments =
+            self.input_intent == InputIntent::Agent && !self.pending_attachments.is_empty();
+        (!text.is_empty() || has_agent_attachments)
+            && (self.input_intent != InputIntent::Agent || !looks_like_slash_command(text))
     }
+}
+
+pub(super) fn looks_like_slash_command(trimmed: &str) -> bool {
+    let Some(rest) = trimmed.strip_prefix('/') else {
+        return false;
+    };
+    let first = rest
+        .split(|ch: char| ch.is_whitespace())
+        .next()
+        .unwrap_or("");
+    !first.is_empty() && !first.contains('/')
 }

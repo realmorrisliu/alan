@@ -91,6 +91,9 @@ pub fn detect(text: &str, cursor: usize, sources: &CompletionSources) -> Option<
     };
 
     let query = &before[word_start + trigger.len_utf8()..];
+    if kind == CompletionKind::Command && query.contains('/') {
+        return None;
+    }
     let pool = match kind {
         CompletionKind::Command => &sources.commands,
         CompletionKind::Skill => &sources.skills,
@@ -223,6 +226,12 @@ mod tests {
         assert_eq!(state.matches[0].value, "compact");
         // Not at start -> no command completion.
         assert!(detect("hi /co", 6, &sources()).is_none());
+        // Filesystem paths with additional '/' never trigger command completion.
+        assert!(detect("/var/folders/12/rex-clipboard-1.png", 37, &sources()).is_none());
+        assert!(detect("/Users/morris/Desktop/shot.png", 32, &sources()).is_none());
+        assert!(detect("//double", 8, &sources()).is_none());
+        // Bare '/' still opens command completion.
+        assert!(detect("/", 1, &sources()).is_some());
     }
 
     #[test]

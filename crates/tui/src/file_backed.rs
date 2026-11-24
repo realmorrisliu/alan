@@ -536,6 +536,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         Ok(()) => {
                                             let owner = if follows_root_agent { watchers.root_agent_pid.map(|pid| format!("/agent/{pid}")).unwrap_or_else(|| app.agent_path.clone()) } else { app.agent_path.clone() };
                                             app.track_local_input(&record.submission_id, owner, text.clone(), record.intent);
+                                            app.set_local_input_attachment_summary(&record.submission_id, attachment_io::summarize_attachments(&record.parts));
                                             app.show_submission_sent(&record.submission_id);
                                             pending_root_agent_turns.push_back(PendingRootAgentTurn {
                                                 input: text.clone(),

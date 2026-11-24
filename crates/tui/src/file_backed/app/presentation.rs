@@ -456,7 +456,7 @@ impl FileBackedApp {
     }
 }
 
-fn truncate_middle(value: &str, max_width: usize) -> String {
+pub(in crate::file_backed) fn truncate_middle(value: &str, max_width: usize) -> String {
     if UnicodeWidthStr::width(value) <= max_width {
         return value.to_string();
     }

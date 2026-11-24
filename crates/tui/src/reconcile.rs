@@ -173,6 +173,18 @@ impl StreamReconciler {
 
     fn decide_assistant(&mut self, content: String, preview: Option<&str>) -> AssistantDecision {
         let Some(preview) = preview else {
+            if self.awaiting_boundary && !self.held.is_empty() {
+                if let Some(rest) = self.held.strip_prefix(content.as_str()) {
+                    self.held = rest.to_string();
+                    self.suppress.clear();
+                    return AssistantDecision::Push(content);
+                }
+                if let Some(remainder) = content.strip_prefix(self.held.as_str()) {
+                    self.held.clear();
+                    self.suppress.push_str(remainder);
+                    return AssistantDecision::Push(content);
+                }
+            }
             if self.current_turn_live_boundary {
                 // The turn started after attach; if the tape beat the output
                 // tail, the missing bytes can still arrive and must be
