@@ -10,6 +10,7 @@ use crate::theme::Theme;
 pub enum ConfirmationOutcome {
     Approved,
     AllowedForSession,
+    AllowedPersistently,
     Rejected,
     Other,
     Closed,
@@ -20,6 +21,7 @@ impl ConfirmationOutcome {
         match choice {
             "approve" => Self::Approved,
             "allow_session" => Self::AllowedForSession,
+            "allow_persistent" => Self::AllowedPersistently,
             "reject" => Self::Rejected,
             _ => Self::Other,
         }
@@ -29,6 +31,7 @@ impl ConfirmationOutcome {
         match self {
             Self::Approved => "Approved".to_string(),
             Self::AllowedForSession => "Allowed for session".to_string(),
+            Self::AllowedPersistently => "Approved & remembered".to_string(),
             Self::Rejected => "Rejected".to_string(),
             Self::Other => clean_text(choice),
             Self::Closed => "Approval closed".to_string(),
@@ -45,7 +48,9 @@ pub(super) fn render_confirmation_receipt_line(
     theme: Theme,
 ) -> Line<'static> {
     let (icon, label_style) = match outcome {
-        ConfirmationOutcome::Approved | ConfirmationOutcome::AllowedForSession => {
+        ConfirmationOutcome::Approved
+        | ConfirmationOutcome::AllowedForSession
+        | ConfirmationOutcome::AllowedPersistently => {
             (if theme.is_dumb { "+ " } else { "✓ " }, theme.run_style())
         }
         ConfirmationOutcome::Rejected => {

@@ -110,6 +110,12 @@ pub(crate) fn action_summary_with_theme(
     if !child.trim().is_empty() {
         rows.push(summary_row(&format!("  {child}"), width, style));
     }
+    if *status == ToolStatus::Failed
+        && let Some(ToolResultPresentation::Command { stderr, .. }) = presentation
+        && let Some(hint_line) = failed_command_hint_line(stderr)
+    {
+        rows.push(summary_row(&hint_line, width, theme.muted_style()));
+    }
     rows
 }
 
@@ -316,6 +322,23 @@ fn clamp_bytes(text: &str, bytes: usize) -> String {
         end -= 1;
     }
     text[..end].to_string()
+}
+
+fn failed_command_hint_line(stderr: &str) -> Option<String> {
+    stderr
+        .lines()
+        .map(clean_text)
+        .filter(|line| !line.trim().is_empty())
+        .skip(1)
+        .find_map(|line| {
+            let trimmed = line.trim();
+            let prefix = trimmed.get(..5)?;
+            if !prefix.eq_ignore_ascii_case("hint:") {
+                return None;
+            }
+            let body = trimmed[5..].trim();
+            (!body.is_empty()).then(|| format!("  hint: {}", clamp_bytes(body, 256)))
+        })
 }
 
 pub(crate) fn bounded(text: &str, bytes: usize) -> String {
@@ -533,5 +556,66 @@ mod tests {
             assert!(line.contains("truncated"), "{line}");
             assert!(!line.contains("exit 0 · [ · truncated"), "{line}");
         }
+    }
+
+    #[test]
+    fn failed_command_surfaces_subsequent_stderr_hint_as_muted_child_line() {
+        let theme = Theme::default();
+        let failed = HistoryCell::Tool {
+            action: None,
+            title: "Bash gh issue list".into(),
+            status: ToolStatus::Failed,
+            preview: None,
+            presentation: Some(ToolResultPresentation::Command {
+                cmdline: "gh issue list".into(),
+                exit_code: Some(1),
+                stdout: String::new(),
+                stderr: "error: gh failed to authenticate\n  Hint: OS sandbox blocks host credentials (~/.config/gh)\nhint: ignored second hint".into(),
+                truncated: false,
+            }),
+        };
+        let rows = action_summary_with_theme(&failed, 120, theme);
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        assert!(rows[1].to_string().contains("exit 1 · error: gh failed"));
+        assert_eq!(
+            rows[2].to_string(),
+            "  hint: OS sandbox blocks host credentials (~/.config/gh)"
+        );
+        assert_eq!(rows[2].spans[0].style, theme.muted_style());
+
+        // First-line-only hint is already shown on the exit row and is not duplicated.
+        let first_line_hint = HistoryCell::Tool {
+            action: None,
+            title: "Bash gh issue list".into(),
+            status: ToolStatus::Failed,
+            preview: None,
+            presentation: Some(ToolResultPresentation::Command {
+                cmdline: "gh issue list".into(),
+                exit_code: Some(1),
+                stdout: String::new(),
+                stderr: "hint: single line hint".into(),
+                truncated: false,
+            }),
+        };
+        assert_eq!(
+            action_summary_with_theme(&first_line_hint, 120, theme).len(),
+            2
+        );
+
+        // Non-failed commands do not emit a separate hint row.
+        let completed = HistoryCell::Tool {
+            action: None,
+            title: "Bash echo ok".into(),
+            status: ToolStatus::Complete,
+            preview: None,
+            presentation: Some(ToolResultPresentation::Command {
+                cmdline: "echo ok".into(),
+                exit_code: Some(0),
+                stdout: "ok".into(),
+                stderr: "warning\nhint: ignored on success".into(),
+                truncated: false,
+            }),
+        };
+        assert_eq!(action_summary_with_theme(&completed, 120, theme).len(), 2);
     }
 }
