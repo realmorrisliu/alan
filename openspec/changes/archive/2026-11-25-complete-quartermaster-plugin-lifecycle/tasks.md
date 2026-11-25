@@ -21,5 +21,5 @@
 
 ## 5. Verification, Review, and Archive Readiness
 - [x] 5.1 Add unit & integration tests across `alan-service-manager` and `alan`, verify `./scripts/check-rust-source-size.sh`, `./scripts/check-rust-architecture.sh`, `just openspec-check`, `just quality`, and `cargo test --workspace --locked`.
-- [ ] 5.2 Complete PR review (16/16 CI checks + clean Codex review) on `feat/quartermaster-plugin-lifecycle` without leaving unresolved threads.
-- [ ] 5.3 After merge, sync deltas into `openspec/specs/` and move this change to `openspec/changes/archive/YYYY-MM-DD-complete-quartermaster-plugin-lifecycle/`.
+- [x] 5.2 Complete PR review (16/16 CI checks + clean Codex review) on `feat/quartermaster-plugin-lifecycle` without leaving unresolved threads.
+- [x] 5.3 After merge, sync deltas into `openspec/specs/` and move this change to `openspec/changes/archive/YYYY-MM-DD-complete-quartermaster-plugin-lifecycle/`.
