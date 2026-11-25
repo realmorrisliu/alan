@@ -339,6 +339,7 @@ impl EmbeddedConfig {
             resume_root: self.resume_root,
             resume_rollout_id: None,
             ephemeral_rollout: false,
+            no_resume_update: false,
             input_shadow: None,
             launch_context,
             connection_store,

@@ -22,6 +22,8 @@ pub struct HostBootConfig {
     service_manager: ServiceManagerConfig,
     /// Keep this invocation's Root rollout out of `metadata/root-rollout`.
     pub ephemeral_rollout: bool,
+    /// Skip writing `metadata/root-rollout` while keeping normal memory, context, and `--resume`.
+    pub no_resume_update: bool,
     saved_grants: Vec<String>,
     saved_grant_store_path: Option<std::path::PathBuf>,
 }
@@ -279,6 +281,7 @@ impl HostBootConfig {
                 resume_root,
                 resume_rollout_id: None,
                 ephemeral_rollout: false,
+                no_resume_update: false,
                 input_shadow: None,
                 launch_context,
                 connection_store: Some(connection_store),
@@ -293,6 +296,7 @@ impl HostBootConfig {
                 tool_secret_resolver: Some(Arc::new(secret_store)),
             },
             ephemeral_rollout: false,
+            no_resume_update: false,
             saved_grants: Vec::new(),
             saved_grant_store_path: None,
         })
@@ -314,6 +318,7 @@ impl HostBootConfig {
         Self {
             service_manager: config,
             ephemeral_rollout: false,
+            no_resume_update: false,
             saved_grants: Vec::new(),
             saved_grant_store_path: None,
         }
@@ -383,6 +388,19 @@ impl HostBootConfig {
     /// Whether this invocation is excluded from the selected-rollout channel.
     pub fn ephemeral_rollout(&self) -> bool {
         self.ephemeral_rollout
+    }
+
+    /// Skip writing `metadata/root-rollout` for this invocation while preserving personal memory,
+    /// project startup context, and optional `--resume` recovery.
+    pub fn with_no_resume_update(mut self, no_resume_update: bool) -> Self {
+        self.no_resume_update = no_resume_update;
+        self.service_manager.no_resume_update = no_resume_update;
+        self
+    }
+
+    /// Whether this invocation skips updating `metadata/root-rollout`.
+    pub fn no_resume_update(&self) -> bool {
+        self.no_resume_update
     }
 
     /// Attach read-only Project Ledger and unread workflow inbox context for Root Agent startup.
@@ -455,6 +473,7 @@ impl HostBootConfig {
 
     pub(crate) async fn boot_service_manager(mut self) -> Result<ServiceManager> {
         self.service_manager.ephemeral_rollout = self.ephemeral_rollout;
+        self.service_manager.no_resume_update = self.no_resume_update;
         let saved_grants = std::mem::take(&mut self.saved_grants);
         let store_path = self.saved_grant_store_path.take();
         let manager = ServiceManager::boot(self.service_manager).await?;

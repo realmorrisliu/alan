@@ -199,17 +199,23 @@ pub fn resolve_bare_trust_options(
 }
 
 /// Build the `HostBootConfig` with invocation-only posture, Guardian, resume, grants, and packages.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Trust and rollout flags are passed directly from foreground CLI dispatch"
+)]
 pub fn apply_boot_trust_options(
     mut config: HostBootConfig,
     options: ResolvedBareTrustOptions,
     resume_rollout_id: Option<String>,
     ephemeral: bool,
+    no_resume_update: bool,
     shadow_evaluator: Option<String>,
     shadow_surface: EvaluationSurface,
 ) -> Result<HostBootConfig> {
     config = config
         .with_trust_posture(options.posture)
-        .with_ephemeral_rollout(ephemeral);
+        .with_ephemeral_rollout(ephemeral)
+        .with_no_resume_update(no_resume_update);
     if ephemeral {
         config = config.with_root_package_bindings(Vec::new());
     }

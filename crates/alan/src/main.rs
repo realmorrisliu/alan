@@ -10,7 +10,7 @@ use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths, LocalAttachmen
 use anyhow::{Context, Result};
 use cli::dispatch::{
     BareRunMode, LegacyImportKind, LegacyStateAction, bare_run_mode, dispatch_subcommand,
-    parse_cli, uses_product_stores, validate_bare_flags,
+    parse_cli, resolve_no_resume_update, uses_product_stores, validate_bare_flags,
 };
 use reports::{canonical_existing_roots, print_legacy_cleanup, print_legacy_inspection};
 use std::{
@@ -29,9 +29,14 @@ async fn main() -> Result<()> {
     let cwd_override = validate_bare_flags(
         resume,
         cli.ephemeral,
+        cli.no_resume_update,
         cli.cwd.as_deref(),
         cli.command.is_some(),
     )?;
+    let no_resume_update = resolve_no_resume_update(
+        cli.no_resume_update,
+        std::env::var("ALAN_NO_RESUME").ok().as_deref(),
+    );
     let trust_options = cli::trust::resolve_bare_trust_options(&cli.trust, cli.command.is_some())?;
     anyhow::ensure!(
         cli.shadow_evaluator.is_none() || cli.command.is_none(),
@@ -76,6 +81,7 @@ async fn main() -> Result<()> {
                 resume,
                 resume_rollout_id,
                 cli.ephemeral,
+                no_resume_update,
                 cwd_override,
                 cli.no_auto_mount,
                 cli.shadow_evaluator,

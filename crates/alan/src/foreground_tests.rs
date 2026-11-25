@@ -287,6 +287,18 @@ fn foreground_startup_loads_read_only_ledger_for_bound_dir_only() {
         .with_project_startup_context(Some(startup.clone()));
     assert!(forced_ephemeral.ephemeral_context());
     assert!(forced_ephemeral.project_startup_context().is_none());
+
+    // 5. --no-resume-update preserves Project Ledger loading and !ephemeral_context.
+    let no_resume_cfg = apply_project_startup_context(
+        mock_boot_config().with_no_resume_update(true),
+        &projects_root,
+        Some(&bound_repo),
+        false,
+    )
+    .unwrap();
+    assert!(no_resume_cfg.no_resume_update());
+    assert!(!no_resume_cfg.ephemeral_context());
+    assert!(no_resume_cfg.project_startup_context().is_some());
 }
 
 #[tokio::test]

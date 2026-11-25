@@ -69,6 +69,8 @@ pub struct ServiceManagerConfig {
     /// Never read or overwrite the `metadata/root-rollout` selector, so a throwaway run neither
     /// resumes nor becomes the selected session of earlier or later invocations.
     pub ephemeral_rollout: bool,
+    /// Skip writing `metadata/root-rollout` while keeping normal memory, context, and `--resume`.
+    pub no_resume_update: bool,
     pub input_shadow: Option<InputShadowSelection>,
     pub launch_context: ProcessLaunchContext,
     pub connection_store: Option<ConnectionStoreBindings>,
@@ -145,6 +147,7 @@ impl ServiceManagerConfig {
             resume_root: false,
             resume_rollout_id: None,
             ephemeral_rollout: false,
+            no_resume_update: false,
             input_shadow: None,
             llm_factory: Arc::new(ReusableLlmClientFactory(llm_client.into_reusable())),
             host_mount_adapter: Arc::new(UnavailableHostMountExportAdapter),
@@ -189,6 +192,12 @@ impl ServiceManagerConfig {
     /// Keep this invocation's Root rollout out of the selected-rollout channel.
     pub fn with_ephemeral_rollout(mut self, ephemeral: bool) -> Self {
         self.ephemeral_rollout = ephemeral;
+        self
+    }
+
+    /// Skip updating the global `metadata/root-rollout` pointer for this invocation.
+    pub fn with_no_resume_update(mut self, no_resume_update: bool) -> Self {
+        self.no_resume_update = no_resume_update;
         self
     }
 
@@ -379,6 +388,7 @@ impl ServiceManager {
             resume_root: config.resume_root,
             resume_rollout_id: config.resume_rollout_id,
             ephemeral_rollout: config.ephemeral_rollout,
+            no_resume_update: config.no_resume_update,
             input_shadow: config.input_shadow,
             launch_context: config.launch_context,
             tools: config.tools,
@@ -554,6 +564,7 @@ struct AssembleInputs {
     resume_root: bool,
     resume_rollout_id: Option<String>,
     ephemeral_rollout: bool,
+    no_resume_update: bool,
     input_shadow: Option<InputShadowSelection>,
     launch_context: ProcessLaunchContext,
     tools: ToolRegistry,
@@ -580,6 +591,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         resume_root,
         resume_rollout_id,
         ephemeral_rollout,
+        no_resume_update,
         input_shadow,
         mut launch_context,
         tools,
@@ -880,6 +892,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         )
         .with_allow_profile_switch(allow_profile_switch)
         .with_ephemeral_rollout(ephemeral_rollout)
+        .with_no_resume_update(no_resume_update)
         .with_resume_rollout_id(resume_rollout_id);
         let root = agent_runtime
             .launch_root(manager_pid, &system_namespace, &root_unit, &root_template)

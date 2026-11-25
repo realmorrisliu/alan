@@ -25,6 +25,9 @@ pub struct Cli {
     /// Do not read or overwrite the durable root rollout pointer for this invocation.
     #[arg(long)]
     pub ephemeral: bool,
+    /// Leave the global resume pointer (`metadata/root-rollout`) untouched (also `ALAN_NO_RESUME=1`).
+    #[arg(long)]
+    pub no_resume_update: bool,
     /// Initial project directory candidate offered to bare `alan`.
     #[arg(long, value_name = "PATH")]
     pub cwd: Option<PathBuf>,
@@ -502,10 +505,19 @@ pub fn validate_resume_scope(resume: bool, has_subcommand: bool) -> Result<()> {
     Ok(())
 }
 
-/// Validate bare invocation flags (`--resume`, `--ephemeral`, `--cwd`).
+/// Resolve `--no-resume-update` with `ALAN_NO_RESUME` env parity (`1`/`true` enables, `0`/`false`/empty disables).
+pub fn resolve_no_resume_update(flag: bool, env_value: Option<&str>) -> bool {
+    flag || env_value.is_some_and(|raw| {
+        let trimmed = raw.trim();
+        !trimmed.is_empty() && trimmed != "0" && !trimmed.eq_ignore_ascii_case("false")
+    })
+}
+
+/// Validate bare invocation flags (`--resume`, `--ephemeral`, `--no-resume-update`, `--cwd`).
 pub fn validate_bare_flags(
     resume: bool,
     ephemeral: bool,
+    no_resume_update_flag: bool,
     cwd: Option<&std::path::Path>,
     has_subcommand: bool,
 ) -> Result<Option<PathBuf>> {
@@ -513,6 +525,10 @@ pub fn validate_bare_flags(
     anyhow::ensure!(
         !ephemeral || !has_subcommand,
         "`--ephemeral` only applies to bare `alan`"
+    );
+    anyhow::ensure!(
+        !no_resume_update_flag || !has_subcommand,
+        "`--no-resume-update` only applies to bare `alan`"
     );
     anyhow::ensure!(
         !(ephemeral && resume),

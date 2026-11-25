@@ -153,6 +153,7 @@ ENVIRONMENT
   NO_COLOR              disable colors and text attributes when non-empty
   TERM=dumb             disable colors, attributes, and Kitty/OSC controls
   ALAN_NO_WELCOME=1     suppress the empty-session welcome header
+  ALAN_NO_RESUME=1      skip updating the global resume pointer (`--no-resume-update`)
   ALAN_NO_UPDATE_CHECK=1
                         skip passive 24h update check on interactive boot
   ALAN_MANIFEST_URL     override release manifest URL (`latest.json`)
