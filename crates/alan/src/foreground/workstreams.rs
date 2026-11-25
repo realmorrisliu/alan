@@ -311,7 +311,10 @@ async fn discover_live_stream_pids(shell: &alan_shell::Shell) -> BTreeMap<String
                 .map(str::trim)
                 .filter(|s| !s.is_empty()),
             meta.get("child_pid")
-                .and_then(Value::as_u64)
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                })
                 .filter(|pid| *pid > 0),
         ) {
             map.insert(name.to_string(), pid);

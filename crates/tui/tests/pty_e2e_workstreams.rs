@@ -267,7 +267,7 @@ fn spawn_input_echo_responder(
                                 "suggested_target": "docs-sync",
                                 "hop_count": 1,
                                 "correlation_id": "pty-corr-1",
-                                "content": "switch to docs-sync"
+                                "payload": "switch to docs-sync"
                             }
                         })
                         .to_string();

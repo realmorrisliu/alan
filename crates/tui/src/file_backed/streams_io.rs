@@ -235,7 +235,7 @@ impl FileBackedApp {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        let child_pid = metadata.get("child_pid").and_then(Value::as_u64);
+        let child_pid = parse_child_pid_value(metadata.get("child_pid"));
         let child_state = metadata
             .get("child_state")
             .and_then(Value::as_str)
@@ -632,6 +632,14 @@ pub(in crate::file_backed) async fn receive_file_backed_event(
         Some(event) => Some(event),
         None => rx.recv().await,
     }
+}
+
+fn parse_child_pid_value(value: Option<&Value>) -> Option<u64> {
+    let value = value?;
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        .filter(|pid| *pid > 0)
 }
 
 pub(in crate::file_backed) fn unix_time_ms() -> u64 {

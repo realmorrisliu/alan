@@ -8,9 +8,9 @@
 
 ## 2. Slice 2 — In-Instance Async Concurrency, `routefs` Handoff, and TUI Focus (M8.2)
 
-- [ ] 2.1 Support in-instance asynchronous child workstream execution while Root stays interactive, plus orderly cancellation and checkpoint flush on foreground `alan` exit (preserving `tmux` view-detach behavior without a background daemon).
-- [ ] 2.2 Wire `alan-routefs` (`/mnt/route/send`, `/mnt/route/ports/root`, `/mnt/route/log`) for cross-stream `reroute_request` and `cross_stream_dependency` handoffs with `max_handoff_hops = 2` dead-letter escalation and zero authority widening.
-- [ ] 2.3 Implement TUI inline routing receipts, compact status-bar stream/inbox counts, `/streams` overview, and `/focus <name>` / `/root` non-owning client switching over `/agent/<pid>`; verify scrollback, resize reflow, and narrow panes via real Unix PTY (`openpty` + `vt100`) tests.
+- [x] 2.1 Support in-instance asynchronous child workstream execution while Root stays interactive, plus orderly cancellation and checkpoint flush on foreground `alan` exit (preserving `tmux` view-detach behavior without a background daemon).
+- [x] 2.2 Wire `alan-routefs` (`/mnt/route/send`, `/mnt/route/ports/root`, `/mnt/route/log`) for cross-stream `reroute_request` and `cross_stream_dependency` handoffs with `max_handoff_hops = 2` dead-letter escalation and zero authority widening.
+- [x] 2.3 Implement TUI inline routing receipts, compact status-bar stream/inbox counts, `/streams` overview, and `/focus <name>` / `/root` non-owning client switching over `/agent/<pid>`; verify scrollback, resize reflow, and narrow panes via real Unix PTY (`openpty` + `vt100`) tests.
 
 ## 3. Slice 3 — Tiered Write Isolation, `memfs` Delta Governance, and Stateful Cron Streams (M8.3)
 

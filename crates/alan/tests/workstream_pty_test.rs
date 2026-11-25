@@ -395,7 +395,7 @@ async fn run_host_pty_child() -> Result<()> {
             "suggested_target": "beta",
             "hop_count": 1,
             "correlation_id": "host-pty-corr-1",
-            "content": "switch to beta"
+            "payload": "switch to beta"
         });
         let _ = route_shell
             .write("/mnt/route/send", &serde_json::to_vec(&handoff).unwrap())

@@ -314,6 +314,22 @@ fn route_log_parser_handles_direct_and_embedded_handoffs_and_deduplicates() {
     let action = ActionSnapshot::test_subagent("a1", "running", "worker", 77);
     app.observe_workstream_action(&action);
     assert_eq!(app.streams.live_pid_for("worker"), Some(77));
+
+    // Also verify string-encoded `child_pid` emitted by `agent-engine`'s ActionProgressTracker.
+    let string_pid_action = ActionSnapshot {
+        id: "a2".to_string(),
+        name: "spawn_subagent".to_string(),
+        status: "running".to_string(),
+        output: String::new(),
+        result: serde_json::json!({
+            "stream_name": "docs-sync",
+            "child_pid": "88",
+            "child_state": "running",
+        })
+        .to_string(),
+    };
+    app.observe_workstream_action(&string_pid_action);
+    assert_eq!(app.streams.live_pid_for("docs-sync"), Some(88));
 }
 
 #[tokio::test]

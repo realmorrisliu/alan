@@ -611,7 +611,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
             bootstrap,
         )
         .await?;
-    let routefs = Arc::new(alan_routefs::RouteFs::new());
+    let routefs = Arc::new(alan_routefs::RouteFs::new_with_workstream_handoff_rules());
     let srvfs = Arc::new(alan_kernel::SrvFs::new());
     ensure!(
         !tools.list_tools().contains(&"q"),
