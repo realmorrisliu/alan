@@ -98,10 +98,13 @@ isolation rule:
 - **Routine writes on the same Host Mount**: serialize through an in-instance
   single-writer queue over the primary working tree so small edits incur zero
   Git branch or merge overhead.
-- **Concurrent long-running writes**: allocate an isolated `git worktree` on
-  demand, bind the child workstream to a narrowed Host Mount covering only that
-  worktree, and hand the resulting diff back to Root/user for explicit review
-  and merge.
+- **Concurrent long-running writes**: prefer a native OS Copy-on-Write workspace
+  (`openspec/changes/add-cow-workspaces-and-executable-arena/`, cloning the full
+  tree including build caches and protecting Host `.git/`), falling back to an
+  isolated `git worktree` when CoW cloning is unavailable, bind the child
+  workstream to a narrowed Host Mount covering only that workspace, and hand the
+  resulting diff back to Root/user for explicit conflict-checked sync-back or
+  merge.
 
 ### 5. Single-writer `memfs` governance
 
