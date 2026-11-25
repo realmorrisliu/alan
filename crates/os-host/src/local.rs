@@ -265,6 +265,7 @@ pub struct AlanOsHost {
     listener: UnixListener,
     singleton: SingletonLock,
     service_manager: ServiceManager,
+    cow_runtime: Option<crate::CowHostRuntime>,
 }
 
 impl AlanOsHost {
@@ -274,7 +275,7 @@ impl AlanOsHost {
         remove_stale_owned_file(&paths.socket)?;
         remove_stale_owned_file(&paths.status)?;
 
-        let service_manager = config.boot_service_manager().await?;
+        let (service_manager, cow_runtime) = config.boot_service_manager_with_cow().await?;
         let listener = UnixListener::bind(&paths.socket)
             .with_context(|| format!("bind Alan OS attachment {}", paths.socket.display()))?;
         std::fs::set_permissions(&paths.socket, std::fs::Permissions::from_mode(0o600))?;
@@ -296,6 +297,7 @@ impl AlanOsHost {
             listener,
             singleton,
             service_manager,
+            cow_runtime,
         })
     }
 
@@ -306,6 +308,21 @@ impl AlanOsHost {
     /// The effective model for this invocation's callable Root Agent boot binding, if available.
     pub fn root_model(&self) -> Option<&str> {
         self.service_manager.root_model()
+    }
+
+    /// Active CoW workspace & `/mnt/branch` runtime for this Host instance, if enabled.
+    pub fn cow_runtime(&self) -> Option<&crate::CowHostRuntime> {
+        self.cow_runtime.as_ref()
+    }
+
+    /// Live [`alan_service_manager::HostMountService`] owned by this Host instance.
+    pub fn host_mount_service(&self) -> Arc<alan_service_manager::HostMountService> {
+        self.service_manager.host_mount()
+    }
+
+    /// Current Root Agent Process ID.
+    pub fn root_pid(&self) -> alan_kernel::Pid {
+        self.service_manager.root_pid()
     }
 
     pub async fn serve_until<F>(mut self, shutdown: F) -> Result<()>
@@ -332,6 +349,7 @@ impl AlanOsHost {
                     let root_pid = self.service_manager.root_pid();
                     let boot_id = self.status.boot_id;
                     let project_operations = project_operations.clone();
+                    let cow_runtime = self.cow_runtime.clone();
                     connections.spawn(async move {
                         let (mut read, mut write) = stream.into_split();
                         match read_local_request(&mut read).await? {
@@ -378,6 +396,13 @@ impl AlanOsHost {
                                 let response = project_operations.lock().unwrap().mount(
                                     &host_mount, root_pid, boot_id, request,
                                 );
+                                if let (Some(runtime), Some(grant)) =
+                                    (cow_runtime.as_ref(), response.grant.as_ref())
+                                {
+                                    runtime
+                                        .branch_adapter()
+                                        .set_default_source_grant(Some(grant.id.clone()));
+                                }
                                 write_local_response(&mut write, response).await
                             }
                             LocalRequest::CancelHostMount { request_id } => {
@@ -447,7 +472,13 @@ impl AlanOsHost {
         let _ = write_status(&self.paths.status, &self.status);
         connections.abort_all();
         while connections.join_next().await.is_some() {}
+        let host_mount = self.service_manager.host_mount();
         let shutdown = self.service_manager.shutdown().await;
+        if let Some(cow_runtime) = self.cow_runtime.take()
+            && let Err(error) = cow_runtime.flush_on_exit(Some(&host_mount)).await
+        {
+            tracing::warn!(%error, "failed to flush CoW workspaces on Host exit");
+        }
         remove_owned_file(&self.paths.socket);
         remove_owned_file(&self.paths.status);
         drop(self.singleton);

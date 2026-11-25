@@ -352,6 +352,7 @@ impl EmbeddedConfig {
             root_package_bindings: Vec::new(),
             explicit_root_package_bindings: Vec::new(),
             tool_secret_resolver,
+            workspace_isolation_port: None,
         };
         Ok((sm_config, self.host_mounts_enabled))
     }

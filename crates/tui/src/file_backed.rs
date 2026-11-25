@@ -754,6 +754,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                 FileBackedAction::InspectProjectSummary => summary_view::spawn_inspect(&shell, &tx),
                                 FileBackedAction::EditProjectSummary { text, expected_revision } => summary_view::spawn_edit(&shell, &tx, text, expected_revision),
                                 FileBackedAction::DeleteProjectSummary { expected_revision } => summary_view::spawn_delete(&shell, &tx, expected_revision),
+                                FileBackedAction::RollbackProjectSummary { target_revision, expected_revision } => summary_view::spawn_rollback(&shell, &tx, target_revision, expected_revision),
                                 FileBackedAction::LoginListProviders { generation } => {
                                     if let Some((_, prev)) = active_login_task.take() { prev.abort(); }
                                     if let Some(handler) = config.login_control.clone() {

@@ -203,6 +203,8 @@ pub struct NamespaceRuntimeEnvironment {
     action_recorder: Option<crate::rollout::RolloutRecorder>,
     child_run_registry: super::super::child_runs::ChildRunRegistry,
     async_workstreams: super::super::async_workstreams::AsyncWorkstreamRegistry,
+    write_isolation_queue: super::super::write_isolation::SharedWriteQueueRegistry,
+    workspace_isolation: Option<Arc<dyn super::super::write_isolation::WorkspaceIsolationPort>>,
     pub(crate) model_bindings:
         Arc<tokio::sync::Mutex<super::super::model_binding::ProcessBindings>>,
     // Active turn snapshot is independent of async catalog capture/selection. Never held across await.
@@ -240,6 +242,10 @@ pub(crate) struct NamespaceAgentFiles {
 impl NamespaceAgentFiles {
     pub(super) fn agent_path(&self) -> &str {
         &self.agent_path
+    }
+
+    pub(in crate::runtime) fn root_transport(&self) -> &InProcessTransport {
+        &self.root
     }
 }
 
@@ -373,7 +379,18 @@ impl NamespaceRuntimeEnvironment {
             action_recorder: None,
             child_run_registry: super::super::child_runs::ChildRunRegistry::default(),
             async_workstreams: super::super::async_workstreams::AsyncWorkstreamRegistry::new(),
+            write_isolation_queue: super::super::write_isolation::SharedWriteQueueRegistry::new(),
+            workspace_isolation: None,
         }
+    }
+
+    /// Attach a [`crate::runtime::write_isolation::WorkspaceIsolationPort`] for `worktree` / `cow_workspace` tiered write isolation.
+    pub fn with_workspace_isolation_port(
+        mut self,
+        port: Arc<dyn super::super::write_isolation::WorkspaceIsolationPort>,
+    ) -> Self {
+        self.workspace_isolation = Some(port);
+        self
     }
 
     /// Bind trusted Process ancestry supplied by Agent Runtime Service.
@@ -606,6 +623,20 @@ impl NamespaceRuntimeEnvironment {
     /// Process-local registry for in-instance asynchronously running child workstreams.
     pub fn async_workstreams(&self) -> &super::super::async_workstreams::AsyncWorkstreamRegistry {
         &self.async_workstreams
+    }
+
+    /// Per-grant FIFO queue registry serializing `shared_queue` writers.
+    pub fn write_isolation_queue(
+        &self,
+    ) -> &super::super::write_isolation::SharedWriteQueueRegistry {
+        &self.write_isolation_queue
+    }
+
+    /// Optional Host-agnostic CoW / `git worktree` isolation port.
+    pub fn workspace_isolation(
+        &self,
+    ) -> Option<&Arc<dyn super::super::write_isolation::WorkspaceIsolationPort>> {
+        self.workspace_isolation.as_ref()
     }
 
     pub fn root_transport(&self) -> InProcessTransport {

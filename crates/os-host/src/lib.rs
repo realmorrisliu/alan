@@ -5,6 +5,7 @@
 //! to `alan-service-manager`.
 
 mod boot;
+pub mod cow_workspaces;
 pub mod embed;
 pub mod host_mounts;
 pub mod installation;
@@ -16,6 +17,14 @@ pub mod reset;
 mod secret_store;
 
 pub use boot::HostBootConfig;
+pub use cow_workspaces::{
+    CloneFallbackPolicy, ConflictReason, CowArenaWorkspaceAdapter, CowBranchWorkspaceAdapter,
+    CowHostRuntime, CowWorkspaceConfig, CowWorkspaceError, CowWorkspaceIsolationAdapter,
+    CowWorkspaceManager, CowWorkspaceSummary, CreateWorkspaceOptions, DiffPathEntry, DiffSummary,
+    ExitFlushReport, FileChangeKind, FlushedWorkspaceEvidence, GcReport, GitBranchExportReport,
+    IntentProvenance, PatchExportReport, SyncBackReport, SyncConflict, WorkspaceBacking,
+    WorkspaceRef,
+};
 pub use embed::{
     AgentSessionHandle, EmbedEvent, EmbedEventStream, EmbeddedAlan, EmbeddedConfig, HookDecision,
     HostMountAccess, HostMountGrantRecord, LlmSource, RootAgentClient, SessionOptions,

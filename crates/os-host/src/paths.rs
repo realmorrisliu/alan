@@ -92,6 +92,22 @@ impl SystemStorePaths {
         self.service("projects")
     }
 
+    /// Root directory for Host-private CoW workspace clones (`System Store/workspaces/`).
+    pub fn workspaces(&self) -> Result<PathBuf> {
+        Ok(self.root.join("workspaces"))
+    }
+
+    /// Instance-scoped CoW workspace staging directory (`System Store/workspaces/<instance_id>/`).
+    pub fn instance_workspaces(&self, instance_id: &str) -> Result<PathBuf> {
+        validate_store_segment("workspace instance id", instance_id)?;
+        Ok(self.workspaces()?.join(instance_id))
+    }
+
+    /// System Store rollout evidence directory for unapplied winning CoW workspace patches.
+    pub fn cow_workspace_evidence(&self) -> Result<PathBuf> {
+        Ok(self.agent_runtime()?.rollouts.join("cow-evidence"))
+    }
+
     pub fn connections_metadata(&self) -> Result<PathBuf> {
         Ok(self.service("connections")?.join("connections.toml"))
     }
@@ -151,6 +167,18 @@ fn validate_absolute_path(label: &str, path: &Path) -> Result<()> {
             .any(|component| matches!(component, Component::CurDir | Component::ParentDir)),
         "{label} must not contain relative components: {}",
         path.display()
+    );
+    Ok(())
+}
+
+pub(crate) fn validate_store_segment(label: &str, segment: &str) -> Result<()> {
+    ensure!(
+        !segment.is_empty()
+            && segment.len() <= 128
+            && segment
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+        "invalid {label} `{segment}`; expected 1..=128 ASCII alphanumeric, `-`, or `_` characters"
     );
     Ok(())
 }

@@ -205,11 +205,14 @@ pub(super) fn delegated_skill_runtime(
     let host_mount_requests = state.environment.host_mount_requests();
     let child_run_registry = state.child_run_registry().clone();
     let async_workstreams = state.environment.async_workstreams().clone();
+    let write_isolation_queue = state.environment.write_isolation_queue().clone();
+    let workspace_isolation = state.environment.workspace_isolation().cloned();
     let task_budget_binding = state.environment.task_budget_binding.clone();
     let child_launch = state.child_launch();
     let tool_execution = state.tool_execution();
     let parent_process_path = state.process_path();
     let (workstream_store, rollouts_dir) = state.runtime_config.delegated_workstream_refs();
+    let memory_store_backing = state.runtime_config.memory_store_backing.clone();
     let child_runtime_inputs = super::delegated_skill_tool::DelegatedChildRuntimeInputs::new(
         child_launch,
         tool_execution,
@@ -217,9 +220,12 @@ pub(super) fn delegated_skill_runtime(
         parent_process_path,
     )
     .with_async_workstreams(async_workstreams)
+    .with_write_isolation_queue(write_isolation_queue)
+    .with_workspace_isolation(workspace_isolation)
     .with_task_budget_binding(task_budget_binding)
     .with_workstream_store(workstream_store)
-    .with_rollouts_dir(rollouts_dir);
+    .with_rollouts_dir(rollouts_dir)
+    .with_memory_store_backing(memory_store_backing);
     super::delegated_skill_tool::DelegatedSkillRuntime::new(
         &mut state.machine,
         &mut state.prompt_cache,

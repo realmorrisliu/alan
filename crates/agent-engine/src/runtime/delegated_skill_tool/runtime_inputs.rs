@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::{
     TaskBudgetBinding,
@@ -13,6 +14,7 @@ use crate::{
             NamespaceAgentFiles, NamespaceChildLaunch, NamespaceHostMountRequests,
             NamespaceToolExecution,
         },
+        write_isolation::{SharedWriteQueueRegistry, WorkspaceIsolationPort},
     },
 };
 use alan_agent_protocol::SpawnSpec;
@@ -33,10 +35,13 @@ pub(crate) struct DelegatedChildRuntimeInputs {
     tool_execution: NamespaceToolExecution,
     child_run_registry: ChildRunRegistry,
     async_workstreams: AsyncWorkstreamRegistry,
+    write_isolation_queue: SharedWriteQueueRegistry,
+    workspace_isolation: Option<Arc<dyn WorkspaceIsolationPort>>,
     task_budget_binding: TaskBudgetBinding,
     parent_process_path: String,
     workstream_store: Option<ProjectWorkstreamStoreRef>,
     rollouts_dir: Option<PathBuf>,
+    memory_store_backing: Option<PathBuf>,
 }
 
 impl<'a> DelegatedSkillRuntime<'a> {
@@ -112,6 +117,20 @@ impl<'a> DelegatedSkillRuntime<'a> {
         self.child_runtime_inputs.rollouts_dir.as_deref()
     }
 
+    pub(in crate::runtime) fn memory_store_backing(&self) -> Option<&std::path::Path> {
+        self.child_runtime_inputs.memory_store_backing.as_deref()
+    }
+
+    pub(in crate::runtime) fn write_isolation_queue(&self) -> &SharedWriteQueueRegistry {
+        &self.child_runtime_inputs.write_isolation_queue
+    }
+
+    pub(in crate::runtime) fn workspace_isolation(
+        &self,
+    ) -> Option<&Arc<dyn WorkspaceIsolationPort>> {
+        self.child_runtime_inputs.workspace_isolation.as_ref()
+    }
+
     pub(in crate::runtime) fn child_launch_runtime(&self, spec: &SpawnSpec) -> ChildLaunchRuntime {
         self.child_launch_runtime_with_lease(spec, None)
     }
@@ -156,10 +175,13 @@ impl DelegatedChildRuntimeInputs {
             tool_execution,
             child_run_registry,
             async_workstreams: AsyncWorkstreamRegistry::new(),
+            write_isolation_queue: SharedWriteQueueRegistry::new(),
+            workspace_isolation: None,
             task_budget_binding: TaskBudgetBinding::default(),
             parent_process_path,
             workstream_store: None,
             rollouts_dir: None,
+            memory_store_backing: None,
         }
     }
 
@@ -168,6 +190,30 @@ impl DelegatedChildRuntimeInputs {
         async_workstreams: AsyncWorkstreamRegistry,
     ) -> Self {
         self.async_workstreams = async_workstreams;
+        self
+    }
+
+    pub(crate) fn with_write_isolation_queue(
+        mut self,
+        write_isolation_queue: SharedWriteQueueRegistry,
+    ) -> Self {
+        self.write_isolation_queue = write_isolation_queue;
+        self
+    }
+
+    pub(crate) fn with_workspace_isolation(
+        mut self,
+        workspace_isolation: Option<Arc<dyn WorkspaceIsolationPort>>,
+    ) -> Self {
+        self.workspace_isolation = workspace_isolation;
+        self
+    }
+
+    pub(crate) fn with_memory_store_backing(
+        mut self,
+        memory_store_backing: Option<PathBuf>,
+    ) -> Self {
+        self.memory_store_backing = memory_store_backing;
         self
     }
 

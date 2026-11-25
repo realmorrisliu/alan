@@ -309,7 +309,7 @@ pub fn approve_host_mount(
     service.approve_export(request_id, export, provenance, actor)
 }
 
-pub(super) fn native_export(
+pub(crate) fn native_export(
     namespace_path: &str,
     host_path: &Path,
     access: HostMountAccess,
@@ -339,6 +339,13 @@ pub(super) fn native_export(
         host_path,
         maximum_access: access,
     }))
+}
+
+pub(crate) fn native_export_host_path(export: &dyn HostMountExport) -> Option<PathBuf> {
+    export
+        .as_any()
+        .downcast_ref::<NativeHostMountExport>()
+        .map(|native| native.host_path.clone())
 }
 
 fn normalize_tool_namespace_path(path: PathBuf) -> Result<PathBuf> {

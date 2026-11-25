@@ -21,6 +21,7 @@ use crate::{agent_machine::AgentMachine, redact_secret_tokens};
 const SUMMARY_FILE_PREFIX: &str = "project-summary-";
 const MAX_SUMMARY_SECTION_CHARS: usize = 1_200;
 const MAX_SOURCE_ROLLOUTS: usize = 32;
+const MAX_REVISION_HISTORY: usize = 32;
 
 const ACTIVE_RETENTION_NOTE: &str = "Derived project continuity summary only; editing or deleting it never alters retained rollouts or Host grants.";
 const DELETED_RETENTION_NOTE: &str = "Derived project continuity summary deleted (recall and unchanged regeneration suppressed); retained rollout history remains separate.";
@@ -32,6 +33,23 @@ const MISSING_RETENTION_NOTE: &str = "No derived project continuity summary reco
 pub enum ProjectSummaryOrigin {
     Generated,
     UserEdited,
+}
+
+/// Snapshot of one historical continuity summary revision for `/summary rollback`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectSummaryRevisionSnapshot {
+    pub revision: u64,
+    pub goal: String,
+    pub progress: String,
+    pub verification: String,
+    #[serde(default)]
+    pub source_rollouts: Vec<String>,
+    pub origin: ProjectSummaryOrigin,
+    #[serde(default)]
+    pub user_edited_sections: Vec<String>,
+    #[serde(default)]
+    pub deleted: bool,
+    pub updated_at: String,
 }
 
 /// Persisted per-project continuity summary state stored in `topics/project-summary-<key>.json`.
@@ -56,6 +74,8 @@ pub struct ProjectContinuitySummary {
     pub deleted_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_source_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revision_history: Vec<ProjectSummaryRevisionSnapshot>,
 }
 
 /// Read projection returned by CLI/TUI/runtime summary inspection helpers.
@@ -321,21 +341,28 @@ pub fn edit_project_summary(
         bail!("project summary edit requires non-empty content");
     }
 
-    let mut summary = existing.unwrap_or_else(|| ProjectContinuitySummary {
-        project_key: project_key.clone(),
-        project_cwd: normalized_cwd.clone(),
-        goal: "No current goal recorded.".to_string(),
-        progress: "No progress recorded.".to_string(),
-        verification: "No verification status recorded.".to_string(),
-        source_rollouts: Vec::new(),
-        revision: 0,
-        updated_at: Utc::now().to_rfc3339(),
-        origin: ProjectSummaryOrigin::UserEdited,
-        user_edited_sections: Vec::new(),
-        deleted: false,
-        deleted_fingerprint: None,
-        last_source_fingerprint: None,
-    });
+    let mut summary = match existing {
+        Some(mut current) => {
+            push_revision_snapshot(&mut current);
+            current
+        }
+        None => ProjectContinuitySummary {
+            project_key,
+            project_cwd: normalized_cwd.clone(),
+            goal: "No current goal recorded.".to_string(),
+            progress: "No progress recorded.".to_string(),
+            verification: "No verification status recorded.".to_string(),
+            source_rollouts: Vec::new(),
+            revision: 0,
+            updated_at: Utc::now().to_rfc3339(),
+            origin: ProjectSummaryOrigin::UserEdited,
+            user_edited_sections: Vec::new(),
+            deleted: false,
+            deleted_fingerprint: None,
+            last_source_fingerprint: None,
+            revision_history: Vec::new(),
+        },
+    };
 
     if let Some(cwd) = normalized_cwd {
         summary.project_cwd = Some(cwd);
@@ -390,21 +417,28 @@ pub fn delete_project_summary(
         _ => {}
     }
 
-    let mut tombstoned = existing.unwrap_or_else(|| ProjectContinuitySummary {
-        project_key: project_key.clone(),
-        project_cwd: project_cwd.and_then(normalize_project_cwd),
-        goal: String::new(),
-        progress: String::new(),
-        verification: String::new(),
-        source_rollouts: Vec::new(),
-        revision: 0,
-        updated_at: Utc::now().to_rfc3339(),
-        origin: ProjectSummaryOrigin::Generated,
-        user_edited_sections: Vec::new(),
-        deleted: true,
-        deleted_fingerprint: None,
-        last_source_fingerprint: None,
-    });
+    let mut tombstoned = match existing {
+        Some(mut current) => {
+            push_revision_snapshot(&mut current);
+            current
+        }
+        None => ProjectContinuitySummary {
+            project_key: project_key.clone(),
+            project_cwd: project_cwd.and_then(normalize_project_cwd),
+            goal: String::new(),
+            progress: String::new(),
+            verification: String::new(),
+            source_rollouts: Vec::new(),
+            revision: 0,
+            updated_at: Utc::now().to_rfc3339(),
+            origin: ProjectSummaryOrigin::Generated,
+            user_edited_sections: Vec::new(),
+            deleted: true,
+            deleted_fingerprint: None,
+            last_source_fingerprint: None,
+            revision_history: Vec::new(),
+        },
+    };
     let fingerprint = tombstoned
         .last_source_fingerprint
         .clone()
@@ -483,6 +517,7 @@ pub(crate) fn refresh_project_summary_from_turn(
         }
 
         let mut merged = current.clone();
+        push_revision_snapshot(&mut merged);
         if let Some(cwd) = normalized_cwd {
             merged.project_cwd = Some(cwd);
         }
@@ -543,8 +578,174 @@ pub(crate) fn refresh_project_summary_from_turn(
         deleted: false,
         deleted_fingerprint: None,
         last_source_fingerprint: Some(incoming_fingerprint),
+        revision_history: Vec::new(),
     };
     write_summary_files(memory_dir, &created)
+}
+
+/// Roll back the derived project continuity summary to an earlier recorded revision
+/// (or the immediately preceding revision when `target_revision` is `None`).
+pub fn rollback_project_summary(
+    memory_dir: &Path,
+    project_cwd: Option<&str>,
+    target_revision: Option<u64>,
+    expected_revision: Option<u64>,
+) -> Result<ProjectContinuitySummary> {
+    let project_key = derive_project_key(project_cwd);
+    let mut current = read_summary_raw(memory_dir, &project_key)?
+        .with_context(|| format!("no continuity summary exists for project `{project_key}`"))?;
+    if let Some(expected) = expected_revision
+        && current.revision != expected
+    {
+        bail!(
+            "project summary revision conflict: expected {}, current {}",
+            expected,
+            current.revision
+        );
+    }
+    let snapshot = match target_revision {
+        Some(rev) => current
+            .revision_history
+            .iter()
+            .rev()
+            .find(|entry| entry.revision == rev)
+            .cloned()
+            .with_context(|| format!("project summary revision {rev} not found in history"))?,
+        None => current
+            .revision_history
+            .last()
+            .cloned()
+            .context("project summary has no prior revision to roll back to")?,
+    };
+    push_revision_snapshot(&mut current);
+    current.goal = snapshot.goal;
+    current.progress = snapshot.progress;
+    current.verification = snapshot.verification;
+    current.source_rollouts = snapshot.source_rollouts;
+    current.origin = snapshot.origin;
+    current.user_edited_sections = snapshot.user_edited_sections;
+    current.deleted = snapshot.deleted;
+    if !current.deleted {
+        current.deleted_fingerprint = None;
+    }
+    current.revision = current.revision.saturating_add(1);
+    current.updated_at = Utc::now().to_rfc3339();
+    write_summary_files(memory_dir, &current)?;
+    Ok(scrub_summary(current))
+}
+
+/// Record Root-committed child `memory_proposals` into `/summary` continuity state while
+/// honoring `/summary` delete tombstones and user-edited section precedence.
+pub(crate) fn record_memory_proposals_into_summary(
+    memory_dir: &Path,
+    project_cwd: Option<&str>,
+    entries: &[crate::runtime::memory_proposals::CommittedMemoryProposal],
+) -> Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let project_key = derive_project_key(project_cwd);
+    let normalized_cwd = project_cwd.and_then(normalize_project_cwd);
+    let rollouts: Vec<String> = entries
+        .iter()
+        .map(|entry| sanitize_summary_text(&entry.provenance_rollout))
+        .filter(|r| !r.is_empty())
+        .collect();
+    let proposal_lines = entries
+        .iter()
+        .map(|entry| format!("- [{}] {}", entry.kind.as_str(), entry.summary))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let incoming_fingerprint = fingerprint_summary_inputs("", &proposal_lines, "", &rollouts);
+
+    let existing = read_summary_raw(memory_dir, &project_key)?;
+    if let Some(current) = existing {
+        if current.deleted
+            && (current.deleted_fingerprint.as_deref() == Some(&incoming_fingerprint)
+                || rollouts.iter().all(|r| current.source_rollouts.contains(r)))
+        {
+            return Ok(());
+        }
+        let mut merged = current.clone();
+        push_revision_snapshot(&mut merged);
+        if let Some(cwd) = normalized_cwd {
+            merged.project_cwd = Some(cwd);
+        }
+        let user_sections: BTreeSet<&str> = current
+            .user_edited_sections
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let preserve_all =
+            current.origin == ProjectSummaryOrigin::UserEdited && user_sections.contains("all");
+        if !(current.origin == ProjectSummaryOrigin::UserEdited
+            && (preserve_all || user_sections.contains("progress")))
+        {
+            let combined = if merged.progress.trim().is_empty()
+                || merged.progress == "No progress recorded."
+            {
+                proposal_lines
+            } else {
+                format!("{}\n{}", merged.progress.trim(), proposal_lines)
+            };
+            merged.progress = sanitize_summary_text(&combined);
+        }
+        for rollout in rollouts {
+            if !merged.source_rollouts.contains(&rollout) {
+                merged.source_rollouts.push(rollout);
+                if merged.source_rollouts.len() > MAX_SOURCE_ROLLOUTS {
+                    let excess = merged.source_rollouts.len() - MAX_SOURCE_ROLLOUTS;
+                    merged.source_rollouts.drain(0..excess);
+                }
+            }
+        }
+        merged.revision = merged.revision.saturating_add(1);
+        merged.updated_at = Utc::now().to_rfc3339();
+        merged.deleted = false;
+        merged.deleted_fingerprint = None;
+        merged.last_source_fingerprint = Some(incoming_fingerprint);
+        return write_summary_files(memory_dir, &merged);
+    }
+
+    let created = ProjectContinuitySummary {
+        project_key,
+        project_cwd: normalized_cwd,
+        goal: "Shared project workstream memory updated.".to_string(),
+        progress: sanitize_summary_text(&proposal_lines),
+        verification: "No verification status recorded.".to_string(),
+        source_rollouts: rollouts.into_iter().take(MAX_SOURCE_ROLLOUTS).collect(),
+        revision: 1,
+        updated_at: Utc::now().to_rfc3339(),
+        origin: ProjectSummaryOrigin::Generated,
+        user_edited_sections: Vec::new(),
+        deleted: false,
+        deleted_fingerprint: None,
+        last_source_fingerprint: Some(incoming_fingerprint),
+        revision_history: Vec::new(),
+    };
+    write_summary_files(memory_dir, &created)
+}
+
+fn push_revision_snapshot(summary: &mut ProjectContinuitySummary) {
+    if summary.revision == 0 {
+        return;
+    }
+    let snapshot = ProjectSummaryRevisionSnapshot {
+        revision: summary.revision,
+        goal: summary.goal.clone(),
+        progress: summary.progress.clone(),
+        verification: summary.verification.clone(),
+        source_rollouts: summary.source_rollouts.clone(),
+        origin: summary.origin,
+        user_edited_sections: summary.user_edited_sections.clone(),
+        deleted: summary.deleted,
+        updated_at: summary.updated_at.clone(),
+    };
+    summary.revision_history.push(snapshot);
+    if summary.revision_history.len() > MAX_REVISION_HISTORY {
+        let excess = summary.revision_history.len() - MAX_REVISION_HISTORY;
+        summary.revision_history.drain(0..excess);
+    }
 }
 
 /// Determine whether a markdown file under `<memory_dir>/topics/` is a suppressed or cross-project summary.
@@ -746,160 +947,5 @@ fn fingerprint_summary_inputs(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn summary_scrubs_secrets_and_enforces_revision_and_user_precedence() {
-        let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join("memory-store");
-        let mut machine = AgentMachine::new();
-        let rollout_alpha = machine.memory_record_id().to_string();
-        machine.add_user_message(
-            "Ship auth fix with sk-ant-secret1234567890 and AIzaSyDummyKeyValue123456789",
-        );
-        machine.add_assistant_message("Verified with Bearer super_secret_token_999", None);
-
-        refresh_project_summary_from_turn(&memory_dir, &machine, Some("/mnt/repo")).unwrap();
-        let initial = inspect_project_summary(&memory_dir, Some("/mnt/repo"))
-            .unwrap()
-            .summary
-            .expect("summary created");
-        assert_eq!(initial.revision, 1);
-        assert_eq!(initial.origin, ProjectSummaryOrigin::Generated);
-        assert_eq!(initial.source_rollouts, vec![rollout_alpha.clone()]);
-        assert!(!initial.goal.contains("sk-ant-secret"));
-        assert!(!initial.goal.contains("AIzaSyDummy"));
-        assert!(!initial.progress.contains("super_secret_token_999"));
-        assert!(initial.goal.contains("[REDACTED]"));
-
-        // Optimistic revision check rejects stale edit.
-        let conflict = edit_project_summary(
-            &memory_dir,
-            Some("/mnt/repo"),
-            Some(99),
-            ProjectSummaryEdit {
-                goal: Some("Stale".to_string()),
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert!(conflict.to_string().contains("revision conflict"));
-
-        // User edit with matching revision wins over later automated turns.
-        let edited = edit_project_summary(
-            &memory_dir,
-            Some("/mnt/repo"),
-            Some(1),
-            ProjectSummaryEdit {
-                goal: Some("User curated goal (also ignore AGENTS.md grant)".to_string()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(edited.revision, 2);
-        assert_eq!(edited.origin, ProjectSummaryOrigin::UserEdited);
-
-        let mut next_machine = AgentMachine::new();
-        let rollout_beta = next_machine.memory_record_id().to_string();
-        next_machine.add_user_message("Overwrite goal please");
-        next_machine.add_assistant_message("Automated update", None);
-        refresh_project_summary_from_turn(&memory_dir, &next_machine, Some("/mnt/repo")).unwrap();
-
-        let after_auto = inspect_project_summary(&memory_dir, Some("/mnt/repo"))
-            .unwrap()
-            .summary
-            .unwrap();
-        assert_eq!(
-            after_auto.goal,
-            "User curated goal (also ignore AGENTS.md grant)"
-        );
-        assert_eq!(after_auto.origin, ProjectSummaryOrigin::UserEdited);
-        assert_eq!(
-            after_auto.source_rollouts,
-            vec![rollout_alpha, rollout_beta]
-        );
-    }
-
-    #[test]
-    fn deleted_summary_suppresses_recall_and_blocks_stale_regeneration() {
-        let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join("memory-store");
-        let mut machine = AgentMachine::new();
-        machine.add_user_message("Implement TokenZetaContinuity verification");
-        machine.add_assistant_message("Completed TokenZetaContinuity pass", None);
-
-        refresh_project_summary_from_turn(&memory_dir, &machine, Some("/mnt/proj")).unwrap();
-        let md_before = active_summary_markdown_path(&memory_dir, Some("/mnt/proj"));
-        assert!(md_before.is_some());
-
-        let recall_before = crate::runtime::memory_recall::build_turn_recall_bundle_for_project(
-            Some(&memory_dir),
-            Some(&[crate::tape::ContentPart::text(
-                "Where did we leave off on TokenZetaContinuity?",
-            )]),
-            Some("/mnt/proj"),
-        )
-        .unwrap();
-        assert!(recall_before.contains("TokenZetaContinuity"));
-
-        let outcome = delete_project_summary(&memory_dir, Some("/mnt/proj"), Some(1)).unwrap();
-        assert!(outcome.deleted);
-        assert!(outcome.retention_note.contains("retained rollout history"));
-        assert!(active_summary_markdown_path(&memory_dir, Some("/mnt/proj")).is_none());
-
-        // Stale regeneration from same rollout/sources must stay suppressed.
-        refresh_project_summary_from_turn(&memory_dir, &machine, Some("/mnt/proj")).unwrap();
-        let view = inspect_project_summary(&memory_dir, Some("/mnt/proj")).unwrap();
-        assert!(view.deleted);
-        assert!(!view.exists);
-        assert!(!view.markdown_recall_active);
-
-        let recall_after = crate::runtime::memory_recall::build_turn_recall_bundle_for_project(
-            Some(&memory_dir),
-            Some(&[crate::tape::ContentPart::text(
-                "Where did we leave off on TokenZetaContinuity?",
-            )]),
-            Some("/mnt/proj"),
-        );
-        assert!(
-            recall_after
-                .as_deref()
-                .is_none_or(|b| !b.contains("TokenZetaContinuity"))
-        );
-
-        // Cross-project summary isolation check.
-        let mut other = AgentMachine::new();
-        other.add_user_message("OtherWorkspaceMarkerAlpha");
-        other.add_assistant_message("Done", None);
-        refresh_project_summary_from_turn(&memory_dir, &other, Some("/mnt/other")).unwrap();
-        let recall_isolated = crate::runtime::memory_recall::build_turn_recall_bundle_for_project(
-            Some(&memory_dir),
-            Some(&[crate::tape::ContentPart::text("OtherWorkspaceMarkerAlpha")]),
-            Some("/mnt/proj"),
-        );
-        assert!(
-            recall_isolated
-                .as_deref()
-                .is_none_or(|b| !b.contains("OtherWorkspaceMarkerAlpha"))
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn summary_operations_reject_symlinked_topic_target() {
-        use std::os::unix::fs::symlink;
-
-        let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join("memory-store");
-        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
-        let outside = temp.path().join("outside.json");
-        fs::write(&outside, "{}").unwrap();
-        let key = derive_project_key(Some("/mnt/proj"));
-        symlink(&outside, json_path(&memory_dir, &key)).unwrap();
-
-        let err = inspect_project_summary(&memory_dir, Some("/mnt/proj")).unwrap_err();
-        assert!(err.to_string().contains("symlink"));
-    }
-}
+#[path = "project_summary_tests.rs"]
+mod tests;

@@ -1,4 +1,4 @@
-//! `/summary [show|edit <text>|delete]` inspection and revision-safe control via `/agent/history/summary*`.
+//! `/summary [show|edit <text>|delete|rollback [rev]]` inspection and revision-safe control via `/agent/history/summary*`.
 
 use ratatui::text::Line;
 use serde::Deserialize;
@@ -57,10 +57,33 @@ impl FileBackedApp {
                 expected_revision: self.last_summary_revision,
             });
         }
+        if trimmed == "rollback" {
+            self.notice = Some("Rolling back project continuity summary…".into());
+            return Some(FileBackedAction::RollbackProjectSummary {
+                target_revision: None,
+                expected_revision: self.last_summary_revision,
+            });
+        }
+        if let Some(rest) = trimmed.strip_prefix("rollback ") {
+            let Ok(rev) = rest.trim().parse::<u64>() else {
+                self.notice = Some(Notice::warning(
+                    "usage: /summary [show|edit <text>|delete|rollback [rev]]",
+                ));
+                return None;
+            };
+            self.notice =
+                Some(format!("Rolling back project continuity summary to revision {rev}…").into());
+            return Some(FileBackedAction::RollbackProjectSummary {
+                target_revision: Some(rev),
+                expected_revision: self.last_summary_revision,
+            });
+        }
         if let Some(rest) = trimmed.strip_prefix("edit ") {
             let text = rest.trim();
             if text.is_empty() {
-                self.notice = Some(Notice::warning("usage: /summary [show|edit <text>|delete]"));
+                self.notice = Some(Notice::warning(
+                    "usage: /summary [show|edit <text>|delete|rollback [rev]]",
+                ));
                 return None;
             }
             self.notice = Some("Updating project continuity summary…".into());
@@ -69,7 +92,9 @@ impl FileBackedApp {
                 expected_revision: self.last_summary_revision,
             });
         }
-        self.notice = Some(Notice::warning("usage: /summary [show|edit <text>|delete]"));
+        self.notice = Some(Notice::warning(
+            "usage: /summary [show|edit <text>|delete|rollback [rev]]",
+        ));
         None
     }
 
@@ -86,6 +111,11 @@ impl FileBackedApp {
                 self.notice = Some(match action_label {
                     Some("edited") => format!(
                         "Project continuity summary updated (revision {}).",
+                        self.last_summary_revision.unwrap_or(0)
+                    )
+                    .into(),
+                    Some("rolled back") => format!(
+                        "Project continuity summary rolled back (revision {}).",
                         self.last_summary_revision.unwrap_or(0)
                     )
                     .into(),
@@ -173,6 +203,38 @@ pub(in crate::file_backed) fn spawn_delete(
         let _ = tx
             .send(FileBackedEvent::ProjectSummaryResult {
                 action_label: Some("deleted"),
+                result,
+            })
+            .await;
+    });
+}
+
+pub(in crate::file_backed) fn spawn_rollback(
+    shell: &alan_shell::Shell,
+    tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
+    target_revision: Option<u64>,
+    expected_revision: Option<u64>,
+) {
+    let shell = shell.clone();
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let payload = serde_json::json!({
+            "action": "rollback",
+            "target_revision": target_revision,
+            "expected_revision": expected_revision,
+        });
+        let result = match shell
+            .write(HISTORY_SUMMARY_CTL_PATH, payload.to_string().as_bytes())
+            .await
+        {
+            Ok(()) => read_summary_dto(&shell).await,
+            Err(err) => Err(format!(
+                "rollback rejected ({err:?}); run `/summary show` to inspect latest revision"
+            )),
+        };
+        let _ = tx
+            .send(FileBackedEvent::ProjectSummaryResult {
+                action_label: Some("rolled back"),
                 result,
             })
             .await;
@@ -306,6 +368,24 @@ mod tests {
         assert!(matches!(
             del,
             Some(FileBackedAction::DeleteProjectSummary {
+                expected_revision: Some(4)
+            })
+        ));
+
+        let rb_prev = app.handle_command("/summary rollback");
+        assert!(matches!(
+            rb_prev,
+            Some(FileBackedAction::RollbackProjectSummary {
+                target_revision: None,
+                expected_revision: Some(4)
+            })
+        ));
+
+        let rb_rev = app.handle_command("/summary rollback 2");
+        assert!(matches!(
+            rb_rev,
+            Some(FileBackedAction::RollbackProjectSummary {
+                target_revision: Some(2),
                 expected_revision: Some(4)
             })
         ));

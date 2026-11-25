@@ -54,6 +54,7 @@ tempfile.workspace = true
 alan-llm = { workspace = true, features = ["mock", "all-providers"] }
 alan-agentfs = { path = "../agentfs" }
 alan-llmfs = { path = "../llmfs" }
+alan-memfs = { path = "../memfs" }
 alan-routefs.workspace = true
 alan-shell = { path = "../shell" }
 # test-util (paused clock) is not part of tokio's "full" feature set.

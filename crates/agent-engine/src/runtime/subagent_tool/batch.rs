@@ -23,16 +23,19 @@ use super::super::delegated_skill_tool::{
     DelegatedSkillInvocationRequest, DelegatedSkillRuntime,
     parse_delegated_skill_invocation_request, resolve_delegated_skill_invocation,
 };
+use super::super::project_workstreams::WorkstreamWriteMode;
 use super::super::transition::NamespaceAgentFiles;
 use super::super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::super::virtual_tool::VirtualToolOutcome;
+use super::super::write_isolation::WorkspaceMergeHandoff;
 pub(in crate::runtime) use super::commit::finalize_action_record;
 use super::commit::{
     allocate_running_subagent_action, commit_background_dispatched_slot, record_slot_completion,
     subagent_arguments_json,
 };
 use super::workstream::{
-    TrackedWorkstream, finalize_tracked_workstream, prepare_workstream_launch,
+    PreparedWriteIsolation, TrackedWorkstream, apply_isolated_workspace_to_spawn_spec,
+    finalize_tracked_workstream, prepare_workstream_launch,
 };
 use super::{
     ActionProgressTracker, SubagentSpawnFn, SubagentSpawnRequest, resolve_subagent_spawn_spec,
@@ -45,6 +48,7 @@ pub(in crate::runtime) enum PreparedChildKind {
         request: SubagentSpawnRequest,
         persisted_arguments: Value,
         workstream: Option<TrackedWorkstream>,
+        write_isolation: Option<Box<PreparedWriteIsolation>>,
     },
     DelegatedSkill {
         request: DelegatedSkillInvocationRequest,
@@ -79,7 +83,10 @@ pub(in crate::runtime) struct PreparedChildSlot {
 
 /// Outcome of executing one prepared slot in `JoinSet`.
 pub(in crate::runtime) enum ExecutedSlotOutcome {
-    Completed(Box<ChildRuntimeResult>),
+    Completed {
+        result: Box<ChildRuntimeResult>,
+        merge_handoff: Option<WorkspaceMergeHandoff>,
+    },
     BackgroundDispatched(AsyncWorkstreamInfo),
 }
 
@@ -123,9 +130,13 @@ pub(in crate::runtime) async fn prepare_subagent_slot(
                     persistence: None,
                     scope: None,
                     background: false,
+                    write_mode: None,
+                    long_running: false,
+                    read_memory: false,
                 },
                 persisted_arguments: tool_arguments.clone(),
                 workstream: None,
+                write_isolation: None,
             },
             label: "subagent".to_string(),
             action_id: None,
@@ -148,6 +159,7 @@ pub(in crate::runtime) async fn prepare_subagent_slot(
                 request,
                 persisted_arguments,
                 workstream: None,
+                write_isolation: None,
             },
             label,
             action_id: None,
@@ -175,6 +187,7 @@ pub(in crate::runtime) async fn prepare_subagent_slot(
     .await?;
 
     let mut tracked_workstream = None;
+    let mut prepared_write_isolation = None;
     let launch = match resolve_subagent_spawn_spec(runtime.child_namespace_cwd(), &request) {
         Ok(mut spec) => {
             if request.background && runtime.async_workstreams().is_closed() {
@@ -191,6 +204,14 @@ pub(in crate::runtime) async fn prepare_subagent_slot(
                     Ok(prepared_ws) => {
                         if let Some(model) = prepared_ws.effective_model {
                             spec.runtime_overrides.model = Some(model);
+                        }
+                        if prepared_ws.write_isolation.write_mode == WorkstreamWriteMode::ReadOnly {
+                            spec.runtime_overrides.read_only = true;
+                        }
+                        if let Some(isolated) =
+                            prepared_ws.write_isolation.isolated_workspace.as_ref()
+                        {
+                            apply_isolated_workspace_to_spawn_spec(&mut spec, isolated);
                         }
                         let lease = if request.background {
                             match runtime.authorize_async_workstream().await {
@@ -216,6 +237,8 @@ pub(in crate::runtime) async fn prepare_subagent_slot(
                                     )
                                     .or(prepared_ws.checkpoint_resume);
                                 tracked_workstream = prepared_ws.tracked;
+                                prepared_write_isolation =
+                                    Some(Box::new(prepared_ws.write_isolation));
                                 Ok((child_runtime, spec, resume))
                             }
                             Err(failure) => Err(failure),
@@ -235,6 +258,7 @@ pub(in crate::runtime) async fn prepare_subagent_slot(
             request,
             persisted_arguments,
             workstream: tracked_workstream,
+            write_isolation: prepared_write_isolation,
         },
         label,
         action_id,
@@ -381,10 +405,47 @@ pub(in crate::runtime) async fn execute_prepared_slot_with_async(
         }
         Ok((child_runtime, spec, resume)) => {
             if cancel.is_cancelled() {
-                Ok(ExecutedSlotOutcome::Completed(Box::new(
-                    ChildRuntimeResult::cancelled_before_launch(),
-                )))
+                Ok(ExecutedSlotOutcome::Completed {
+                    result: Box::new(ChildRuntimeResult::cancelled_before_launch()),
+                    merge_handoff: None,
+                })
             } else {
+                let write_isolation = match &slot.kind {
+                    PreparedChildKind::AdHocSubagent {
+                        write_isolation, ..
+                    } => write_isolation.clone(),
+                    PreparedChildKind::DelegatedSkill { .. } => None,
+                };
+                let owner_label = match &slot.kind {
+                    PreparedChildKind::AdHocSubagent { request, .. } => request
+                        .stream_name
+                        .clone()
+                        .unwrap_or_else(|| request.role.clone()),
+                    PreparedChildKind::DelegatedSkill { request } => request.skill_id.clone(),
+                };
+                let _write_guard = if let Some(iso) = write_isolation.as_ref()
+                    && !iso.shared_write_grants.is_empty()
+                {
+                    match iso
+                        .queue
+                        .acquire_grants_fifo(&iso.shared_write_grants, &owner_label, &cancel)
+                        .await
+                    {
+                        Ok(guard) => Some(guard),
+                        Err(err) => {
+                            return ExecutedChildSlot {
+                                index: slot.index,
+                                tool_call: slot.tool_call,
+                                kind: slot.kind,
+                                label: slot.label,
+                                action_id: slot.action_id,
+                                outcome: Err(SlotExecutionError::SpawnOrJoin(err)),
+                            };
+                        }
+                    }
+                } else {
+                    None
+                };
                 let tracker = slot.action_id.clone().map(|action_id| {
                     let (stream_name, persistence) = match &slot.kind {
                         PreparedChildKind::AdHocSubagent { request, .. } => (
@@ -399,10 +460,24 @@ pub(in crate::runtime) async fn execute_prepared_slot_with_async(
                     ActionProgressTracker::new(agent_files, action_id, slot.label.clone())
                         .with_workstream_metadata(stream_name, persistence, false)
                 });
-                spawn_fn(child_runtime, spec, cancel, resume, tracker)
-                    .await
-                    .map(|res| ExecutedSlotOutcome::Completed(Box::new(res)))
-                    .map_err(SlotExecutionError::SpawnOrJoin)
+                match spawn_fn(child_runtime, spec, cancel, resume, tracker).await {
+                    Ok(res) => {
+                        let merge_handoff = if let Some(iso) = write_isolation.as_ref()
+                            && let Some(ctx) = iso.isolated_workspace.as_ref()
+                        {
+                            let rollout_ref =
+                                res.rollout_path.as_ref().map(|p| p.display().to_string());
+                            ctx.collect_handoff(rollout_ref.as_deref()).await
+                        } else {
+                            None
+                        };
+                        Ok(ExecutedSlotOutcome::Completed {
+                            result: Box::new(res),
+                            merge_handoff,
+                        })
+                    }
+                    Err(err) => Err(SlotExecutionError::SpawnOrJoin(err)),
+                }
             }
         }
     };
@@ -432,7 +507,10 @@ where
             commit_background_dispatched_slot(runtime, &slot.tool_call, &slot.kind, info, emit)
                 .await
         }
-        Ok(ExecutedSlotOutcome::Completed(boxed_result)) => {
+        Ok(ExecutedSlotOutcome::Completed {
+            result: boxed_result,
+            merge_handoff,
+        }) => {
             let mut child_result = *boxed_result;
             let tracked = tracked_workstream(&slot.kind);
             if let Some(pause) = child_result.pause.as_ref()
@@ -548,6 +626,7 @@ where
                 delegated_result,
                 child_run_ref,
                 updated_workstream.as_ref(),
+                merge_handoff.as_ref(),
                 false,
                 None,
                 emit,
@@ -623,6 +702,7 @@ where
                 result,
                 None,
                 updated_workstream.as_ref(),
+                None,
                 true,
                 Some(error_kind),
                 emit,
@@ -652,6 +732,7 @@ where
                     &slot.tool_call,
                     &slot.kind,
                     delegated_result,
+                    None,
                     None,
                     None,
                     true,
@@ -723,7 +804,7 @@ pub(in crate::runtime) async fn finalize_uncommitted_slot(
 ) {
     let tracked = tracked_workstream(&slot.kind);
     let result = match &slot.outcome {
-        Ok(ExecutedSlotOutcome::Completed(result)) => result.as_ref(),
+        Ok(ExecutedSlotOutcome::Completed { result, .. }) => result.as_ref(),
         Ok(ExecutedSlotOutcome::BackgroundDispatched(_)) => return,
         Err(_) => fallback_result,
     };

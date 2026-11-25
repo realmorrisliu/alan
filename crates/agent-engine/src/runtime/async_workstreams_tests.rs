@@ -191,9 +191,13 @@ fn synthetic_registration(
             persistence: Some(WorkstreamPersistence::Persistent),
             scope: Some("read-only scan".to_string()),
             background: true,
+            write_mode: None,
+            long_running: false,
+            read_memory: false,
         },
         persisted_arguments: json!({"role": "researcher"}),
         workstream: None,
+        write_isolation: None,
     };
     let _ = registry;
     AsyncWorkstreamRegistration {
@@ -209,6 +213,7 @@ fn synthetic_registration(
         parent_agent_files,
         child_run_registry: ChildRunRegistry::default(),
         child_cancel: cancel,
+        write_guard: None,
         launched: LaunchedAsyncChild {
             child_pid: pid_string.clone(),
             child_run_id: run_id_string.clone(),

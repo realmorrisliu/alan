@@ -304,7 +304,7 @@ where
             crate::runtime::delegated_child_run::ChildRuntimeResult::cancelled_before_launch();
         for remaining in completed_iter {
             finalize_uncommitted_slot(&remaining, rollouts_dir.as_deref(), &cancelled).await;
-            if let Ok(ExecutedSlotOutcome::Completed(result)) = &remaining.outcome {
+            if let Ok(ExecutedSlotOutcome::Completed { result, .. }) = &remaining.outcome {
                 let _ = finalize_action_record(
                     &agent_files,
                     remaining.action_id.as_deref(),

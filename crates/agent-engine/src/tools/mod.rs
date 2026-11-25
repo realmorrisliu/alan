@@ -25,6 +25,7 @@ pub const TOOL_READ_ONLY_SYSTEM_PREFIXES: &[&str] = &[
     "/bin",
     "/mnt/llm",
     "/mnt/route",
+    "/mnt/branch",
     "/mnt/connections",
     "/mnt/service-manager",
     "/mnt/package",

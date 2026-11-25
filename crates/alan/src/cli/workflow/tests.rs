@@ -35,6 +35,7 @@ fn manifest_validation_enforces_ids_explicit_mounts_and_defaults() {
         timeout_secs: None,
         trigger_allowlist: None,
         release_gate: None,
+        cron_stream: None,
     };
     assert_eq!(valid.trust, WorkflowTrustPosture::Governed);
     valid.validate().unwrap();
@@ -93,6 +94,7 @@ fn schedule_parsing_and_launchd_cron_rendering_cover_intervals_and_calendar_cron
         timeout_secs: Some(60),
         trigger_allowlist: None,
         release_gate: None,
+        cron_stream: None,
     };
     let plist = render_launchd_plist(&interval_manifest, bin, &store).unwrap();
     assert!(plist.contains("<string>app.alanworks.workflow.inbox-sweep</string>"));
@@ -118,6 +120,7 @@ fn schedule_parsing_and_launchd_cron_rendering_cover_intervals_and_calendar_cron
         timeout_secs: None,
         trigger_allowlist: None,
         release_gate: None,
+        cron_stream: None,
     };
     let xml_bin = Path::new("/tmp/a&b/alan");
     let cron_plist = render_launchd_plist(&cron_manifest, xml_bin, &store).unwrap();
@@ -946,6 +949,7 @@ async fn execute_workflow_run_cancellable_kills_and_reaps_entire_process_group()
         timeout_secs: Some(60),
         trigger_allowlist: None,
         release_gate: None,
+        cron_stream: None,
     };
     store.save_manifest(&manifest, false).unwrap();
 

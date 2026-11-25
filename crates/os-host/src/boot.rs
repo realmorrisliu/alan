@@ -26,6 +26,7 @@ pub struct HostBootConfig {
     pub no_resume_update: bool,
     saved_grants: Vec<String>,
     saved_grant_store_path: Option<std::path::PathBuf>,
+    cow_runtime: Option<crate::CowHostRuntime>,
 }
 
 #[derive(Clone, Debug)]
@@ -261,8 +262,19 @@ impl HostBootConfig {
         let host_store = HostStorePaths::detect()?;
         let namespace = Namespace::new();
         let mut process = AgentProcessConfig::from(Config::load_with_metadata()?);
-        let launch_context =
+        let mut launch_context =
             prepare_system_store_launch(&system_store, namespace, &mut process, None)?;
+        let (cow_manager, _gc_report) =
+            crate::CowWorkspaceManager::new(crate::CowWorkspaceConfig::new(
+                system_store.clone(),
+                format!("alan-{}", std::process::id()),
+            )?)?;
+        let cow_runtime = crate::CowHostRuntime::new(cow_manager);
+        launch_context.namespace.mount(
+            "/mnt/branch",
+            InProcessTransport::new(cow_runtime.branch_fs().clone()),
+            Access::ReadWrite,
+        );
         let connection_store = system_store.connection_bindings()?;
         let packages_dir = system_store.packages()?;
         let root_package_bindings =
@@ -294,11 +306,13 @@ impl HostBootConfig {
                 root_package_bindings,
                 explicit_root_package_bindings: Vec::new(),
                 tool_secret_resolver: Some(Arc::new(secret_store)),
+                workspace_isolation_port: Some(cow_runtime.isolation_adapter().clone()),
             },
             ephemeral_rollout: false,
             no_resume_update: false,
             saved_grants: Vec::new(),
             saved_grant_store_path: None,
+            cow_runtime: Some(cow_runtime),
         })
     }
 
@@ -308,12 +322,14 @@ impl HostBootConfig {
         llm_client: LlmClient,
         tools: ToolRegistry,
     ) -> Self {
-        let mut config = ServiceManagerConfig::ephemeral(
-            process,
-            ProcessLaunchContext::root(),
-            llm_client,
-            tools,
+        let mut launch_context = ProcessLaunchContext::root();
+        launch_context.namespace.mount(
+            "/mnt/branch",
+            InProcessTransport::new(Arc::new(alan_branchfs::BranchFs::new())),
+            Access::ReadWrite,
         );
+        let mut config =
+            ServiceManagerConfig::ephemeral(process, launch_context, llm_client, tools);
         config.host_mount_adapter = Arc::new(crate::host_mounts::NativeHostMountExportAdapter);
         Self {
             service_manager: config,
@@ -321,7 +337,27 @@ impl HostBootConfig {
             no_resume_update: false,
             saved_grants: Vec::new(),
             saved_grant_store_path: None,
+            cow_runtime: None,
         }
+    }
+
+    /// Attach a [`crate::CowWorkspaceManager`] to this host boot configuration, binding
+    /// `/mnt/branch` to `CowBranchWorkspaceAdapter` and enabling exit `.patch` flush.
+    pub fn with_cow_workspace_manager(mut self, manager: crate::CowWorkspaceManager) -> Self {
+        let runtime = crate::CowHostRuntime::new(manager);
+        self.service_manager.launch_context.namespace.mount(
+            "/mnt/branch",
+            InProcessTransport::new(runtime.branch_fs().clone()),
+            Access::ReadWrite,
+        );
+        self.service_manager.workspace_isolation_port = Some(runtime.isolation_adapter().clone());
+        self.cow_runtime = Some(runtime);
+        self
+    }
+
+    /// Inspect the attached CoW host runtime, if configured.
+    pub fn cow_runtime(&self) -> Option<&crate::CowHostRuntime> {
+        self.cow_runtime.as_ref()
     }
 
     /// Configure explicit invocation-only trust posture (`Governed`, `ConfinedTrusted`,
@@ -483,12 +519,24 @@ impl HostBootConfig {
         self.boot_service_manager().await
     }
 
-    pub(crate) async fn boot_service_manager(mut self) -> Result<ServiceManager> {
+    pub(crate) async fn boot_service_manager(self) -> Result<ServiceManager> {
+        let (manager, _) = self.boot_service_manager_with_cow().await?;
+        Ok(manager)
+    }
+
+    pub(crate) async fn boot_service_manager_with_cow(
+        mut self,
+    ) -> Result<(ServiceManager, Option<crate::CowHostRuntime>)> {
         self.service_manager.ephemeral_rollout = self.ephemeral_rollout;
         self.service_manager.no_resume_update = self.no_resume_update;
         let saved_grants = std::mem::take(&mut self.saved_grants);
         let store_path = self.saved_grant_store_path.take();
+        let cow_runtime = self.cow_runtime.take();
         let manager = ServiceManager::boot(self.service_manager).await?;
+        if let Some(runtime) = cow_runtime.as_ref() {
+            runtime.attach_host_mount_and_root_pid(manager.host_mount(), manager.root_pid_atomic());
+            runtime.ensure_base_branch().await?;
+        }
         if !saved_grants.is_empty() {
             let store = match store_path {
                 Some(path) => {
@@ -511,8 +559,15 @@ impl HostBootConfig {
                     return Err(err);
                 }
             }
+            if let Some(runtime) = cow_runtime.as_ref()
+                && let Some(first_grant) = saved_grants.first()
+            {
+                runtime
+                    .branch_adapter()
+                    .set_default_source_grant(Some(first_grant.clone()));
+            }
         }
-        Ok(manager)
+        Ok((manager, cow_runtime))
     }
 }
 

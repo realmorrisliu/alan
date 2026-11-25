@@ -35,7 +35,8 @@ use packages::{overlaps_package_namespace, project_package_reference};
 use supervisor::{
     ActiveUnit, SupervisorEnvironment, SupervisorRuntime, SwitchableFileServer,
     SystemServiceHandles, mount_boot_units, mount_service_handles, mount_standard_namespace_roots,
-    mount_system_executables, mount_tool_packages, publish_unit_handles, wait_unit_ready,
+    mount_system_executables, mount_tool_packages, publish_unit_handles, verify_readiness,
+    wait_unit_ready,
 };
 
 use crate::{
@@ -87,6 +88,8 @@ pub struct ServiceManagerConfig {
     pub explicit_root_package_bindings: Vec<crate::RootPackageBinding>,
     /// Optional Host-owned secret resolver hook for confined packaged Tool execution.
     pub tool_secret_resolver: Option<Arc<dyn alan_agent_engine::tools::ToolSecretResolver>>,
+    /// Optional Host-owned CoW/worktree isolation port for M8 Tier-3 workstreams.
+    pub workspace_isolation_port: Option<Arc<dyn alan_agent_engine::WorkspaceIsolationPort>>,
 }
 
 pub trait LlmClientFactory: std::fmt::Debug + Send + Sync {
@@ -156,6 +159,7 @@ impl ServiceManagerConfig {
             root_package_bindings: Vec::new(),
             explicit_root_package_bindings: Vec::new(),
             tool_secret_resolver: None,
+            workspace_isolation_port: None,
         }
     }
 
@@ -397,6 +401,7 @@ impl ServiceManager {
             explicit_root_package_bindings: config.explicit_root_package_bindings,
             host_capabilities,
             generation_capabilities,
+            workspace_isolation_port: config.workspace_isolation_port,
         })
         .await?;
         let root_pid = Arc::new(AtomicU64::new(assembled.root.pid().0));
@@ -502,6 +507,10 @@ impl ServiceManager {
         Pid(self.root_pid.load(Ordering::Acquire))
     }
 
+    pub fn root_pid_atomic(&self) -> Arc<AtomicU64> {
+        self.root_pid.clone()
+    }
+
     pub fn state(&self) -> Arc<tokio::sync::Mutex<ManagerState>> {
         self.state.clone()
     }
@@ -573,6 +582,7 @@ struct AssembleInputs {
     explicit_root_package_bindings: Vec<crate::RootPackageBinding>,
     host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
     generation_capabilities: alan_llm::ProviderCapabilities,
+    workspace_isolation_port: Option<Arc<dyn alan_agent_engine::WorkspaceIsolationPort>>,
 }
 
 async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnvironment> {
@@ -600,6 +610,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         explicit_root_package_bindings,
         host_capabilities,
         generation_capabilities,
+        workspace_isolation_port,
     } = inputs;
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     connection_service.attach_package_service(package_service.clone());
@@ -640,6 +651,9 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         connection_service.clone(),
         tools.process_runner(),
     );
+    if let Some(port) = workspace_isolation_port {
+        let _ = agent_runtime.workspace_isolation_port.set(port);
+    }
 
     let caller_mnt_mounts = embed_mounts::caller_mnt_mounts(&launch_context.namespace)?;
     let mut namespace = launch_context.namespace.child();
@@ -939,52 +953,6 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
             Err(error)
         }
     }
-}
-
-async fn verify_readiness(
-    root: &InProcessTransport,
-    boot_id: Uuid,
-    state: &Arc<tokio::sync::Mutex<ManagerState>>,
-) -> Result<()> {
-    let shell = alan_shell::Shell::new(root.clone());
-    let root_entries = shell.ls("/").await.context("read Standard Namespace")?;
-    for required in ["proc", "agent", "srv", "bin", "lib", "man", "mnt"] {
-        ensure!(
-            root_entries.iter().any(|entry| entry == required),
-            "Standard Namespace is missing /{required}"
-        );
-    }
-    shell.ls("/agent/root").await.context("read /agent/root")?;
-    let published_boot_id = String::from_utf8(shell.cat(BOOT_ID_PATH).await?)?;
-    ensure!(
-        published_boot_id.trim() == boot_id.to_string(),
-        "boot ID mismatch"
-    );
-    ensure!(
-        shell.cat(BOOT_STATE_PATH).await? == b"ready\n",
-        "Host readiness file is not ready"
-    );
-    let service_handles = shell.ls("/srv").await.context("read /srv")?;
-    for required in [
-        "service-manager",
-        "agent-runtime",
-        "connection",
-        "package",
-        "host-mount",
-        "local-entry",
-        "llm",
-        alan_routefs::SRV_HANDLE,
-    ] {
-        ensure!(
-            service_handles.iter().any(|entry| entry == required),
-            "required service /srv/{required} is absent"
-        );
-    }
-    ensure!(
-        state.lock().await.status() == crate::SystemStatus::Ready,
-        "Service Manager did not reach ready"
-    );
-    Ok(())
 }
 
 #[cfg(test)]

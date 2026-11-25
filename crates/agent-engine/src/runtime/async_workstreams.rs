@@ -25,12 +25,14 @@ use crate::agent_machine::pending_resume::ResumeTarget;
 use super::child_agents::{ChildLaunchRuntime, spawn_child_runtime_cancellable};
 use super::child_runs::ChildRunRegistry;
 use super::delegated_child_run::{ChildRuntimeResult, ChildRuntimeStatus};
-use super::project_workstreams::WorkstreamPersistence;
+use super::memory_proposals::{commit_memory_proposals_over_ap, extract_memory_proposals};
+use super::project_workstreams::{WorkstreamPersistence, WorkstreamWriteMode};
 use super::subagent_tool::{
     ActionProgressTracker, PreparedChildKind, SlotExecutionError, TrackedWorkstream,
     finalize_action_record, finalize_tracked_workstream,
 };
 use super::transition::{NamespaceAgentFiles, NamespaceProcessFiles};
+use super::write_isolation::{SharedWriteGuard, WorkspaceMergeHandoff};
 
 const MAX_RECENT_TERMINAL_WORKSTREAMS: usize = 64;
 const DEFAULT_GRACEFUL_QUIESCE_CAP: Duration = Duration::from_secs(3);
@@ -102,6 +104,12 @@ pub struct AsyncWorkstreamInfo {
     pub summary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollout_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_mode: Option<WorkstreamWriteMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_handoff: Option<WorkspaceMergeHandoff>,
     pub started_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at_ms: Option<u64>,
@@ -181,6 +189,7 @@ pub(in crate::runtime) struct AsyncWorkstreamRegistration {
     pub(in crate::runtime) parent_agent_files: NamespaceAgentFiles,
     pub(in crate::runtime) child_run_registry: ChildRunRegistry,
     pub(in crate::runtime) child_cancel: CancellationToken,
+    pub(in crate::runtime) write_guard: Option<SharedWriteGuard>,
     pub(in crate::runtime) launched: LaunchedAsyncChild,
 }
 
@@ -336,9 +345,23 @@ impl AsyncWorkstreamRegistry {
             parent_agent_files,
             child_run_registry,
             child_cancel,
+            write_guard,
             launched,
         } = reg;
 
+        let (write_mode, worktree_ref, isolated_workspace) = match &kind {
+            PreparedChildKind::AdHocSubagent {
+                write_isolation: Some(iso),
+                ..
+            } => (
+                Some(iso.write_mode),
+                iso.isolated_workspace
+                    .as_ref()
+                    .map(|ctx| ctx.allocation.workspace_ref.clone()),
+                iso.isolated_workspace.clone(),
+            ),
+            _ => (None, None, None),
+        };
         let entry_id = launched.child_run_id.clone();
         let info = AsyncWorkstreamInfo {
             stream_name: stream_name.clone(),
@@ -353,6 +376,9 @@ impl AsyncWorkstreamRegistry {
             state: AsyncWorkstreamStatus::Running,
             summary: None,
             rollout_ref: None,
+            write_mode,
+            worktree_ref,
+            merge_handoff: None,
             started_at_ms: now_ms(),
             finished_at_ms: None,
         };
@@ -393,6 +419,7 @@ impl AsyncWorkstreamRegistry {
         let fallback_run_id = info.child_run_id.clone();
         let task_entry_id = entry_id.clone();
         let handle = tokio::spawn(async move {
+            let _write_guard = write_guard;
             let result = match completion.await {
                 Ok(result) => result,
                 Err(error) => {
@@ -445,8 +472,33 @@ impl AsyncWorkstreamRegistry {
                         .as_ref()
                         .map(|path| path.display().to_string())
                 });
+            let merge_handoff = if let Some(ctx) = isolated_workspace.as_ref() {
+                ctx.collect_handoff(rollout_ref.as_deref()).await
+            } else {
+                None
+            };
+            let proposals =
+                extract_memory_proposals(result.structured_output.as_ref(), rollout_ref.as_deref());
+            if !proposals.is_empty()
+                && let Err(err) = commit_memory_proposals_over_ap(
+                    parent_agent_files.root_transport(),
+                    "/mnt/mem",
+                    &proposals,
+                    None,
+                    None,
+                )
+                .await
+            {
+                warn!(%err, "Failed to commit background child memory_proposals");
+            }
             let terminal_status = AsyncWorkstreamStatus::from(&result.status);
-            registry.mark_terminal(&task_entry_id, terminal_status, summary, rollout_ref);
+            registry.mark_terminal(
+                &task_entry_id,
+                terminal_status,
+                summary,
+                rollout_ref,
+                merge_handoff,
+            );
         });
 
         let mut state = self
@@ -465,6 +517,7 @@ impl AsyncWorkstreamRegistry {
         status: AsyncWorkstreamStatus,
         summary: Option<String>,
         rollout_ref: Option<String>,
+        merge_handoff: Option<WorkspaceMergeHandoff>,
     ) {
         let mut state = self
             .inner
@@ -476,6 +529,7 @@ impl AsyncWorkstreamRegistry {
         entry.info.state = status;
         entry.info.summary = summary;
         entry.info.rollout_ref = rollout_ref;
+        entry.info.merge_handoff = merge_handoff;
         entry.info.finished_at_ms = Some(now_ms());
         push_recent_terminal(&mut state.recent_terminal, entry.info);
     }
@@ -601,6 +655,7 @@ impl AsyncWorkstreamRegistry {
                         AsyncWorkstreamStatus::Cancelled,
                         Some("Cancelled on foreground shutdown".to_string()),
                         None,
+                        None,
                     );
                 }
             }
@@ -725,19 +780,38 @@ pub(in crate::runtime) async fn launch_background_workstream_slot(
             "Async workstream launch cancelled before startup"
         )));
     }
-    let (role, scope, persistence, stream_name) = match &kind {
-        PreparedChildKind::AdHocSubagent { request, .. } => (
+    let (role, scope, persistence, stream_name, write_isolation) = match &kind {
+        PreparedChildKind::AdHocSubagent {
+            request,
+            write_isolation,
+            ..
+        } => (
             request.role.clone(),
             request.scope.clone(),
             request.effective_persistence(),
             request.stream_name.clone(),
+            write_isolation.clone(),
         ),
         PreparedChildKind::DelegatedSkill { request } => (
             request.skill_id.clone(),
             None,
             WorkstreamPersistence::OneOff,
             None,
+            None,
         ),
+    };
+    let owner_label = stream_name.as_deref().unwrap_or(role.as_str()).to_string();
+    let write_guard = if let Some(iso) = write_isolation.as_ref()
+        && !iso.shared_write_grants.is_empty()
+    {
+        Some(
+            iso.queue
+                .acquire_grants_fifo(&iso.shared_write_grants, &owner_label, launch_cancel)
+                .await
+                .map_err(SlotExecutionError::SpawnOrJoin)?,
+        )
+    } else {
+        None
     };
     let tracker = action_id.clone().map(|id| {
         ActionProgressTracker::new(parent_agent_files.clone(), id, label.clone())
@@ -770,6 +844,7 @@ pub(in crate::runtime) async fn launch_background_workstream_slot(
             parent_agent_files,
             child_run_registry,
             child_cancel: background_cancel,
+            write_guard,
             launched,
         })
         .map_err(SlotExecutionError::SpawnOrJoin)
