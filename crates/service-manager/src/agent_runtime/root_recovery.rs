@@ -625,4 +625,137 @@ mod tests {
             before
         );
     }
+
+    #[tokio::test]
+    async fn no_resume_update_leaves_selector_untouched_while_preserving_resume() {
+        use alan_agent_engine::{LlmClient, RolloutItem, RolloutRecorder, tools::ToolRegistry};
+        let temp = tempfile::tempdir().unwrap();
+        let stores = alan_agent_engine::AgentRuntimeStoreBindings {
+            rollouts: temp.path().join("rollouts"),
+            metadata: temp.path().join("metadata"),
+            checkpoints: temp.path().join("checkpoints"),
+            cache: temp.path().join("cache"),
+            tmp: temp.path().join("tmp"),
+        };
+        fs::create_dir_all(&stores.rollouts).unwrap();
+        let config = AgentProcessConfig {
+            store_bindings: Some(stores.clone()),
+            ..Default::default()
+        };
+
+        // 1. When no selector exists yet, `no_resume_update` must not create `metadata/root-rollout`.
+        let manager_config = crate::ServiceManagerConfig::ephemeral(
+            config.clone(),
+            crate::ProcessLaunchContext::root(),
+            LlmClient::new(alan_llm::MockLlmProvider::new()),
+            ToolRegistry::new(),
+        )
+        .with_no_resume_update(true);
+        let manager = crate::ServiceManager::boot(manager_config).await.unwrap();
+        assert!(
+            !stores.metadata.join(CURRENT).exists(),
+            "no_resume_update must not create metadata/root-rollout when absent"
+        );
+        manager.shutdown().await.unwrap();
+
+        // 2. Seed a selected rollout and verify `no_resume_update` leaves it untouched,
+        //    both for fresh runs and when `--resume` restores that session.
+        let selected = RolloutRecorder::new_in_dir("/proc/old", "mock", &stores.rollouts)
+            .await
+            .unwrap();
+        selected
+            .record_tape_message(&alan_agent_engine::tape::Message::user("selected session"))
+            .await
+            .unwrap();
+        publish(&config, Some(selected.path())).unwrap();
+        let before = fs::read_to_string(stores.metadata.join(CURRENT)).unwrap();
+
+        let one_shot = crate::ServiceManagerConfig::ephemeral(
+            config.clone(),
+            crate::ProcessLaunchContext::root(),
+            LlmClient::new(alan_llm::MockLlmProvider::new()),
+            ToolRegistry::new(),
+        )
+        .with_no_resume_update(true);
+        let one_shot_mgr = crate::ServiceManager::boot(one_shot).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(stores.metadata.join(CURRENT)).unwrap(),
+            before,
+            "no_resume_update must not overwrite an existing root-rollout pointer"
+        );
+        one_shot_mgr.shutdown().await.unwrap();
+
+        let provider = alan_llm::MockLlmProvider::new();
+        let probe = provider.clone();
+        let mut resumed_no_update = crate::ServiceManagerConfig::ephemeral(
+            config.clone(),
+            crate::ProcessLaunchContext::root(),
+            LlmClient::new(provider),
+            ToolRegistry::new(),
+        )
+        .with_no_resume_update(true);
+        resumed_no_update.resume_root = true;
+        let resumed_mgr = crate::ServiceManager::boot(resumed_no_update)
+            .await
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(stores.metadata.join(CURRENT)).unwrap(),
+            before,
+            "no_resume_update with --resume must still leave root-rollout untouched"
+        );
+        let (_, _, namespace) = resumed_mgr
+            .local_entry()
+            .create_and_handoff()
+            .await
+            .unwrap();
+        let shell = alan_shell::Shell::new(alan_ap::InProcessTransport::new(namespace));
+        shell
+            .write("/agent/root/io/input", b"follow-up")
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let activity: serde_json::Value = serde_json::from_slice(
+                    &shell.cat("/agent/root/machine/ui/activity").await.unwrap(),
+                )
+                .unwrap();
+                if !probe.recorded_requests().is_empty() && activity["state"] == "idle" {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let saw_selected = probe.recorded_requests().iter().any(|req| {
+            req.messages
+                .iter()
+                .any(|m| m.content.contains("selected session"))
+        });
+        assert!(saw_selected, "resumed run must restore the prior session");
+        resumed_mgr.shutdown().await.unwrap();
+
+        // 3. With `no_resume_update` unset (false), normal behavior overwrites `metadata/root-rollout`.
+        let normal = crate::ServiceManagerConfig::ephemeral(
+            config,
+            crate::ProcessLaunchContext::root(),
+            LlmClient::new(alan_llm::MockLlmProvider::new()),
+            ToolRegistry::new(),
+        );
+        let normal_mgr = crate::ServiceManager::boot(normal).await.unwrap();
+        let after = fs::read_to_string(stores.metadata.join(CURRENT)).unwrap();
+        assert_ne!(
+            after, before,
+            "normal run without no_resume_update must update metadata/root-rollout"
+        );
+        let items = RolloutRecorder::load_history(&stores.rollouts.join(after))
+            .await
+            .unwrap();
+        assert!(
+            items
+                .iter()
+                .all(|item| !matches!(item, RolloutItem::Message(_)))
+        );
+        normal_mgr.shutdown().await.unwrap();
+    }
 }

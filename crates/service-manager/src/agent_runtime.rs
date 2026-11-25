@@ -11,10 +11,8 @@ use std::{
 };
 
 use alan_agent_engine::{
-    AGENT_DEFINITION_FD, AgentExecutableRequest, AgentExecutableStatus, AgentProcessConfig,
-    ContentPart, MEMORY_STORE_FD, Op, RuntimeHandle, SpawnHandle, SpawnMountAccess, SpawnTarget,
-    Submission,
-    skills::SkillHostCapabilities,
+    AGENT_DEFINITION_FD, AgentExecutableRequest, AgentExecutableStatus, ContentPart,
+    MEMORY_STORE_FD, Op, RuntimeHandle, SpawnHandle, SpawnMountAccess, SpawnTarget, Submission,
     spawn_with_namespace_environment,
     tools::{ToolExecutionAuthority, ToolProcessRunner},
 };
@@ -22,7 +20,6 @@ use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::{
     Access, ExecNamespaceManifest, ExecSpec, LiveNamespace, Pid, ProcessInvocation, ProcessOutcome,
 };
-use alan_llm::ProviderCapabilities;
 use anyhow::{Context, Result, ensure};
 
 use crate::{
@@ -44,107 +41,17 @@ mod resume_content;
 #[path = "agent_runtime/root_recovery.rs"]
 mod root_recovery;
 pub(crate) mod sessions;
+mod template;
 
 use child_wait::{
     process_error, wait_for_child_terminal, wait_for_process_exit, wait_for_root_stop,
 };
 use process_cleanup::ProcessCleanup;
 use resume_content::resume_content;
+pub(crate) use template::{RootAgentProcess, RootAgentTemplate};
 
 const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
 static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
-
-#[derive(Clone)]
-pub(crate) struct RootAgentTemplate {
-    process: AgentProcessConfig,
-    pub(crate) resume_persisted_rollout: bool,
-    pub(crate) resume_rollout_id: Option<String>,
-    /// Never read or overwrite the selected-rollout channel for this invocation.
-    pub(crate) ephemeral_rollout: bool,
-    launch_context: ProcessLaunchContext,
-    host_capabilities: SkillHostCapabilities,
-    generation_capabilities: ProviderCapabilities,
-    llm_connection: String,
-    pub(crate) allow_profile_switch: bool,
-    input_shadow: Option<crate::InputShadowSelection>,
-    task_budget_binding: alan_agent_engine::TaskBudgetBinding,
-}
-
-impl RootAgentTemplate {
-    pub(crate) fn new(
-        process: AgentProcessConfig,
-        launch_context: ProcessLaunchContext,
-        host_capabilities: SkillHostCapabilities,
-        generation_capabilities: ProviderCapabilities,
-        llm_connection: String,
-        resume_persisted_rollout: bool,
-        input_shadow: Option<crate::InputShadowSelection>,
-    ) -> Self {
-        Self {
-            task_budget_binding: Default::default(),
-            process,
-            resume_persisted_rollout,
-            resume_rollout_id: None,
-            ephemeral_rollout: false,
-            input_shadow,
-            launch_context,
-            host_capabilities,
-            generation_capabilities,
-            llm_connection,
-            allow_profile_switch: false,
-        }
-    }
-}
-
-impl RootAgentTemplate {
-    /// Allow this Root Agent Process to switch between ready Connection profiles.
-    pub(crate) fn with_allow_profile_switch(mut self, allow: bool) -> Self {
-        self.allow_profile_switch = allow;
-        self
-    }
-
-    /// Keep this invocation's rollout out of the `metadata/root-rollout` selector.
-    pub(crate) fn with_ephemeral_rollout(mut self, ephemeral_rollout: bool) -> Self {
-        self.ephemeral_rollout = ephemeral_rollout;
-        self
-    }
-
-    /// Pin an explicit persisted rollout ID to recover on Root Agent startup.
-    pub(crate) fn with_resume_rollout_id(mut self, resume_rollout_id: Option<String>) -> Self {
-        self.resume_rollout_id = resume_rollout_id;
-        self
-    }
-}
-
-pub(crate) struct RootAgentProcess {
-    pid: Pid,
-    namespace: InProcessTransport,
-    ready: Option<tokio::sync::oneshot::Receiver<std::result::Result<(), String>>>,
-    stop: Option<tokio::sync::oneshot::Sender<()>>,
-}
-
-impl RootAgentProcess {
-    pub(crate) fn pid(&self) -> Pid {
-        self.pid
-    }
-
-    pub(crate) fn namespace(&self) -> InProcessTransport {
-        self.namespace.clone()
-    }
-
-    pub(crate) async fn wait_until_ready(&mut self) -> Result<()> {
-        let Some(ready) = self.ready.take() else {
-            return Ok(());
-        };
-        match ready.await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(message)) => Err(anyhow::anyhow!(message)),
-            Err(_) => Err(anyhow::anyhow!(
-                "Agent Runtime Service stopped before Root Agent readiness"
-            )),
-        }
-    }
-}
 
 pub(crate) struct AgentRuntimeService {
     procfs: alan_kernel::ProcFs,
@@ -582,7 +489,12 @@ impl AgentRuntimeService {
             .context("Agent Machine failed to start")?;
         if launch.is_primary_root {
             if !launch.template.ephemeral_rollout {
-                root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
+                if !launch.template.no_resume_update {
+                    root_recovery::publish(
+                        &launch.template.process,
+                        startup.rollout_path.as_deref(),
+                    )?;
+                }
                 if let (Some(stores), Some(rollout_path)) = (
                     launch.template.process.store_bindings.as_ref(),
                     startup.rollout_path.as_deref().or(launch
@@ -918,6 +830,7 @@ fn child_template(
         resume_persisted_rollout: false,
         resume_rollout_id: None,
         ephemeral_rollout: false,
+        no_resume_update: false,
         input_shadow: None,
         launch_context,
         host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(

@@ -90,6 +90,7 @@ pub(super) async fn run_bare_in_foreground_instance(
     resume_root: bool,
     resume_rollout_id: Option<String>,
     ephemeral: bool,
+    no_resume_update: bool,
     cwd: Option<std::path::PathBuf>,
     no_auto_mount: bool,
     shadow_evaluator: Option<String>,
@@ -116,6 +117,7 @@ pub(super) async fn run_bare_in_foreground_instance(
         trust_options,
         resume_rollout_id,
         ephemeral,
+        no_resume_update,
         shadow_evaluator,
         shadow_surface,
     )?;

@@ -1,6 +1,9 @@
 #[cfg(target_os = "macos")]
 use super::HostEndpointPaths;
-use super::cli::dispatch::{BareRunMode, Cli, Commands, bare_run_mode, validate_resume_scope};
+use super::cli::dispatch::{
+    BareRunMode, Cli, Commands, bare_run_mode, resolve_no_resume_update, validate_bare_flags,
+    validate_resume_scope,
+};
 #[cfg(target_os = "macos")]
 use super::foreground::generated_foreground_runtime_dir;
 use clap::Parser;
@@ -203,4 +206,36 @@ fn update_subcommand_parses_all_flags_cleanly() {
         _ => panic!("expected Commands::Update"),
     }
     assert!(!parsed.json);
+}
+
+#[test]
+fn no_resume_update_flag_and_env_parity_are_validated() {
+    let bare = Cli::try_parse_from(["alan", "--no-resume-update"]).unwrap();
+    assert!(bare.no_resume_update);
+    assert!(
+        validate_bare_flags(false, false, bare.no_resume_update, None, false).is_ok(),
+        "--no-resume-update should be allowed on bare alan"
+    );
+    assert!(
+        validate_bare_flags(true, false, true, None, false).is_ok(),
+        "--no-resume-update should be allowed alongside --resume"
+    );
+    assert!(
+        validate_bare_flags(false, true, true, None, false).is_ok(),
+        "--no-resume-update should be allowed alongside --ephemeral"
+    );
+    assert!(
+        validate_bare_flags(false, false, true, None, true).is_err(),
+        "--no-resume-update with subcommand must fail"
+    );
+
+    assert!(!resolve_no_resume_update(false, None));
+    assert!(!resolve_no_resume_update(false, Some("")));
+    assert!(!resolve_no_resume_update(false, Some("0")));
+    assert!(!resolve_no_resume_update(false, Some("false")));
+    assert!(!resolve_no_resume_update(false, Some("FALSE")));
+    assert!(resolve_no_resume_update(false, Some("1")));
+    assert!(resolve_no_resume_update(false, Some("true")));
+    assert!(resolve_no_resume_update(true, None));
+    assert!(resolve_no_resume_update(true, Some("0")));
 }
