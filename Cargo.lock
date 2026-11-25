@@ -74,6 +74,7 @@ dependencies = [
  "alan-kernel",
  "alan-llm",
  "alan-llmfs",
+ "alan-memfs",
  "alan-routefs",
  "alan-shell",
  "anyhow",

@@ -2,6 +2,9 @@
 //! executed via bounded, ephemeral `alan -p --ephemeral --json` invocations.
 
 #[cfg(test)]
+mod cron_stream_tests;
+mod draft;
+#[cfg(test)]
 mod inbox_tests;
 mod logs;
 mod manifest;
@@ -20,16 +23,25 @@ use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
-use logs::{WorkflowRunLogEntry, read_run_logs};
 #[allow(
     unused_imports,
     reason = "re-exported for alan library callers; main.rs includes cli privately"
 )]
-pub use manifest::WorkflowFileserverSpec;
+pub use draft::{
+    CrontabInstaller, ScheduleInstallOutcome, SystemCrontabInstaller, WorkflowDraftRequest,
+    WorkflowDraftSummary, draft_workflow_from_natural_language,
+    install_drafted_workflow_with_confirmation,
+};
+use logs::{WorkflowRunLogEntry, read_run_logs};
 pub(crate) use manifest::validate_mount_grant_id;
 pub use manifest::{
     ReleaseGatePolicy, TriggerAllowlist, WorkflowManifest, WorkflowStore, WorkflowTrustPosture,
 };
+#[allow(
+    unused_imports,
+    reason = "re-exported for alan library callers; main.rs includes cli privately"
+)]
+pub use manifest::{WorkflowCronStreamSpec, WorkflowFileserverSpec};
 use manifest::{normalize_model_profile, parse_workflow_package_inputs, validate_workflow_id};
 use release_prep::run_check_release_gate;
 #[allow(
@@ -160,6 +172,38 @@ pub enum WorkflowAction {
     },
     /// Watch allowlisted GitHub events via confined `github-fileserver` + `routefs` and dispatch bounded runs
     Watch(WatchWorkflowArgs),
+    /// Draft a scheduled workflow from natural language and require explicit confirmation before install
+    Draft {
+        /// Natural-language workflow description
+        description: String,
+        /// Optional workflow id override (slugified from description by default)
+        #[arg(long)]
+        id: Option<String>,
+        /// Bound System Store project key (required when binding a named cron stream)
+        #[arg(long = "project-key")]
+        project_key: Option<String>,
+        /// Explicit saved Host Mount grant id (repeatable)
+        #[arg(long = "mount", alias = "grant", value_name = "GRANT_ID")]
+        mounts: Vec<String>,
+        /// Optional Stateful Cron Stream identifier
+        #[arg(long = "stream")]
+        stream_name: Option<String>,
+        /// Target native scheduler format (`launchd` or `cron`)
+        #[arg(long, value_enum, default_value_t = ScheduleTarget::Launchd)]
+        target: ScheduleTarget,
+        /// Explicitly confirm scheduler installation (required with `--confirm-digest`)
+        #[arg(long)]
+        confirm: bool,
+        /// SHA-256 confirmation digest printed during draft review
+        #[arg(long = "confirm-digest")]
+        confirm_digest: Option<String>,
+        /// Overwrite an existing workflow manifest with the same id
+        #[arg(long)]
+        force: bool,
+        /// Emit structured JSON instead of human review text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -250,6 +294,7 @@ pub async fn run_with_store(
                 timeout_secs,
                 trigger_allowlist: None,
                 release_gate: None,
+                cron_stream: None,
             };
             save_and_format_init_manifest(store, &manifest, force, json)
         }
@@ -450,6 +495,59 @@ pub async fn run_with_store(
                 SystemStorePaths::detect()?.packages()?,
             )?);
             watch::run_watch_with_stores(store, &packages, watch_args, alan_bin_override).await
+        }
+        WorkflowAction::Draft {
+            description,
+            id,
+            project_key,
+            mounts,
+            stream_name,
+            target,
+            confirm,
+            confirm_digest,
+            force,
+            json,
+        } => {
+            let alan_bin = resolve_alan_binary(alan_bin_override)?;
+            let summary = draft_workflow_from_natural_language(
+                &WorkflowDraftRequest {
+                    description,
+                    id,
+                    project_key,
+                    mounts,
+                    stream_name,
+                },
+                store,
+                &alan_bin,
+                target,
+            )?;
+            if confirm || confirm_digest.is_some() {
+                let outcome = install_drafted_workflow_with_confirmation(
+                    &summary,
+                    confirm,
+                    confirm_digest.as_deref(),
+                    store,
+                    home_dir,
+                    &SystemCrontabInstaller,
+                    force,
+                )?;
+                let out = if json {
+                    format!("{}\n", serde_json::to_string_pretty(&outcome)?)
+                } else {
+                    format!(
+                        "confirmed and installed workflow `{}` via {:?} at {}\n",
+                        outcome.workflow_id, outcome.scheduler_target, outcome.installed_location
+                    )
+                };
+                Ok((out, None))
+            } else if json {
+                Ok((
+                    format!("{}\n", serde_json::to_string_pretty(&summary)?),
+                    None,
+                ))
+            } else {
+                Ok((format!("{}\n", summary.human_review_prompt), None))
+            }
         }
     }
 }

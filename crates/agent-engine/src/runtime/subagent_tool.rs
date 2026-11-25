@@ -3,6 +3,8 @@
 mod batch;
 mod commit;
 mod workstream;
+#[cfg(test)]
+mod write_isolation_integration_tests;
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -35,7 +37,9 @@ use super::delegated_skill_tool::{
     MAX_DELEGATED_TIMEOUT_SECS, parse_host_mounts, parse_optional_path_argument,
     parse_optional_timeout_secs_argument, resolve_delegated_launch_path,
 };
-use super::project_workstreams::{WorkstreamPersistence, validate_project_key};
+use super::project_workstreams::{
+    WorkstreamPersistence, WorkstreamWriteMode, validate_project_key,
+};
 use super::transition::NamespaceAgentFiles;
 use super::virtual_tool::VirtualToolOutcome;
 
@@ -146,6 +150,9 @@ pub(in crate::runtime) struct SubagentSpawnRequest {
     pub(in crate::runtime) persistence: Option<WorkstreamPersistence>,
     pub(in crate::runtime) scope: Option<String>,
     pub(in crate::runtime) background: bool,
+    pub(in crate::runtime) write_mode: Option<WorkstreamWriteMode>,
+    pub(in crate::runtime) long_running: bool,
+    pub(in crate::runtime) read_memory: bool,
 }
 
 impl SubagentSpawnRequest {
@@ -231,6 +238,19 @@ pub(super) fn spawn_subagent_tool_definition() -> ToolDefinition {
                 "background": {
                     "type": "boolean",
                     "description": "When true, launch this workstream asynchronously on an in-instance background task backed by a child Agent Process and return immediately with its running handle (/proc/<pid>, /agent/<pid>, stream_name) while Root remains interactive."
+                },
+                "write_mode": {
+                    "type": "string",
+                    "enum": ["read_only", "shared_queue", "worktree", "cow_workspace"],
+                    "description": "Tiered Host Mount write isolation: 'read_only' runs concurrently; 'shared_queue' (default for routine writes) serializes per grant in FIFO order; 'worktree' / 'cow_workspace' isolates into a narrowed CoW/worktree workspace with merge handoff."
+                },
+                "long_running": {
+                    "type": "boolean",
+                    "description": "When true and the target grant already has an active shared_queue writer, automatically isolate into a CoW/worktree workspace."
+                },
+                "read_memory": {
+                    "type": "boolean",
+                    "description": "When true, pass a strictly read-only shared project memory descriptor to the child for recall/<query> lookups."
                 }
             },
             "required": ["role", "task"]
@@ -330,6 +350,23 @@ pub(in crate::runtime) fn parse_subagent_spawn_request(
         None | Some(Value::Null) => false,
         Some(value) => value.as_bool()?,
     };
+    let write_mode = match arguments.get("write_mode") {
+        None | Some(Value::Null) => None,
+        Some(value) => match value.as_str()?.trim() {
+            "read_only" => Some(WorkstreamWriteMode::ReadOnly),
+            "shared_queue" => Some(WorkstreamWriteMode::SharedQueue),
+            "worktree" | "cow_workspace" => Some(WorkstreamWriteMode::Worktree),
+            _ => return None,
+        },
+    };
+    let long_running = match arguments.get("long_running") {
+        None | Some(Value::Null) => false,
+        Some(value) => value.as_bool()?,
+    };
+    let read_memory = match arguments.get("read_memory") {
+        None | Some(Value::Null) => false,
+        Some(value) => value.as_bool()?,
+    };
     Some(SubagentSpawnRequest {
         role,
         task,
@@ -342,6 +379,9 @@ pub(in crate::runtime) fn parse_subagent_spawn_request(
         persistence,
         scope,
         background,
+        write_mode,
+        long_running,
+        read_memory,
     })
 }
 
@@ -404,7 +444,11 @@ pub(in crate::runtime) fn resolve_subagent_spawn_spec(
             ),
             output_dir: None,
         },
-        handles: vec![SpawnHandle::ApprovalScope],
+        handles: if request.read_memory {
+            vec![SpawnHandle::ApprovalScope, SpawnHandle::Memory]
+        } else {
+            vec![SpawnHandle::ApprovalScope]
+        },
         host_mounts: request.host_mounts.clone(),
         runtime_overrides: SpawnRuntimeOverrides {
             model: request.model.clone(),
@@ -627,6 +671,9 @@ mod tests {
             persistence: None,
             scope: None,
             background: false,
+            write_mode: None,
+            long_running: false,
+            read_memory: false,
         };
         let err = resolve_subagent_spawn_spec(Path::new("/mnt/project"), &req).unwrap_err();
         assert_eq!(err.error_kind, "read_only_mount_conflict");
@@ -646,6 +693,9 @@ mod tests {
             persistence: None,
             scope: None,
             background: false,
+            write_mode: None,
+            long_running: false,
+            read_memory: false,
         };
         let spec = resolve_subagent_spawn_spec(Path::new("/mnt/project"), &req).unwrap();
         assert_eq!(spec.launch.cwd.as_deref(), Some(Path::new("/")));

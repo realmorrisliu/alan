@@ -140,6 +140,7 @@ exit 2
         timeout_secs: Some(30),
         trigger_allowlist: None,
         release_gate: None,
+        cron_stream: None,
     };
     store.save_manifest(&fail_manifest, false).unwrap();
 

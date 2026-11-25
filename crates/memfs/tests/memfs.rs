@@ -269,3 +269,102 @@ async fn failed_multi_chunk_write_never_commits_partial_bytes_on_clunk() {
         b"original content"
     );
 }
+
+#[tokio::test]
+async fn read_only_memfs_allows_recall_and_denies_all_mutations() {
+    use std::sync::Arc;
+
+    let fs = Arc::new(MemFs::new());
+    fs.commit_file(
+        "decisions.md",
+        "使用 Rust memfs 单写者治理来防止并发覆盖。".as_bytes(),
+    )
+    .await
+    .unwrap();
+
+    let ro = fs.read_only();
+    assert_eq!(ro.list_files_via_root().await, b"decisions.md");
+    ro.walk(Fid::ROOT, Fid(1), &["decisions.md".into()])
+        .await
+        .unwrap();
+    let stat = ro.stat(Fid(1)).await.unwrap();
+    assert!(!stat.writable);
+    assert_eq!(
+        ro.open(Fid(1), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        ro.open(Fid(1), OpenMode::ReadWrite).await,
+        Err(ErrorCode::NoAccess)
+    );
+    ro.open(Fid(1), OpenMode::Read).await.unwrap();
+    assert_eq!(
+        ro.write(Fid(1), 0, b"tamper").await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(ro.remove(Fid(1)).await, Err(ErrorCode::NoAccess));
+    ro.clunk(Fid(1)).await.unwrap();
+
+    assert_eq!(
+        ro.create(Fid::ROOT, Fid(2), "rogue.md", FileKind::File)
+            .await,
+        Err(ErrorCode::NoAccess)
+    );
+
+    // Child can still query recall/<query> over the read-only view.
+    ro.walk(Fid::ROOT, Fid(3), &["recall".into(), "单写者治理".into()])
+        .await
+        .unwrap();
+    ro.open(Fid(3), OpenMode::Read).await.unwrap();
+    let hits = String::from_utf8(ro.read(Fid(3), 0, 8192).await.unwrap()).unwrap();
+    ro.clunk(Fid(3)).await.unwrap();
+    assert!(hits.contains("decisions.md"), "{hits}");
+}
+
+#[tokio::test]
+async fn commit_files_atomic_and_revert_to_revision_are_all_or_nothing() {
+    let fs = MemFs::new();
+    let rev1 = fs.commit_file("summary.md", b"rev1").await.unwrap();
+
+    // Invalid batch (contains reserved name "recall") leaves existing files untouched.
+    assert_eq!(
+        fs.commit_files_atomic(vec![
+            ("summary.md".to_string(), b"should-not-apply".to_vec()),
+            ("recall".to_string(), b"invalid".to_vec()),
+        ])
+        .await,
+        Err(ErrorCode::BadRequest)
+    );
+    assert_eq!(fs.materialize("summary.md").await.unwrap(), b"rev1");
+
+    let committed = fs
+        .commit_files_atomic(vec![
+            ("summary.md".to_string(), b"rev2".to_vec()),
+            ("proposals.json".to_string(), b"[]".to_vec()),
+        ])
+        .await
+        .unwrap();
+    assert_eq!(committed.len(), 2);
+    assert_eq!(fs.list_files().await, vec!["proposals.json", "summary.md"]);
+    assert_eq!(fs.materialize("summary.md").await.unwrap(), b"rev2");
+
+    fs.revert_to_revision("summary.md", rev1.revision)
+        .await
+        .unwrap();
+    assert_eq!(fs.materialize("summary.md").await.unwrap(), b"rev1");
+
+    fs.delete_file("proposals.json").await.unwrap();
+    assert_eq!(fs.list_files().await, vec!["summary.md"]);
+}
+
+#[async_trait::async_trait]
+trait ReadOnlyRootHelper {
+    async fn list_files_via_root(&self) -> Vec<u8>;
+}
+
+#[async_trait::async_trait]
+impl ReadOnlyRootHelper for alan_memfs::ReadOnlyMemFs {
+    async fn list_files_via_root(&self) -> Vec<u8> {
+        self.read(Fid::ROOT, 0, 4096).await.unwrap()
+    }
+}

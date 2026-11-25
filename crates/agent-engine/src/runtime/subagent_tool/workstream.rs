@@ -1,8 +1,9 @@
 //! Named workstream lifecycle, live grant/budget revalidation, and checkpoint tracking.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use alan_agent_protocol::SpawnHostMount;
+use alan_agent_protocol::{SpawnHostMount, SpawnMountAccess};
 use tracing::warn;
 
 use crate::agent_machine::pending_resume::ResumeTarget;
@@ -14,9 +15,14 @@ use super::super::delegated_child_run::{ChildRuntimeResult, ChildRuntimeStatus};
 use super::super::delegated_skill_tool::DelegatedSkillRuntime;
 use super::super::project_startup::ProjectWorkstreamStoreRef;
 use super::super::project_workstreams::{
-    WorkstreamPersistence, WorkstreamRecord, WorkstreamState, WorkstreamWriteMode,
-    archive_workstream, complete_workstream, idle_workstream, load_workstream_record,
-    pause_workstream_error, resume_workstream, upsert_workstream,
+    StreamLeaseAcquireResult, StreamLeaseGuard, StreamLeaseHolderKind, WorkstreamPersistence,
+    WorkstreamRecord, WorkstreamState, WorkstreamWriteMode, archive_workstream,
+    complete_workstream, idle_workstream, load_workstream_record, pause_workstream_error,
+    resume_workstream, upsert_workstream,
+};
+use super::super::write_isolation::{
+    IsolatedWorkspaceAllocation, IsolatedWorkspaceRequest, SharedWriteQueueRegistry,
+    WorkspaceIsolationPort, WorkspaceMergeHandoff, resolve_effective_write_mode,
 };
 use super::SubagentSpawnRequest;
 use super::batch::PrelaunchFailure;
@@ -27,6 +33,58 @@ pub(in crate::runtime) struct TrackedWorkstream {
     pub(in crate::runtime) store: ProjectWorkstreamStoreRef,
     pub(in crate::runtime) name: String,
     pub(in crate::runtime) persistence: WorkstreamPersistence,
+    #[allow(
+        dead_code,
+        reason = "RAII per-stream lease guard held alive for the duration of the tracked workstream"
+    )]
+    pub(in crate::runtime) lease: Option<Arc<StreamLeaseGuard>>,
+}
+
+/// Allocated isolated workspace handle held during child execution and finalized on completion.
+#[derive(Debug, Clone)]
+pub(in crate::runtime) struct IsolatedWorkspaceContext {
+    pub(in crate::runtime) port: Arc<dyn WorkspaceIsolationPort>,
+    pub(in crate::runtime) allocation: IsolatedWorkspaceAllocation,
+    pub(in crate::runtime) workstream_name: String,
+    pub(in crate::runtime) why: String,
+    pub(in crate::runtime) replaced_mount_target: PathBuf,
+}
+
+impl IsolatedWorkspaceContext {
+    pub(in crate::runtime) async fn collect_handoff(
+        &self,
+        rollout_ref: Option<&str>,
+    ) -> Option<WorkspaceMergeHandoff> {
+        match self
+            .port
+            .collect_handoff(
+                &self.allocation,
+                &self.workstream_name,
+                rollout_ref,
+                &self.why,
+            )
+            .await
+        {
+            Ok(handoff) => Some(handoff),
+            Err(error) => {
+                warn!(
+                    workspace_ref = %self.allocation.workspace_ref,
+                    %error,
+                    "Failed to collect isolated workspace merge handoff"
+                );
+                None
+            }
+        }
+    }
+}
+
+/// Tiered write-isolation plan resolved before spawning a child Agent Process.
+#[derive(Debug, Clone)]
+pub(in crate::runtime) struct PreparedWriteIsolation {
+    pub(in crate::runtime) write_mode: WorkstreamWriteMode,
+    pub(in crate::runtime) queue: SharedWriteQueueRegistry,
+    pub(in crate::runtime) shared_write_grants: Vec<String>,
+    pub(in crate::runtime) isolated_workspace: Option<IsolatedWorkspaceContext>,
 }
 
 /// Prepared workstream resolution before spawning a child Agent Process.
@@ -35,6 +93,7 @@ pub(in crate::runtime) struct PreparedWorkstreamLaunch {
     pub(in crate::runtime) tracked: Option<TrackedWorkstream>,
     pub(in crate::runtime) checkpoint_resume: Option<ResumeTarget>,
     pub(in crate::runtime) effective_model: Option<String>,
+    pub(in crate::runtime) write_isolation: PreparedWriteIsolation,
 }
 
 fn prelaunch_err(code: &str, message: impl Into<String>) -> Box<PrelaunchFailure> {
@@ -119,6 +178,8 @@ pub(in crate::runtime) async fn prepare_workstream_launch(
 ) -> std::result::Result<PreparedWorkstreamLaunch, Box<PrelaunchFailure>> {
     revalidate_live_host_mounts(runtime, &request.host_mounts).await?;
 
+    let write_isolation = prepare_write_isolation(runtime, request, None).await?;
+
     let Some(stream_name) = request.stream_name.as_deref() else {
         if request.persistence == Some(WorkstreamPersistence::Persistent) {
             return Err(prelaunch_err(
@@ -130,6 +191,7 @@ pub(in crate::runtime) async fn prepare_workstream_launch(
             tracked: None,
             checkpoint_resume: None,
             effective_model: request.model.clone(),
+            write_isolation,
         });
     };
 
@@ -152,6 +214,7 @@ pub(in crate::runtime) async fn prepare_workstream_launch(
             tracked: None,
             checkpoint_resume: None,
             effective_model: request.model.clone(),
+            write_isolation,
         });
     };
 
@@ -196,6 +259,7 @@ pub(in crate::runtime) async fn prepare_workstream_launch(
                 }
 
                 revalidate_live_task_budget(runtime).await?;
+                let lease = acquire_interactive_stream_lease(&store, stream_name)?;
 
                 let checkpoint_resume =
                     existing
@@ -230,6 +294,18 @@ pub(in crate::runtime) async fn prepare_workstream_launch(
                     resumed.model_override.clone_from(&effective_model);
                     metadata_updated = true;
                 }
+                if resumed.write_mode != write_isolation.write_mode {
+                    resumed.write_mode = write_isolation.write_mode;
+                    metadata_updated = true;
+                }
+                let next_worktree_ref = write_isolation
+                    .isolated_workspace
+                    .as_ref()
+                    .map(|ctx| ctx.allocation.workspace_ref.clone());
+                if next_worktree_ref.is_some() && resumed.worktree_ref != next_worktree_ref {
+                    resumed.worktree_ref = next_worktree_ref;
+                    metadata_updated = true;
+                }
                 if metadata_updated {
                     resumed = upsert_workstream(&store.projects_root, &store.project_key, resumed)
                         .map_err(|err| {
@@ -247,9 +323,11 @@ pub(in crate::runtime) async fn prepare_workstream_launch(
                         store,
                         name: resumed.name,
                         persistence: WorkstreamPersistence::Persistent,
+                        lease: Some(lease),
                     }),
                     checkpoint_resume,
                     effective_model,
+                    write_isolation,
                 });
             }
             WorkstreamState::Archived => {
@@ -269,20 +347,23 @@ pub(in crate::runtime) async fn prepare_workstream_launch(
     }
 
     let persistence = request.effective_persistence();
-    if persistence == WorkstreamPersistence::Persistent {
+    let lease = if persistence == WorkstreamPersistence::Persistent {
         revalidate_live_task_budget(runtime).await?;
-    }
+        Some(acquire_interactive_stream_lease(&store, stream_name)?)
+    } else {
+        None
+    };
 
     let scope = request
         .scope
         .clone()
         .unwrap_or_else(|| format!("{}: {}", request.role, request.task));
     let mut record = WorkstreamRecord::new(stream_name, scope, persistence);
-    record.write_mode = if request.read_only {
-        WorkstreamWriteMode::ReadOnly
-    } else {
-        WorkstreamWriteMode::SharedQueue
-    };
+    record.write_mode = write_isolation.write_mode;
+    record.worktree_ref = write_isolation
+        .isolated_workspace
+        .as_ref()
+        .map(|ctx| ctx.allocation.workspace_ref.clone());
     record.model_override.clone_from(&request.model);
 
     let persisted =
@@ -298,10 +379,157 @@ pub(in crate::runtime) async fn prepare_workstream_launch(
             store,
             name: persisted.name,
             persistence,
+            lease,
         }),
         checkpoint_resume: None,
         effective_model: request.model.clone(),
+        write_isolation,
     })
+}
+
+fn acquire_interactive_stream_lease(
+    store: &ProjectWorkstreamStoreRef,
+    stream_name: &str,
+) -> std::result::Result<Arc<StreamLeaseGuard>, Box<PrelaunchFailure>> {
+    match StreamLeaseGuard::try_acquire(
+        &store.projects_root,
+        &store.project_key,
+        stream_name,
+        StreamLeaseHolderKind::Interactive,
+        None,
+    ) {
+        Ok(StreamLeaseAcquireResult::Acquired(guard)) => Ok(Arc::new(guard)),
+        Ok(StreamLeaseAcquireResult::Contention { holder }) => {
+            let holder_desc = holder
+                .map(|h| format!("{:?} pid={}", h.holder_kind, h.pid))
+                .unwrap_or_else(|| "another active session".to_string());
+            Err(prelaunch_err(
+                "workstream_locked",
+                format!("Workstream '{stream_name}' is currently locked by {holder_desc}."),
+            ))
+        }
+        Err(err) => Err(prelaunch_err(
+            "workstream_lease_error",
+            format!("Failed to acquire lease lock for workstream '{stream_name}': {err}"),
+        )),
+    }
+}
+
+async fn prepare_write_isolation(
+    runtime: &DelegatedSkillRuntime<'_>,
+    request: &SubagentSpawnRequest,
+    rollout_ref: Option<&str>,
+) -> std::result::Result<PreparedWriteIsolation, Box<PrelaunchFailure>> {
+    let queue = runtime.write_isolation_queue().clone();
+    let write_mode = resolve_effective_write_mode(
+        request.read_only,
+        request.write_mode,
+        request.long_running,
+        &request.host_mounts,
+        &queue,
+    )
+    .map_err(|msg| prelaunch_err("write_mode_conflict", msg))?;
+
+    let mut rw_grants: Vec<String> = request
+        .host_mounts
+        .iter()
+        .filter(|m| m.access == SpawnMountAccess::ReadWrite)
+        .map(|m| m.grant.clone())
+        .collect();
+    rw_grants.sort();
+    rw_grants.dedup();
+
+    match write_mode {
+        WorkstreamWriteMode::ReadOnly => Ok(PreparedWriteIsolation {
+            write_mode,
+            queue,
+            shared_write_grants: Vec::new(),
+            isolated_workspace: None,
+        }),
+        WorkstreamWriteMode::SharedQueue => Ok(PreparedWriteIsolation {
+            write_mode,
+            queue,
+            shared_write_grants: rw_grants,
+            isolated_workspace: None,
+        }),
+        WorkstreamWriteMode::Worktree => {
+            let Some(port) = runtime.workspace_isolation().cloned() else {
+                return Err(prelaunch_err(
+                    "workspace_isolation_unavailable",
+                    "Requested `worktree` / `cow_workspace` write isolation, but no WorkspaceIsolationPort is configured.",
+                ));
+            };
+            let primary_rw = request
+                .host_mounts
+                .iter()
+                .find(|m| m.access == SpawnMountAccess::ReadWrite)
+                .ok_or_else(|| {
+                    prelaunch_err(
+                        "write_mode_conflict",
+                        "Worktree write isolation requires a read_write host_mount.",
+                    )
+                })?;
+            let workstream_name = request
+                .stream_name
+                .clone()
+                .unwrap_or_else(|| request.role.clone());
+            let why = request
+                .scope
+                .clone()
+                .unwrap_or_else(|| request.task.clone());
+            let allocation = port
+                .allocate_workspace(IsolatedWorkspaceRequest {
+                    workstream_name: workstream_name.clone(),
+                    source_grant_id: primary_rw.grant.clone(),
+                    source_namespace_path: primary_rw.target.clone(),
+                    rollout_ref: rollout_ref.map(str::to_string),
+                    why: why.clone(),
+                })
+                .await
+                .map_err(|err| {
+                    prelaunch_err(
+                        "workspace_isolation_failed",
+                        format!("Failed to allocate isolated workspace: {err:#}"),
+                    )
+                })?;
+            Ok(PreparedWriteIsolation {
+                write_mode,
+                queue,
+                shared_write_grants: Vec::new(),
+                isolated_workspace: Some(IsolatedWorkspaceContext {
+                    port,
+                    allocation,
+                    workstream_name,
+                    why,
+                    replaced_mount_target: primary_rw.target.clone(),
+                }),
+            })
+        }
+    }
+}
+
+/// Apply narrowed isolated workspace mount and cwd onto a resolved `SpawnSpec`.
+pub(in crate::runtime) fn apply_isolated_workspace_to_spawn_spec(
+    spec: &mut alan_agent_protocol::SpawnSpec,
+    ctx: &IsolatedWorkspaceContext,
+) {
+    let mut replaced = false;
+    for mount in &mut spec.host_mounts {
+        if mount.access == SpawnMountAccess::ReadWrite && mount.target == ctx.replaced_mount_target
+        {
+            *mount = ctx.allocation.narrowed_grant.clone();
+            replaced = true;
+            break;
+        }
+    }
+    if !replaced {
+        spec.host_mounts.push(ctx.allocation.narrowed_grant.clone());
+    }
+    if let Some(cwd) = spec.launch.cwd.as_ref()
+        && cwd.starts_with(&ctx.replaced_mount_target)
+    {
+        spec.launch.cwd = Some(ctx.allocation.narrowed_grant.target.clone());
+    }
 }
 
 /// Transition a tracked workstream to its terminal/idle state after child execution completes.

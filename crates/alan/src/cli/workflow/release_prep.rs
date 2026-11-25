@@ -293,6 +293,7 @@ pub fn build_release_prep_manifest(args: &InitReleasePrepArgs) -> Result<Workflo
         timeout_secs: Some(args.timeout_secs),
         trigger_allowlist,
         release_gate: Some(release_gate),
+        cron_stream: None,
     };
     manifest.validate()?;
     Ok(manifest)

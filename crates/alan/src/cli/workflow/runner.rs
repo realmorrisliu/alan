@@ -2,17 +2,25 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use alan_agent_engine::{
+    CronStreamExecutionSpec, CronStreamPrepareResult, StreamLeaseGuard, WorkstreamRecord,
+    WorkstreamState, check_per_run_budget, finalize_stateful_cron_stream_run,
+    load_workstream_record, prepare_stateful_cron_stream_run,
+};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
+use tokio::sync::Notify;
 
 use super::logs::{WorkflowRunLogEntry, WorkflowRunUsage, append_run_log, scrub_and_bound_text};
 use super::manifest::{
-    ReleaseGatePolicy, TriggerAllowlist, WorkflowFileserverSpec, WorkflowManifest, WorkflowStore,
+    ReleaseGatePolicy, TriggerAllowlist, WorkflowCronStreamSpec, WorkflowFileserverSpec,
+    WorkflowManifest, WorkflowStore,
 };
 
 /// Environment variable overriding the `alan` executable invoked by `workflow run` / `render-schedule`.
@@ -24,7 +32,7 @@ const CANCELLED_EXIT_CODE: i32 = 130;
 const PIPE_DRAIN_AFTER_KILL_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Resolved dry-run execution plan emitted by `alan workflow run <id> --dry-run`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct WorkflowDryRunPlan {
     pub workflow_id: String,
     pub binary: PathBuf,
@@ -46,6 +54,8 @@ pub struct WorkflowDryRunPlan {
     pub trigger_allowlist: Option<TriggerAllowlist>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub release_gate: Option<ReleaseGatePolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cron_stream: Option<WorkflowCronStreamSpec>,
 }
 
 /// Structured outcome produced by `alan workflow run <id>`.
@@ -66,21 +76,24 @@ pub fn resolve_alan_binary(explicit: Option<&Path>) -> Result<PathBuf> {
     std::env::current_exe().context("resolve current `alan` executable path")
 }
 
-/// Build the exact bounded invocation arguments for `alan -p --ephemeral`.
+/// Build the exact bounded invocation arguments for `alan -p [--ephemeral]`.
 pub fn build_alan_args(manifest: &WorkflowManifest) -> Vec<String> {
-    build_alan_args_with_prompt(manifest, None)
+    build_alan_args_with_prompt(manifest, None, None)
 }
 
 fn build_alan_args_with_prompt(
     manifest: &WorkflowManifest,
     prompt_override: Option<&str>,
+    resume_rollout_ref: Option<&str>,
 ) -> Vec<String> {
     let prompt = prompt_override.unwrap_or(manifest.prompt.as_str());
-    let mut args = vec![
-        "-p".to_string(),
-        prompt.to_string(),
-        "--ephemeral".to_string(),
-    ];
+    let mut args = vec!["-p".to_string(), prompt.to_string()];
+    if manifest.cron_stream.is_none() {
+        args.push("--ephemeral".to_string());
+    } else if let Some(rollout) = resume_rollout_ref.map(str::trim).filter(|s| !s.is_empty()) {
+        args.push("--resume".to_string());
+        args.push(rollout.to_string());
+    }
     if manifest.json {
         args.push("--json".to_string());
     }
@@ -129,10 +142,11 @@ pub fn build_dry_run_plan(
         model_profile: manifest.model_profile.clone(),
         project_key: manifest.project_key.clone(),
         timeout_secs: manifest.effective_timeout_secs(),
-        ephemeral: true,
+        ephemeral: manifest.cron_stream.is_none(),
         json_stream: manifest.json,
         trigger_allowlist: manifest.trigger_allowlist.clone(),
         release_gate: manifest.release_gate.clone(),
+        cron_stream: manifest.cron_stream.clone(),
     })
 }
 
@@ -173,11 +187,120 @@ pub async fn execute_workflow_run_cancellable(
     let run_id = format!("wf-{}", uuid::Uuid::new_v4().simple());
     let started_at = Utc::now().to_rfc3339();
     let timer = Instant::now();
+    let log_path_preview = store.workflow_runs_dir(&manifest.id)?.join("runs.ndjson");
+
+    struct ActiveCronRun {
+        projects_root: PathBuf,
+        spec: CronStreamExecutionSpec,
+        lease: StreamLeaseGuard,
+        record: WorkstreamRecord,
+    }
+
+    let cron_ctx = if let Some(cron_spec) = manifest.to_cron_stream_spec() {
+        let projects_root = store
+            .projects_root()
+            .context("stateful cron_stream workflow requires System Store projects root")?;
+        let prep = prepare_stateful_cron_stream_run(
+            &projects_root,
+            &cron_spec,
+            &run_id,
+            &log_path_preview.display().to_string(),
+            || validate_live_cron_grants(store, manifest),
+        )
+        .await;
+        match prep {
+            Ok(CronStreamPrepareResult::Ready { lease, record, .. }) => Some(ActiveCronRun {
+                projects_root,
+                spec: cron_spec,
+                lease,
+                record,
+            }),
+            Ok(CronStreamPrepareResult::DeferredLockContention { inbox_entry }) => {
+                let duration_ms = u64::try_from(timer.elapsed().as_millis()).unwrap_or(u64::MAX);
+                let entry = WorkflowRunLogEntry {
+                    run_id,
+                    workflow_id: manifest.id.clone(),
+                    started_at,
+                    finished_at: Utc::now().to_rfc3339(),
+                    duration_ms,
+                    exit_code: 0,
+                    status: "deferred_lock_contention".to_string(),
+                    summary: scrub_and_bound_text(&inbox_entry.summary, 4_000),
+                    stderr_excerpt: String::new(),
+                    ephemeral: false,
+                    trust: manifest.trust.as_str().to_string(),
+                    model_profile: manifest.model_profile.clone(),
+                    tool_calls: 0,
+                    usage: None,
+                };
+                return persist_log_only(store, manifest, entry);
+            }
+            Ok(CronStreamPrepareResult::SkippedPausedError { inbox_entry }) => {
+                let duration_ms = u64::try_from(timer.elapsed().as_millis()).unwrap_or(u64::MAX);
+                let entry = WorkflowRunLogEntry {
+                    run_id,
+                    workflow_id: manifest.id.clone(),
+                    started_at,
+                    finished_at: Utc::now().to_rfc3339(),
+                    duration_ms,
+                    exit_code: 1,
+                    status: "paused_error".to_string(),
+                    summary: scrub_and_bound_text(&inbox_entry.summary, 4_000),
+                    stderr_excerpt: String::new(),
+                    ephemeral: false,
+                    trust: manifest.trust.as_str().to_string(),
+                    model_profile: manifest.model_profile.clone(),
+                    tool_calls: 0,
+                    usage: None,
+                };
+                return persist_log_only(store, manifest, entry);
+            }
+            Err(err) => {
+                let err_msg = format!("{err:#}");
+                if err_msg.contains("grant revalidation failed") {
+                    let is_paused = load_workstream_record(
+                        &projects_root,
+                        &cron_spec.project_key,
+                        &cron_spec.stream_name,
+                    )
+                    .ok()
+                    .flatten()
+                    .is_some_and(|rec| rec.state == WorkstreamState::PausedError);
+                    let duration_ms =
+                        u64::try_from(timer.elapsed().as_millis()).unwrap_or(u64::MAX);
+                    let entry = WorkflowRunLogEntry {
+                        run_id,
+                        workflow_id: manifest.id.clone(),
+                        started_at,
+                        finished_at: Utc::now().to_rfc3339(),
+                        duration_ms,
+                        exit_code: 1,
+                        status: if is_paused {
+                            "paused_error".to_string()
+                        } else {
+                            "grant_revalidation_failed".to_string()
+                        },
+                        summary: scrub_and_bound_text(&err_msg, 4_000),
+                        stderr_excerpt: String::new(),
+                        ephemeral: false,
+                        trust: manifest.trust.as_str().to_string(),
+                        model_profile: manifest.model_profile.clone(),
+                        tool_calls: 0,
+                        usage: None,
+                    };
+                    return persist_log_only(store, manifest, entry);
+                }
+                return Err(err);
+            }
+        }
+    } else {
+        None
+    };
 
     if cancel.as_ref().is_some_and(|rx| *rx.borrow()) {
         let duration_ms = u64::try_from(timer.elapsed().as_millis()).unwrap_or(u64::MAX);
         let entry = WorkflowRunLogEntry {
-            run_id,
+            run_id: run_id.clone(),
             workflow_id: manifest.id.clone(),
             started_at,
             finished_at: Utc::now().to_rfc3339(),
@@ -189,16 +312,39 @@ pub async fn execute_workflow_run_cancellable(
                 4_000,
             ),
             stderr_excerpt: String::new(),
-            ephemeral: true,
+            ephemeral: cron_ctx.is_none(),
             trust: manifest.trust.as_str().to_string(),
             model_profile: manifest.model_profile.clone(),
             tool_calls: 0,
             usage: None,
         };
+        if let Some(ctx) = cron_ctx {
+            let outcome = finalize_stateful_cron_stream_run(
+                &ctx.projects_root,
+                &ctx.spec,
+                ctx.record,
+                ctx.lease,
+                &run_id,
+                &log_path_preview.display().to_string(),
+                false,
+                None,
+                &entry.summary,
+                None,
+                None,
+            )?;
+            let mut finalized = entry;
+            if outcome.transitioned_to_paused_error {
+                finalized.status = "paused_error".to_string();
+            }
+            return persist_log_only(store, manifest, finalized);
+        }
         return persist_outcome(store, manifest, entry);
     }
 
-    let args = build_alan_args_with_prompt(manifest, prompt_override);
+    let resume_ref = cron_ctx
+        .as_ref()
+        .and_then(|ctx| ctx.record.rollout_ref.as_deref());
+    let args = build_alan_args_with_prompt(manifest, prompt_override, resume_ref);
 
     // Keep any temporary `connection_profile` agent.toml scoped strictly to this single run.
     let _temp_config_dir = prepare_model_profile_config(manifest.model_profile.as_deref())?;
@@ -216,6 +362,17 @@ pub async fn execute_workflow_run_cancellable(
     if let Some(ref config_guard) = _temp_config_dir {
         command.env("ALAN_CONFIG_PATH", &config_guard.config_path);
     }
+    if let Some(ref ctx) = cron_ctx {
+        command
+            .env("ALAN_CRON_STREAM", &ctx.spec.stream_name)
+            .env("ALAN_CRON_PROJECT_KEY", &ctx.spec.project_key);
+        if let Some(ckpt) = ctx.record.last_checkpoint_ref.as_deref() {
+            command.env("ALAN_CRON_CHECKPOINT", ckpt);
+        }
+        if let Some(budget) = ctx.spec.per_run_budget_usd {
+            command.env("ALAN_CRON_PER_RUN_BUDGET_USD", format!("{budget}"));
+        }
+    }
 
     let mut child = command.spawn().with_context(|| {
         format!(
@@ -225,9 +382,19 @@ pub async fn execute_workflow_run_cancellable(
         )
     })?;
 
+    let budget_limit = cron_ctx
+        .as_ref()
+        .and_then(|ctx| ctx.spec.per_run_budget_usd);
+    let budget_notify = budget_limit.map(|_| Arc::new(Notify::new()));
+
     let stdout_pipe = child.stdout.take();
     let stderr_pipe = child.stderr.take();
-    let stdout_task = tokio::spawn(read_bounded_stream(stdout_pipe, MAX_CAPTURED_OUTPUT_BYTES));
+    let stdout_task = tokio::spawn(read_bounded_stdout_with_budget(
+        stdout_pipe,
+        MAX_CAPTURED_OUTPUT_BYTES,
+        budget_limit,
+        budget_notify.clone(),
+    ));
     let stderr_task = tokio::spawn(read_bounded_stream(stderr_pipe, MAX_CAPTURED_OUTPUT_BYTES));
 
     let timeout = Duration::from_secs(manifest.effective_timeout_secs());
@@ -239,6 +406,10 @@ pub async fn execute_workflow_run_cancellable(
         _ = wait_for_cancel(&mut cancel) => {
             terminate_and_reap(&mut child).await;
             ChildWaitState::Cancelled
+        }
+        _ = wait_for_budget(&budget_notify) => {
+            terminate_and_reap(&mut child).await;
+            ChildWaitState::BudgetExceeded
         }
         wait_result = child.wait() => {
             let status = wait_result.with_context(|| {
@@ -261,12 +432,24 @@ pub async fn execute_workflow_run_cancellable(
     let stdout_text = String::from_utf8_lossy(&stdout_bytes);
     let stderr_text = String::from_utf8_lossy(&stderr_bytes);
     let parsed = parse_run_output(&stdout_text, manifest.json);
+    let observed_cost = parsed.usage.as_ref().and_then(|u| u.cost_usd);
+    let post_budget_violation = check_per_run_budget(budget_limit, observed_cost);
 
     let (status, exit_code, summary) = match wait_state {
         ChildWaitState::Cancelled => (
             "cancelled".to_string(),
             CANCELLED_EXIT_CODE,
             format!("workflow `{}` cancelled by termination signal", manifest.id),
+        ),
+        ChildWaitState::BudgetExceeded => (
+            "budget_exceeded".to_string(),
+            1,
+            post_budget_violation.unwrap_or_else(|| {
+                format!(
+                    "workflow `{}` exceeded per_run_budget_usd limit",
+                    manifest.id
+                )
+            }),
         ),
         ChildWaitState::TimedOut => (
             "timed_out".to_string(),
@@ -278,19 +461,25 @@ pub async fn execute_workflow_run_cancellable(
             ),
         ),
         ChildWaitState::Exited(0) => {
-            let status = parsed.status.unwrap_or_else(|| "completed".to_string());
-            let summary = parsed
-                .answer
-                .or(parsed.text_fallback)
-                .unwrap_or_else(|| "completed".to_string());
-            (status, 0, summary)
+            if let Some(violation) = post_budget_violation {
+                ("budget_exceeded".to_string(), 1, violation)
+            } else {
+                let status = parsed.status.unwrap_or_else(|| "completed".to_string());
+                let summary = parsed
+                    .answer
+                    .or(parsed.text_fallback)
+                    .unwrap_or_else(|| "completed".to_string());
+                (status, 0, summary)
+            }
         }
         ChildWaitState::Exited(raw_exit_code) => {
-            let status = parsed.status.unwrap_or_else(|| "failed".to_string());
-            let summary = parsed
-                .errors
-                .first()
-                .cloned()
+            let status = if post_budget_violation.is_some() {
+                "budget_exceeded".to_string()
+            } else {
+                parsed.status.unwrap_or_else(|| "failed".to_string())
+            };
+            let summary = post_budget_violation
+                .or_else(|| parsed.errors.first().cloned())
                 .or(parsed.answer)
                 .or(parsed.text_fallback)
                 .unwrap_or_else(|| format!("exited with status {raw_exit_code}"));
@@ -298,8 +487,8 @@ pub async fn execute_workflow_run_cancellable(
         }
     };
 
-    let entry = WorkflowRunLogEntry {
-        run_id,
+    let mut entry = WorkflowRunLogEntry {
+        run_id: run_id.clone(),
         workflow_id: manifest.id.clone(),
         started_at,
         finished_at,
@@ -308,20 +497,68 @@ pub async fn execute_workflow_run_cancellable(
         status,
         summary: scrub_and_bound_text(&summary, 4_000),
         stderr_excerpt: scrub_and_bound_text(&stderr_text, 2_000),
-        ephemeral: true,
+        ephemeral: cron_ctx.is_none(),
         trust: manifest.trust.as_str().to_string(),
         model_profile: manifest.model_profile.clone(),
         tool_calls: parsed.tool_calls,
         usage: parsed.usage,
     };
 
-    persist_outcome(store, manifest, entry)
+    if let Some(ctx) = cron_ctx {
+        let outcome = finalize_stateful_cron_stream_run(
+            &ctx.projects_root,
+            &ctx.spec,
+            ctx.record,
+            ctx.lease,
+            &run_id,
+            &log_path_preview.display().to_string(),
+            entry.exit_code == 0,
+            observed_cost,
+            &entry.summary,
+            parsed.checkpoint_ref,
+            parsed.rollout_id,
+        )?;
+        if outcome.transitioned_to_paused_error {
+            entry.status = "paused_error".to_string();
+        }
+        persist_log_only(store, manifest, entry)
+    } else {
+        persist_outcome(store, manifest, entry)
+    }
+}
+
+fn validate_live_cron_grants(store: &WorkflowStore, manifest: &WorkflowManifest) -> Result<()> {
+    if manifest.mounts.is_empty() {
+        return Ok(());
+    }
+    let grants_path = store
+        .host_mount_grants_path()
+        .context("stateful cron_stream requires host-mount grants store for live revalidation")?;
+    let grant_store = alan_os_host::SavedProjectGrantStore::from_path(grants_path);
+    for grant_id in &manifest.mounts {
+        grant_store.revalidate_grant(grant_id)?;
+    }
+    Ok(())
 }
 
 enum ChildWaitState {
     Exited(i32),
     TimedOut,
     Cancelled,
+    BudgetExceeded,
+}
+
+fn persist_log_only(
+    store: &WorkflowStore,
+    manifest: &WorkflowManifest,
+    entry: WorkflowRunLogEntry,
+) -> Result<WorkflowRunOutcome> {
+    let log_path = append_run_log(store, &entry)?;
+    let persisted_entry = super::logs::latest_run_log(store, &manifest.id)?.unwrap_or(entry);
+    Ok(WorkflowRunOutcome {
+        entry: persisted_entry,
+        log_path,
+    })
 }
 
 fn persist_outcome(
@@ -498,6 +735,8 @@ struct ParsedRunOutput {
     errors: Vec<String>,
     tool_calls: u64,
     usage: Option<WorkflowRunUsage>,
+    rollout_id: Option<String>,
+    checkpoint_ref: Option<String>,
 }
 
 fn parse_run_output(stdout: &str, expect_json: bool) -> ParsedRunOutput {
@@ -508,6 +747,8 @@ fn parse_run_output(stdout: &str, expect_json: bool) -> ParsedRunOutput {
         errors: Vec::new(),
         tool_calls: 0,
         usage: None,
+        rollout_id: None,
+        checkpoint_ref: None,
     };
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
@@ -556,6 +797,18 @@ fn parse_run_output(stdout: &str, expect_json: bool) -> ParsedRunOutput {
                         });
                     }
                 }
+                "session_started" | "checkpoint" => {
+                    if let Some(rollout) = value.get("rollout_id").and_then(Value::as_str)
+                        && !rollout.trim().is_empty()
+                    {
+                        parsed.rollout_id = Some(rollout.to_string());
+                    }
+                    if let Some(ckpt) = value.get("checkpoint_ref").and_then(Value::as_str)
+                        && !ckpt.trim().is_empty()
+                    {
+                        parsed.checkpoint_ref = Some(ckpt.to_string());
+                    }
+                }
                 "turn_finished" => {
                     if let Some(status) = value.get("status").and_then(Value::as_str) {
                         parsed.status = Some(status.to_string());
@@ -564,6 +817,16 @@ fn parse_run_output(stdout: &str, expect_json: bool) -> ParsedRunOutput {
                         && !answer.trim().is_empty()
                     {
                         parsed.answer = Some(answer.to_string());
+                    }
+                    if let Some(rollout) = value.get("rollout_id").and_then(Value::as_str)
+                        && !rollout.trim().is_empty()
+                    {
+                        parsed.rollout_id = Some(rollout.to_string());
+                    }
+                    if let Some(ckpt) = value.get("checkpoint_ref").and_then(Value::as_str)
+                        && !ckpt.trim().is_empty()
+                    {
+                        parsed.checkpoint_ref = Some(ckpt.to_string());
                     }
                 }
                 "error" => {
@@ -586,6 +849,60 @@ fn parse_run_output(stdout: &str, expect_json: bool) -> ParsedRunOutput {
     }
 
     parsed
+}
+
+async fn wait_for_budget(notify: &Option<Arc<Notify>>) {
+    let Some(notify) = notify.as_ref() else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    notify.notified().await;
+}
+
+async fn read_bounded_stdout_with_budget<R: tokio::io::AsyncRead + Unpin>(
+    pipe: Option<R>,
+    limit: usize,
+    budget_limit_usd: Option<f64>,
+    budget_notify: Option<Arc<Notify>>,
+) -> Vec<u8> {
+    let Some(mut reader) = pipe else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut line_buf = Vec::new();
+    let mut buf = [0u8; 4_096];
+    let mut triggered = false;
+    loop {
+        match reader.read(&mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                if out.len() < limit {
+                    let take = (limit - out.len()).min(n);
+                    out.extend_from_slice(&buf[..take]);
+                }
+                if !triggered
+                    && let (Some(limit_usd), Some(notify)) =
+                        (budget_limit_usd, budget_notify.as_ref())
+                {
+                    line_buf.extend_from_slice(&buf[..n]);
+                    while let Some(pos) = line_buf.iter().position(|b| *b == b'\n') {
+                        let line_bytes: Vec<u8> = line_buf.drain(..=pos).collect();
+                        if let Ok(text) = std::str::from_utf8(&line_bytes)
+                            && let Ok(val) = serde_json::from_str::<Value>(text.trim())
+                            && val.get("type").and_then(Value::as_str) == Some("usage")
+                            && let Some(cost) = val.get("cost_usd").and_then(Value::as_f64)
+                            && check_per_run_budget(Some(limit_usd), Some(cost)).is_some()
+                        {
+                            triggered = true;
+                            notify.notify_waiters();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 async fn read_bounded_stream<R: tokio::io::AsyncRead + Unpin>(

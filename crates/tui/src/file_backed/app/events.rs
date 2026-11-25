@@ -40,6 +40,10 @@ pub(in crate::file_backed) enum FileBackedAction {
     DeleteProjectSummary {
         expected_revision: Option<u64>,
     },
+    RollbackProjectSummary {
+        target_revision: Option<u64>,
+        expected_revision: Option<u64>,
+    },
     LoginListProviders {
         generation: u64,
     },

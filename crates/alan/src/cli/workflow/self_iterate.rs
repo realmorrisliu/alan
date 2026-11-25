@@ -127,6 +127,7 @@ pub fn build_self_iterate_manifest(args: &InitSelfIterateArgs) -> Result<Workflo
         timeout_secs: Some(args.timeout_secs),
         trigger_allowlist: Some(trigger_allowlist),
         release_gate: Some(release_gate),
+        cron_stream: None,
     };
     manifest.validate()?;
     Ok(manifest)
