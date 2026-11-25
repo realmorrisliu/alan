@@ -312,7 +312,7 @@ async fn wait_for_stdio_json_answer(
                 }
                 if snapshot.completion.is_none() && snapshot.waiting_for_response {
                     break Err(anyhow::anyhow!(
-                        "Agent task needs interactive input; attach with the TTY renderer"
+                        "Agent task needs interactive input; attach with the TTY renderer (or for workspace access in one-shot mode, save a grant with `alan host grant save <id> <path>` and pass `--grant <id>`)"
                     ));
                 }
                 stdio_completion::refresh_answer_after_completion(

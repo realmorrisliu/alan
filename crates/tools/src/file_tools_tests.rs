@@ -133,6 +133,54 @@ async fn test_read_file_offset_beyond_content() {
 }
 
 #[tokio::test]
+async fn test_read_file_caps_large_multiline_output_inline_for_clean_offset_paging() {
+    let temp = TempDir::new().unwrap();
+    let mount_root = temp.path().to_path_buf();
+
+    // 400 lines * ~100 bytes = ~40KB (> MAX_TEXT_READ_BYTES = 20_000, > MAX_INLINE_EVIDENCE_BYTES = 30_000)
+    let mut lines = String::new();
+    for idx in 1..=400 {
+        lines.push_str(&format!("line-{idx:03} {}\n", "x".repeat(90)));
+    }
+    tokio::fs::write(mount_root.join("large.txt"), &lines)
+        .await
+        .unwrap();
+
+    let tool = ReadFileTool::new();
+    let config = Arc::new(Config::default());
+    let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
+
+    let first = tool
+        .execute(json!({"path": "large.txt"}), &ctx)
+        .await
+        .unwrap();
+    assert_eq!(first["start_line"], 1);
+    let end_1 = first["end_line"].as_u64().unwrap();
+    assert!(end_1 < 400);
+    assert_eq!(first["truncated"], true);
+    assert!(
+        serde_json::to_vec(&first).unwrap().len() < 30_000,
+        "first page should stay below evidence projection threshold"
+    );
+
+    let second = tool
+        .execute(json!({"path": "large.txt", "offset": end_1 + 1}), &ctx)
+        .await
+        .unwrap();
+    assert_eq!(second["start_line"], end_1 + 1);
+    let expected_prefix = format!("{}| line-{:03}", end_1 + 1, end_1 + 1);
+    assert!(
+        second["content"]
+            .as_str()
+            .unwrap()
+            .starts_with(&expected_prefix),
+        "second page must start at line {}, got: {}",
+        end_1 + 1,
+        &second["content"].as_str().unwrap()[..80]
+    );
+}
+
+#[tokio::test]
 async fn test_read_file_not_found() {
     let temp = TempDir::new().unwrap();
     let mount_root = temp.path().to_path_buf();

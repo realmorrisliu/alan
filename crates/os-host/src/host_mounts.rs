@@ -5,16 +5,15 @@
 
 #[path = "host_mounts/saved_grants.rs"]
 pub mod saved_grants;
+#[path = "host_mounts/shell_sandbox.rs"]
+mod shell_sandbox;
 #[path = "host_mounts/text_projection.rs"]
 mod text_projection;
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use alan_agent_engine::tools::{
-    PROTECTED_SUBPATHS, ReifiedMountAccess, Sandbox, SandboxHostMount, SandboxSpec,
-    ToolExecutionAdapter,
-};
+use alan_agent_engine::tools::{PROTECTED_SUBPATHS, Sandbox, SandboxSpec, ToolExecutionAdapter};
 use alan_ap::InProcessTransport;
 use alan_hostfs::{HostDirAccess, HostDirFs, HostDirPolicy};
 use alan_kernel::Access;
@@ -105,9 +104,17 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     }
 
     fn cwd(&self) -> Result<PathBuf> {
-        self.cwd
-            .clone()
-            .context("Process cwd is outside delegated Host Mounts")
+        self.cwd.clone().with_context(|| {
+            if self.mounts.is_empty() {
+                "Process cwd is outside delegated Host Mounts".to_string()
+            } else {
+                format!(
+                    "Process cwd `{}` is outside delegated Host Mounts (available mounts: {}). Pass `cwd` to `bash` or select a mounted directory.",
+                    self.namespace_cwd.display(),
+                    shell_sandbox::format_available_mounts(&self.mounts)
+                )
+            }
+        })
     }
 
     fn resolve_path(&self, namespace_cwd: &Path, path: &Path) -> Result<PathBuf> {
@@ -192,6 +199,11 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     fn shell_sandbox(&self) -> Result<Sandbox> {
         Ok(self.shell_sandbox.clone())
     }
+
+    fn shell_execution_at(&self, namespace_cwd: &Path, path: &Path) -> Result<(PathBuf, Sandbox)> {
+        let resolved_ns = self.resolve_directory(namespace_cwd, path)?;
+        shell_sandbox::resolve_shell_execution_for_directory(&self.mounts, &resolved_ns)
+    }
 }
 
 impl HostMountExportAdapter for NativeHostMountExportAdapter {
@@ -260,42 +272,8 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
             .strip_prefix(&selected.namespace_path)
             .ok()
             .map(|suffix| selected.host_path.join(suffix));
-        let sandbox_mounts = mounts
-            .iter()
-            .map(|mount| SandboxHostMount {
-                namespace_path: mount.namespace_path.clone(),
-                host_path: mount.host_path.clone(),
-                access: match mount.access {
-                    HostMountAccess::ReadOnly => ReifiedMountAccess::ReadOnly,
-                    HostMountAccess::ReadWrite => ReifiedMountAccess::ReadWrite,
-                },
-            })
-            .collect::<Vec<_>>();
-        let shell_mount = sandbox_mounts
-            .iter()
-            .find(|mount| mount.namespace_path == selected.namespace_path)
-            .expect("selected grant is in the native projection");
-        // Keep the cwd grant first for command/runtime inspection.
-        let mut shell_mounts = vec![shell_mount.clone()];
-        shell_mounts.extend(
-            sandbox_mounts
-                .iter()
-                .filter(|mount| {
-                    mount.access == ReifiedMountAccess::ReadOnly
-                        && mount.namespace_path != selected.namespace_path
-                })
-                .cloned(),
-        );
-        let excluded_roots = mounts
-            .iter()
-            .filter(|mount| {
-                mount.access == HostMountAccess::ReadWrite
-                    && !mount.host_path.starts_with(&selected.host_path)
-            })
-            .map(|mount| mount.host_path.clone())
-            .collect();
-        let shell_sandbox = Sandbox::from_spec(SandboxSpec::from_host_mounts(&shell_mounts))
-            .with_excluded_host_roots(excluded_roots);
+        let sandbox_mounts = shell_sandbox::sandbox_host_mounts(&mounts);
+        let shell_sandbox = shell_sandbox::build_shell_sandbox_for_mount(&mounts, selected);
         Ok(Arc::new(NativeToolExecutionAdapter {
             mounts,
             namespace_cwd,

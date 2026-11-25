@@ -286,3 +286,86 @@ async fn native_export_enforces_protected_subpath_writes_and_allows_project_edit
         "fn main() { println!(\"ok\"); }\n"
     );
 }
+
+#[tokio::test]
+async fn shell_execution_at_resolves_subdirectory_or_sibling_mount_with_single_grant_isolation() {
+    let project = tempfile::tempdir().unwrap();
+    let sub = project.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let dependency = tempfile::tempdir().unwrap();
+
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/dependency",
+        HostMountAccess::ReadOnly,
+        dependency.path(),
+    )
+    .await;
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadWrite,
+        project.path(),
+    )
+    .await;
+    approve(
+        &service,
+        7,
+        "/mnt/other",
+        HostMountAccess::ReadWrite,
+        other.path(),
+    )
+    .await;
+
+    // Even when namespace_cwd is `/`, cwd() surfaces available mounts and shell_execution_at
+    // resolves an explicit mount directory with strict single-RW-mount sandbox isolation.
+    let root_binding = service.reconcile(7, binding("/")).unwrap();
+    let root_adapter = root_binding.adapter().unwrap();
+    let root_err = root_adapter.cwd().unwrap_err().to_string();
+    assert!(
+        root_err.contains("outside delegated Host Mounts"),
+        "{root_err}"
+    );
+    assert!(root_err.contains("/mnt/project"), "{root_err}");
+
+    let (other_host, other_sandbox) = root_adapter
+        .shell_execution_at(&root_binding.namespace_cwd, Path::new("/mnt/other"))
+        .unwrap();
+    assert_eq!(other_host, std::fs::canonicalize(other.path()).unwrap());
+    assert!(other_sandbox.is_writable(other.path()));
+    assert!(!other_sandbox.is_writable(project.path()));
+    assert!(!other_sandbox.is_readable(project.path()));
+    assert!(other_sandbox.is_readable(dependency.path()));
+
+    // Relative cwd inside /mnt/project resolves /mnt/project/sub while excluding /mnt/other.
+    let proj_binding = service.reconcile(7, binding("/mnt/project")).unwrap();
+    let (sub_host, sub_sandbox) = proj_binding
+        .adapter()
+        .unwrap()
+        .shell_execution_at(&proj_binding.namespace_cwd, Path::new("sub"))
+        .unwrap();
+    assert_eq!(sub_host, std::fs::canonicalize(&sub).unwrap());
+    assert!(sub_sandbox.is_writable(&sub));
+    assert!(!sub_sandbox.is_writable(other.path()));
+
+    // `/` and relative escapes fail closed.
+    assert!(
+        proj_binding
+            .adapter()
+            .unwrap()
+            .shell_execution_at(&proj_binding.namespace_cwd, Path::new("/"))
+            .is_err()
+    );
+    assert!(
+        proj_binding
+            .adapter()
+            .unwrap()
+            .shell_execution_at(&proj_binding.namespace_cwd, Path::new("../other"))
+            .is_err()
+    );
+}

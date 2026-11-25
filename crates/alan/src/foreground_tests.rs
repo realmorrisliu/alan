@@ -327,3 +327,106 @@ async fn boot_foreground_accepts_project_startup_context_and_respects_ephemeral(
         .unwrap();
     host_ephemeral.shutdown().await.unwrap();
 }
+
+#[test]
+fn oneshot_grant_cwd_resolves_grants_subdirs_and_fails_closed_on_ungranted_cwd() {
+    use alan_os_host::SavedProjectGrantStore;
+    use alan_service_manager::HostMountAccess;
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = SavedProjectGrantStore::from_path(temp.path().join("grants.json"));
+    let repo = temp.path().join("repo");
+    let sub = repo.join("crates/foo");
+    let docs = temp.path().join("docs");
+    let ungranted = temp.path().join("ungranted");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::create_dir_all(&ungranted).unwrap();
+
+    let canonical_repo = std::fs::canonicalize(&repo).unwrap();
+    let canonical_sub = std::fs::canonicalize(&sub).unwrap();
+    let canonical_docs = std::fs::canonicalize(&docs).unwrap();
+
+    store
+        .save_grant("docs", &docs, HostMountAccess::ReadOnly, None, Vec::new())
+        .unwrap();
+    store
+        .save_grant("repo", &repo, HostMountAccess::ReadWrite, None, Vec::new())
+        .unwrap();
+
+    // No grants and no explicit --cwd: stays None so non-workspace prompts work.
+    assert_eq!(
+        oneshot_cwd::resolve_oneshot_grant_cwd(Some(&store), &[], None, Some(&ungranted)).unwrap(),
+        None
+    );
+
+    // Explicit --cwd without --grant fails closed and suggests the matching saved grant.
+    let err = oneshot_cwd::resolve_oneshot_grant_cwd(Some(&store), &[], Some(&sub), None)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("--grant repo"), "{err}");
+    assert!(!err.contains("attach with the TTY renderer"), "{err}");
+
+    // Explicit --cwd with no saved grant suggests `alan host grant save` + `--grant`.
+    let err_new = oneshot_cwd::resolve_oneshot_grant_cwd(Some(&store), &[], Some(&ungranted), None)
+        .unwrap_err()
+        .to_string();
+    assert!(err_new.contains("alan host grant save"), "{err_new}");
+    assert!(err_new.contains("--grant <id>"), "{err_new}");
+
+    // --grant with unrelated ambient cwd prefers the ReadWrite grant root.
+    let resolved_rw = oneshot_cwd::resolve_oneshot_grant_cwd(
+        Some(&store),
+        &["docs".to_string(), "repo".to_string()],
+        None,
+        Some(&ungranted),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        resolved_rw.namespace_path,
+        PathBuf::from("/mnt/grants/repo")
+    );
+    assert_eq!(resolved_rw.host_path, canonical_repo);
+
+    // --grant with ambient cwd inside grant maps to subdirectory.
+    let resolved_ambient = oneshot_cwd::resolve_oneshot_grant_cwd(
+        Some(&store),
+        &["repo".to_string()],
+        None,
+        Some(&sub),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        resolved_ambient.namespace_path,
+        PathBuf::from("/mnt/grants/repo/crates/foo")
+    );
+    assert_eq!(resolved_ambient.host_path, canonical_sub);
+
+    // --grant with explicit --cwd inside ReadOnly grant maps to that grant.
+    let resolved_docs = oneshot_cwd::resolve_oneshot_grant_cwd(
+        Some(&store),
+        &["docs".to_string(), "repo".to_string()],
+        Some(Path::new("/mnt/grants/docs")),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        resolved_docs.namespace_path,
+        PathBuf::from("/mnt/grants/docs")
+    );
+    assert_eq!(resolved_docs.host_path, canonical_docs);
+
+    // --grant with explicit --cwd outside activated grants fails closed.
+    assert!(
+        oneshot_cwd::resolve_oneshot_grant_cwd(
+            Some(&store),
+            &["repo".to_string()],
+            Some(&ungranted),
+            None,
+        )
+        .is_err()
+    );
+}

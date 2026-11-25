@@ -75,7 +75,8 @@ fn doctor_cli_empty_stores_is_readonly_and_fast() {
 
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["healthy"], true);
-    assert_eq!(report["version"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["version"]["version"], env!("ALAN_VERSION"));
+    assert_eq!(report["version"]["long_version"], env!("ALAN_LONG_VERSION"));
     assert_eq!(report["environment"]["system_store"]["exists"], false);
     assert_eq!(report["environment"]["system_store"]["writable"], true);
     assert_eq!(
