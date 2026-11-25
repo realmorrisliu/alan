@@ -64,6 +64,7 @@ Consumers:
   - if Host did not touch that path since clone creation, apply the workspace change;
   - if Host also modified, created, or deleted that path cleanly in conflicting fashion (`workspace_now != host_now && host_now != base`), **fail closed with a typed conflict list** instead of overwriting concurrent Host edits.
 - **Non-Destructive Alternative Exports**: the user or Root can always export a clean unified `.patch` file (excluding `.git/` and build artifacts) or materialize the winning delta onto a fresh Git branch in the Host repository.
+- **Intent Provenance (`workstream` + `rollout_ref` + `why`)**: exported unified `.patch` headers, System Store sync-back audit records, and optional Git branch commits attach lightweight plain-text provenance metadata (`workstream`, opaque `rollout_ref` / `turn_id`, and a concise 1-line `why` rationale—plus standard `Alan-Workstream:` / `Alan-Rollout:` trailers on opt-in Git branch commits). Operators can trace any code change back to its originating Agent rollout locally without CRDTs, cloud sync, or leaking raw Host backing paths.
 
 ### 3. `/mnt/branch` (`alan-branchfs`) Alignment
 

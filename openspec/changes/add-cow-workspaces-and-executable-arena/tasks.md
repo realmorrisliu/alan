@@ -3,7 +3,7 @@
 ## 1. Phase 1 — Native OS CoW Workspace Substrate (`alan-os-host`)
 
 - [ ] 1.1 Implement native OS CoW workspace lifecycle in `alan-os-host` / Host Mount Service (`clonefile(2)` on macOS APFS, `FICLONE` reflink on Linux Btrfs/XFS, `git worktree` fallback on `EXDEV`/unsupported FS), staged under `System Store/workspaces/` with `st_dev` verification, active clone cap (`max_active_cow_workspaces = 4`), and startup dead-PID orphan GC.
-- [ ] 1.2 Implement lightweight `BaseManifest` capture at clone time (excluding `.git/`, `target/`, `node_modules/` on sync-back) and explicit 3-way conflict-checked sync-back (`base` vs `workspace` vs `host_now`) plus unified `.patch` and new-Git-branch export helpers.
+- [ ] 1.2 Implement lightweight `BaseManifest` capture at clone time (excluding `.git/`, `target/`, `node_modules/` on sync-back), explicit 3-way conflict-checked sync-back (`base` vs `workspace` vs `host_now`), and unified `.patch` / new-Git-branch export helpers attaching `workstream` + `rollout_ref` + `why` intent provenance headers (and optional `Alan-Workstream:` / `Alan-Rollout:` commit trailers).
 - [ ] 1.3 Add unit/integration tests covering `.git/` isolation from child writes, APFS/reflink cloning, `EXDEV`/non-CoW fallback, concurrent Host modification conflict detection (fail-closed), and clean non-Git directory support.
 
 ## 2. Phase 2 — Plan 9 `/mnt/branch` (`alan-branchfs`) Coordination
