@@ -465,6 +465,18 @@ impl HostBootConfig {
         self
     }
 
+    /// Attach an empty in-memory Root Agent Definition descriptor at `/lib/agents/root`
+    /// for ephemeral test hosts that exercise child Agent Process spawning.
+    pub fn with_default_root_agent_definition(mut self) -> Result<Self> {
+        let tree = ProcessFileTree::new(BTreeMap::from([("agent.toml".into(), Vec::new())]))?;
+        self.service_manager.launch_context =
+            self.service_manager.launch_context.clone().with_descriptor(
+                alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR,
+                ProcessDescriptor::with_file_tree("/lib/agents/root", tree)?,
+            );
+        Ok(self)
+    }
+
     /// Boot an independent in-process instance without a listener or background launcher.
     /// The caller owns the returned manager and must shut it down before exiting.
     pub async fn boot_foreground(self) -> Result<ServiceManager> {

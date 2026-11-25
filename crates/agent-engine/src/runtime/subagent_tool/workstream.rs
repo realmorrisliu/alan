@@ -133,6 +133,13 @@ pub(in crate::runtime) async fn prepare_workstream_launch(
         });
     };
 
+    if runtime.async_workstreams().is_stream_active(stream_name) {
+        return Err(prelaunch_err(
+            "workstream_running",
+            format!("Workstream '{stream_name}' is already running."),
+        ));
+    }
+
     let Some(store) = runtime.workstream_store().cloned() else {
         if request.persistence == Some(WorkstreamPersistence::Persistent) {
             return Err(prelaunch_err(

@@ -91,6 +91,7 @@ pub struct RuntimeHandle {
     recorder: Arc<OnceLock<Option<RolloutRecorder>>>,
     runtime_abort: Option<tokio::task::AbortHandle>,
     operation_cleanup: super::transition::NamespaceOperationCleanup,
+    async_workstreams: super::async_workstreams::AsyncWorkstreamRegistry,
 }
 
 impl RuntimeHandle {
@@ -101,6 +102,7 @@ impl RuntimeHandle {
             recorder: Arc::new(OnceLock::new()),
             runtime_abort: None,
             operation_cleanup: Default::default(),
+            async_workstreams: super::async_workstreams::AsyncWorkstreamRegistry::new(),
         }
     }
 
@@ -135,6 +137,13 @@ impl RuntimeHandle {
             while !runtime_abort.is_finished() {
                 tokio::task::yield_now().await;
             }
+        }
+        if let Err(error) = self
+            .async_workstreams
+            .quiesce_and_flush_all(Duration::from_secs(5))
+            .await
+        {
+            warn!(%error, "Failed to quiesce async child workstreams after runtime exit");
         }
         let cleanup = self.operation_cleanup.finish().await;
         if let Some(recorder) = self.recorder.get().and_then(Option::as_ref) {
@@ -177,10 +186,12 @@ impl RuntimeController {
         ready_rx: oneshot::Receiver<std::result::Result<RuntimeStartupMetadata, String>>,
         recorder: Arc<OnceLock<Option<RolloutRecorder>>>,
         operation_cleanup: super::transition::NamespaceOperationCleanup,
+        async_workstreams: super::async_workstreams::AsyncWorkstreamRegistry,
     ) -> Self {
         let mut handle = RuntimeHandle::new(submission_tx, Some(shutdown_tx));
         handle.recorder = recorder;
         handle.operation_cleanup = operation_cleanup;
+        handle.async_workstreams = async_workstreams;
         handle.runtime_abort = Some(task_handle.abort_handle());
         Self {
             handle,

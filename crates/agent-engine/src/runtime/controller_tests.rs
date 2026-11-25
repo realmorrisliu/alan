@@ -99,6 +99,7 @@ async fn shutdown_drains_and_joins_the_rollout_writer() {
         ready_rx,
         recorder_state,
         Default::default(),
+        Default::default(),
     );
 
     controller.shutdown().await.unwrap();
@@ -154,6 +155,7 @@ async fn external_process_abort_finishes_runtime_before_closing_rollout_writer()
         task,
         ready_rx,
         recorder_state,
+        Default::default(),
         Default::default(),
     );
     let runtime_handle = controller.handle.clone();

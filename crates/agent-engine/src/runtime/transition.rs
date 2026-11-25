@@ -204,6 +204,8 @@ pub(super) fn delegated_skill_runtime(
     let agent_files = state.agent_files();
     let host_mount_requests = state.environment.host_mount_requests();
     let child_run_registry = state.child_run_registry().clone();
+    let async_workstreams = state.environment.async_workstreams().clone();
+    let task_budget_binding = state.environment.task_budget_binding.clone();
     let child_launch = state.child_launch();
     let tool_execution = state.tool_execution();
     let parent_process_path = state.process_path();
@@ -214,6 +216,8 @@ pub(super) fn delegated_skill_runtime(
         child_run_registry,
         parent_process_path,
     )
+    .with_async_workstreams(async_workstreams)
+    .with_task_budget_binding(task_budget_binding)
     .with_workstream_store(workstream_store)
     .with_rollouts_dir(rollouts_dir);
     super::delegated_skill_tool::DelegatedSkillRuntime::new(

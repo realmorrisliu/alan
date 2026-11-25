@@ -325,6 +325,7 @@ mod tests {
             resume: None,
             recovery_rollout: None,
             inherited_resume: false,
+            async_workstream_lease: None,
         };
         let child = parent.child_for_spawn(&req);
         assert_eq!(child.trust_posture, TrustPosture::ConfinedTrusted);

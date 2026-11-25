@@ -313,6 +313,7 @@ fn spawn_with_prepared_runtime_environment(
     _generation_capabilities: crate::llm::ProviderCapabilities,
 ) -> Result<RuntimeController> {
     let operation_cleanup = environment.operation_cleanup.clone();
+    let async_workstreams = environment.async_workstreams().clone();
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
     let (ready_tx, ready_rx) =
@@ -964,6 +965,14 @@ fn spawn_with_prepared_runtime_environment(
             process_path = %state.agent_path(),
             "Agent runtime stopped"
         );
+        if let Err(error) = state
+            .environment
+            .async_workstreams()
+            .quiesce_and_flush_all(Duration::from_secs(5))
+            .await
+        {
+            warn!(%error, "Failed to quiesce async child workstreams on shutdown");
+        }
         state.machine.flush().await;
     });
 
@@ -974,6 +983,7 @@ fn spawn_with_prepared_runtime_environment(
         ready_rx,
         recorder,
         operation_cleanup,
+        async_workstreams,
     ))
 }
 

@@ -32,6 +32,7 @@ use crate::{
 };
 
 mod child_wait;
+mod helpers;
 #[path = "agent_runtime/history_discovery.rs"]
 mod history_discovery;
 mod pause_answer;
@@ -40,6 +41,11 @@ mod process_cleanup;
 mod resume_content;
 #[path = "agent_runtime/root_recovery.rs"]
 mod root_recovery;
+
+use helpers::{
+    commit_clone, project_boot_unit_namespace, read_clone_pid, resolve_child_connection,
+    validate_child_memory_mount, validate_process_cwd,
+};
 pub(crate) mod sessions;
 mod template;
 
@@ -824,8 +830,24 @@ fn child_template(
         .filter_map(|(path, _)| path.strip_prefix("/bin/").map(str::to_string))
         .filter(|name| name != "alan-agent" && name != "q")
         .collect::<Vec<_>>();
+    let task_budget_binding = match request.async_workstream_lease.as_deref() {
+        Some(lease_id) => {
+            ensure!(
+                parent
+                    .process
+                    .agent_config
+                    .runtime_config
+                    .ad_hoc_subagent_spawn_enabled,
+                "only Root Agent Process may launch async workstreams"
+            );
+            parent
+                .task_budget_binding
+                .child_for_async_workstream(lease_id)?
+        }
+        None => parent.task_budget_binding.child()?,
+    };
     Ok(RootAgentTemplate {
-        task_budget_binding: parent.task_budget_binding.child()?,
+        task_budget_binding,
         process,
         resume_persisted_rollout: false,
         resume_rollout_id: None,
@@ -842,66 +864,6 @@ fn child_template(
         llm_connection,
         allow_profile_switch: false,
     })
-}
-
-fn resolve_child_connection(passed: &str, requested: Option<&str>) -> Result<String> {
-    let requested = requested.unwrap_or(passed);
-    ensure!(
-        requested == passed,
-        "Connection '{requested}' was not passed to the child Agent Process by the parent Process; available Connection is '{passed}'."
-    );
-    Ok(requested.to_string())
-}
-
-fn validate_child_memory_mount(
-    namespace: &alan_kernel::Namespace,
-    delegated: bool,
-    memory_path: Option<&str>,
-) -> Result<()> {
-    if !delegated && let Some(memory_path) = memory_path {
-        let memory_path = Path::new(memory_path);
-        ensure!(
-            namespace.describe().into_iter().all(|(mount, _)| {
-                let mount = Path::new(&mount);
-                !mount.starts_with(memory_path) && !memory_path.starts_with(mount)
-            }),
-            "child Agent Process retained a Memory Store mount without the Memory handle"
-        );
-    }
-    Ok(())
-}
-
-fn project_boot_unit_namespace(
-    base: &alan_kernel::Namespace,
-    unit: &BootUnit,
-) -> Result<alan_kernel::Namespace> {
-    crate::runtime::embed_mounts::project_boot_unit_with_caller_mnt(base, unit)
-}
-
-fn validate_process_cwd(namespace: &LiveNamespace, cwd: &str) -> Result<()> {
-    ensure!(
-        cwd == "/" || namespace.snapshot().resolve(cwd).is_ok(),
-        "Agent Process cwd '{cwd}' is outside its namespace"
-    );
-    Ok(())
-}
-
-async fn read_clone_pid(server: &impl FileServer, fid: Fid) -> Result<Pid> {
-    let pid = String::from_utf8(server.read(fid, 0, 64).await?)?
-        .parse::<u64>()
-        .context("Agent Process clone PID is invalid")?;
-    Ok(Pid(pid))
-}
-
-async fn commit_clone(server: &impl FileServer, fid: Fid, exec: &ExecSpec) -> Result<()> {
-    server
-        .write(fid, 0, &serde_json::to_vec(exec)?)
-        .await
-        .context("write Agent Process exec spec")?;
-    server
-        .clunk(fid)
-        .await
-        .context("commit Agent Process through /proc/clone")
 }
 
 fn next_agent_fid() -> Fid {

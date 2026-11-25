@@ -544,3 +544,43 @@ async fn an_exhausted_ancestor_refuses_even_while_paused() {
         "spending the room out, not the pause, is what closes admission"
     );
 }
+
+#[tokio::test]
+async fn async_workstream_lease_is_single_use_and_stays_bound_to_parent_process_stop() {
+    let binding = TaskBudgetBinding::default();
+    assert_eq!(binding.authorize_async_workstream().await.unwrap(), None);
+    assert!(binding.child_for_async_workstream("forged").is_err());
+
+    let mut parent = TaskBudget::start("root-turn".into(), limits(10, 8, 8), None)
+        .await
+        .unwrap();
+    binding.bind(&mut parent).await.unwrap();
+
+    let lease = binding
+        .authorize_async_workstream()
+        .await
+        .unwrap()
+        .expect("active bound budget mints a lease");
+    let child_binding = binding.child_for_async_workstream(&lease).unwrap();
+    assert!(
+        binding.child_for_async_workstream(&lease).is_err(),
+        "lease must be single-use"
+    );
+
+    // Parent turn completing foreground work does not break the async workstream's own budget.
+    parent.finish_foreground().await.unwrap();
+    let mut child_budget = TaskBudget::start_with_parent(
+        "async-child".into(),
+        limits(10, 4, 4),
+        None,
+        child_binding.parent(),
+    )
+    .await
+    .unwrap();
+    child_binding.bind(&mut child_budget).await.unwrap();
+    child_budget.reserve(Admission::Model).await.unwrap();
+
+    // Parent process exit still cancels the child workstream immediately.
+    binding.process_exited();
+    assert!(child_budget.reserve(Admission::Tool).await.is_err());
+}

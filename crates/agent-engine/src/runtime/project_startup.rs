@@ -98,6 +98,91 @@ pub fn render_project_startup_context(context: &ProjectStartupContext) -> Option
     )
 }
 
+/// Reload the read-only Project Ledger section (when configured) and append any live
+/// in-instance async child workstream state so Root sees fresh progress on each turn.
+pub(crate) fn render_live_project_and_async_context(
+    context: Option<&ProjectStartupContext>,
+    async_workstreams: &[super::async_workstreams::AsyncWorkstreamInfo],
+) -> Option<String> {
+    let ledger_section = context.and_then(|ctx| {
+        let ledger = load_project_ledger(&ctx.store.projects_root, &ctx.store.project_key)
+            .unwrap_or_else(|_| ctx.ledger.clone());
+        let unread_inbox =
+            list_unread_inbox_digests(&ctx.store.projects_root, &ctx.store.project_key)
+                .unwrap_or_else(|_| ctx.unread_inbox.clone());
+        format_project_ledger_and_inbox_summary(
+            &ctx.store.project_key,
+            ctx.store.grant_ref.as_deref(),
+            &ledger,
+            &unread_inbox,
+        )
+    });
+    let async_section = format_async_workstreams_summary(async_workstreams);
+    match (ledger_section, async_section) {
+        (Some(mut ledger), Some(async_xml)) => {
+            ledger.push_str("\n\n");
+            ledger.push_str(&async_xml);
+            Some(ledger)
+        }
+        (Some(ledger), None) => Some(ledger),
+        (None, Some(async_xml)) => Some(async_xml),
+        (None, None) => None,
+    }
+}
+
+fn format_async_workstreams_summary(
+    async_workstreams: &[super::async_workstreams::AsyncWorkstreamInfo],
+) -> Option<String> {
+    if async_workstreams.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    let _ = writeln!(
+        &mut out,
+        "<active_async_workstreams authoritative=\"false\" count=\"{}\">",
+        async_workstreams.len()
+    );
+    for entry in async_workstreams {
+        let persistence = match entry.persistence {
+            WorkstreamPersistence::Persistent => "persistent",
+            WorkstreamPersistence::OneOff => "one_off",
+        };
+        let _ = write!(
+            &mut out,
+            "<async_workstream child_pid=\"{}\" process_path=\"{}\" agent_path=\"{}\" role=\"{}\" persistence=\"{}\" status=\"{}\"",
+            escape_xml_attr(&entry.child_pid),
+            escape_xml_attr(&entry.process_path),
+            escape_xml_attr(&entry.agent_path),
+            escape_xml_attr(&entry.role),
+            persistence,
+            entry.state.as_str(),
+        );
+        if let Some(stream_name) = entry.stream_name.as_deref() {
+            let _ = write!(
+                &mut out,
+                " stream_name=\"{}\"",
+                escape_xml_attr(stream_name)
+            );
+        }
+        if let Some(rollout_ref) = entry.rollout_ref.as_deref() {
+            let _ = write!(
+                &mut out,
+                " rollout_ref=\"{}\"",
+                escape_xml_attr(rollout_ref)
+            );
+        }
+        let body = entry
+            .summary
+            .as_deref()
+            .or(entry.scope.as_deref())
+            .map(|text| sanitize_bounded_text(text, MAX_SCOPE_PREVIEW_CHARS))
+            .unwrap_or_default();
+        let _ = writeln!(&mut out, ">{body}</async_workstream>");
+    }
+    out.push_str("</active_async_workstreams>");
+    Some(out)
+}
+
 /// Format a read-only `ProjectLedger` and unread `InboxDigestEntry` summary for Root Agent
 /// initial context.
 ///
@@ -238,6 +323,8 @@ fn sanitize_delimiter_escapes(text: &str) -> String {
     text.replace("</project_ledger", "</_project_ledger")
         .replace("</workstream", "</_workstream")
         .replace("</inbox_entry", "</_inbox_entry")
+        .replace("</active_async_workstreams", "</_active_async_workstreams")
+        .replace("</async_workstream", "</_async_workstream")
 }
 
 fn escape_xml_attr(value: &str) -> String {

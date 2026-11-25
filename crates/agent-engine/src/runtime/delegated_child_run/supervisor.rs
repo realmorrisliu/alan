@@ -103,6 +103,14 @@ impl DelegatedChildRunSupervisor {
         &self.child_run_id
     }
 
+    pub(crate) fn agent_files(&self) -> NamespaceAgentFiles {
+        self.agent_files.clone()
+    }
+
+    pub(crate) fn process_files(&self) -> NamespaceProcessFiles {
+        self.process_files.clone()
+    }
+
     /// A resumed Process republishes the stop it is about to answer. That pause is
     /// not this run's outcome: the answer is already on its way, and its own run
     /// timeout bounds the wait.

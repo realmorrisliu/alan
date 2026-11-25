@@ -45,6 +45,7 @@ pub(super) fn build_subagent_action_metadata(
     });
     if let Some(pid) = child_pid {
         doc["child_pid"] = json!(pid);
+        doc["child_agent_path"] = json!(format!("/agent/{pid}"));
     }
     if let Some(child_run_id) = child_run_id {
         doc["child_run_id"] = json!(child_run_id);
@@ -56,6 +57,26 @@ pub(super) fn build_subagent_action_metadata(
         doc["redactions"] = json!(redactions);
     }
     doc
+}
+
+pub(super) fn attach_workstream_action_metadata(
+    doc: &mut serde_json::Value,
+    stream_name: Option<&str>,
+    persistence: Option<crate::runtime::project_workstreams::WorkstreamPersistence>,
+    background: bool,
+) {
+    if let Some(stream_name) = stream_name {
+        doc["stream_name"] = json!(stream_name);
+    }
+    if let Some(persistence) = persistence {
+        doc["persistence"] = json!(match persistence {
+            crate::runtime::project_workstreams::WorkstreamPersistence::Persistent => "persistent",
+            crate::runtime::project_workstreams::WorkstreamPersistence::OneOff => "one_off",
+        });
+    }
+    if background {
+        doc["background"] = json!(true);
+    }
 }
 
 pub(super) async fn persist_delegated_child_evidence(

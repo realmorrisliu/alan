@@ -106,6 +106,8 @@ pub(super) async fn run_bare_in_foreground_instance(
         .context("listen for Alan foreground interrupt")?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("listen for Alan instance shutdown")?;
+    let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+        .context("listen for Alan terminal hangup")?;
     let shadow_surface = match mode {
         BareRunMode::Interactive { .. } => {
             alan_agent_engine::runtime::EvaluationSurface::Interactive
@@ -393,6 +395,7 @@ pub(super) async fn run_bare_in_foreground_instance(
         }
         => result,
         _ = terminate.recv() => Ok(143),
+        _ = hangup.recv() => Ok(129),
     };
 
     let _ = shutdown.send(());

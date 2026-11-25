@@ -2,6 +2,7 @@
 //!
 //! Drives the agent loop: receive input → LLM generation → tool execution → state transition.
 
+mod async_workstreams;
 mod child_agents;
 mod child_run_termination_tool;
 mod child_runs;
@@ -60,6 +61,7 @@ mod virtual_tool;
 mod virtual_tools;
 pub mod workstream_handoff;
 
+pub use async_workstreams::{AsyncWorkstreamInfo, AsyncWorkstreamRegistry, AsyncWorkstreamStatus};
 pub use child_runs::{
     ChildRunRecord, ChildRunRegistryError, ChildRunStatus, ChildRunTerminationMode,
     ChildRunTerminationRequest,

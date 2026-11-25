@@ -202,6 +202,7 @@ pub struct NamespaceRuntimeEnvironment {
         Arc<std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>>,
     action_recorder: Option<crate::rollout::RolloutRecorder>,
     child_run_registry: super::super::child_runs::ChildRunRegistry,
+    async_workstreams: super::super::async_workstreams::AsyncWorkstreamRegistry,
     pub(crate) model_bindings:
         Arc<tokio::sync::Mutex<super::super::model_binding::ProcessBindings>>,
     // Active turn snapshot is independent of async catalog capture/selection. Never held across await.
@@ -371,6 +372,7 @@ impl NamespaceRuntimeEnvironment {
             )),
             action_recorder: None,
             child_run_registry: super::super::child_runs::ChildRunRegistry::default(),
+            async_workstreams: super::super::async_workstreams::AsyncWorkstreamRegistry::new(),
         }
     }
 
@@ -599,6 +601,11 @@ impl NamespaceRuntimeEnvironment {
     /// Process-local projection registry for delegated child Agent Processes.
     pub(crate) fn child_run_registry(&self) -> &super::super::child_runs::ChildRunRegistry {
         &self.child_run_registry
+    }
+
+    /// Process-local registry for in-instance asynchronously running child workstreams.
+    pub fn async_workstreams(&self) -> &super::super::async_workstreams::AsyncWorkstreamRegistry {
+        &self.async_workstreams
     }
 
     pub fn root_transport(&self) -> InProcessTransport {

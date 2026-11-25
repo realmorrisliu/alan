@@ -40,6 +40,7 @@ mod tests {
             resume: Some("inherited_budget_1".to_string()),
             recovery_rollout: None,
             inherited_resume: inherited,
+            async_workstream_lease: None,
         }
     }
 

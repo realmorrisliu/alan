@@ -662,6 +662,13 @@ impl NamespaceAgentFiles {
                 })
             })
     }
+    pub(crate) async fn write_machine_ctl(&self, command: &str) -> Result<()> {
+        let path = format!("{}/machine/ctl", self.agent_path);
+        self.client()
+            .write_document(&path, command.as_bytes())
+            .await
+    }
+
     pub(crate) async fn write_ui_skill_snapshot(
         &self,
         snapshot: &alan_agent_protocol::UiSkillSnapshot,

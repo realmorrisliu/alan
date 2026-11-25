@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
 use crate::{
+    TaskBudgetBinding,
     agent_machine::AgentMachine,
     runtime::{
+        async_workstreams::AsyncWorkstreamRegistry,
         child_agents::{ChildLaunchRuntime, project_child_task_context},
         child_runs::ChildRunRegistry,
         project_startup::ProjectWorkstreamStoreRef,
@@ -30,6 +32,8 @@ pub(crate) struct DelegatedChildRuntimeInputs {
     child_launch: NamespaceChildLaunch,
     tool_execution: NamespaceToolExecution,
     child_run_registry: ChildRunRegistry,
+    async_workstreams: AsyncWorkstreamRegistry,
+    task_budget_binding: TaskBudgetBinding,
     parent_process_path: String,
     workstream_store: Option<ProjectWorkstreamStoreRef>,
     rollouts_dir: Option<PathBuf>,
@@ -83,6 +87,19 @@ impl<'a> DelegatedSkillRuntime<'a> {
         &self.child_runtime_inputs.child_run_registry
     }
 
+    pub(in crate::runtime) fn async_workstreams(&self) -> &AsyncWorkstreamRegistry {
+        &self.child_runtime_inputs.async_workstreams
+    }
+
+    pub(in crate::runtime) async fn authorize_async_workstream(
+        &self,
+    ) -> anyhow::Result<Option<String>> {
+        self.child_runtime_inputs
+            .task_budget_binding
+            .authorize_async_workstream()
+            .await
+    }
+
     pub(in crate::runtime) fn tool_execution(&self) -> &NamespaceToolExecution {
         &self.child_runtime_inputs.tool_execution
     }
@@ -96,6 +113,14 @@ impl<'a> DelegatedSkillRuntime<'a> {
     }
 
     pub(in crate::runtime) fn child_launch_runtime(&self, spec: &SpawnSpec) -> ChildLaunchRuntime {
+        self.child_launch_runtime_with_lease(spec, None)
+    }
+
+    pub(in crate::runtime) fn child_launch_runtime_with_lease(
+        &self,
+        spec: &SpawnSpec,
+        async_workstream_lease: Option<String>,
+    ) -> ChildLaunchRuntime {
         let (plan_explanation, plan_items) = match self.machine.plan_snapshot() {
             Some(snapshot) => (snapshot.explanation.as_deref(), snapshot.items.as_slice()),
             None => (None, &[][..]),
@@ -115,6 +140,7 @@ impl<'a> DelegatedSkillRuntime<'a> {
             self.prompt_cache.capability_view().cloned(),
             task_context,
         )
+        .with_async_workstream_lease(async_workstream_lease)
     }
 }
 
@@ -129,10 +155,28 @@ impl DelegatedChildRuntimeInputs {
             child_launch,
             tool_execution,
             child_run_registry,
+            async_workstreams: AsyncWorkstreamRegistry::new(),
+            task_budget_binding: TaskBudgetBinding::default(),
             parent_process_path,
             workstream_store: None,
             rollouts_dir: None,
         }
+    }
+
+    pub(crate) fn with_async_workstreams(
+        mut self,
+        async_workstreams: AsyncWorkstreamRegistry,
+    ) -> Self {
+        self.async_workstreams = async_workstreams;
+        self
+    }
+
+    pub(crate) fn with_task_budget_binding(
+        mut self,
+        task_budget_binding: TaskBudgetBinding,
+    ) -> Self {
+        self.task_budget_binding = task_budget_binding;
+        self
     }
 
     pub(crate) fn with_workstream_store(

@@ -271,6 +271,7 @@ impl ChildProcessLaunch<'_> {
                     &self.parent.task_context,
                     attempt_spec.clone(),
                     self.resume,
+                    self.parent.async_workstream_lease.clone(),
                 );
                 Ok((plan, decision, descriptors, request))
             })();
@@ -320,6 +321,7 @@ fn build_child_executable_request(
     task_context: &ChildTaskContext,
     attempt_spec: SpawnSpec,
     resume: Option<&crate::agent_machine::pending_resume::ResumeTarget>,
+    async_workstream_lease: Option<String>,
 ) -> AgentExecutableRequest {
     AgentExecutableRequest {
         initial_task: task_context::build_child_task_text(task_context, &attempt_spec),
@@ -330,6 +332,7 @@ fn build_child_executable_request(
         // Every reconnect with a pending request id is an inherited stop;
         // workstream checkpoint recovery passes an empty request_id for a fresh Op::Turn.
         inherited_resume: resume.is_some_and(|target| !target.request_id.is_empty()),
+        async_workstream_lease,
     }
 }
 
@@ -880,7 +883,7 @@ mod tests {
             child_pid: None,
             rollout_path: Some("/tmp/ws-ckpt.jsonl".to_string()),
         };
-        let ws_req = build_child_executable_request(&ctx, spec(), Some(&ckpt_target));
+        let ws_req = build_child_executable_request(&ctx, spec(), Some(&ckpt_target), None);
         assert_eq!(ws_req.resume, None);
         assert!(!ws_req.inherited_resume);
         assert_eq!(
@@ -893,7 +896,8 @@ mod tests {
             child_pid: Some("9".to_string()),
             rollout_path: Some("/tmp/inherited.jsonl".to_string()),
         };
-        let inherited_req = build_child_executable_request(&ctx, spec(), Some(&inherited_target));
+        let inherited_req =
+            build_child_executable_request(&ctx, spec(), Some(&inherited_target), None);
         assert_eq!(inherited_req.resume.as_deref(), Some("req-1"));
         assert!(inherited_req.inherited_resume);
         assert_eq!(

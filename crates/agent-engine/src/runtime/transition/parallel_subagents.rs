@@ -13,10 +13,12 @@ use tokio_util::sync::CancellationToken;
 
 use super::{RuntimeLoopState, ToolLoopGuard, ToolOrchestratorInputs, delegated_skill_runtime};
 use crate::agent_machine::NormalizedToolCall;
+use crate::runtime::async_workstreams::default_async_child_launch_fn;
 use crate::runtime::subagent_tool::{
-    ExecutedChildSlot, SlotExecutionError, SubagentSpawnFn, commit_executed_slot,
-    default_subagent_spawn_fn, execute_prepared_slot, finalize_action_record,
-    finalize_uncommitted_slot, prepare_delegated_skill_slot, prepare_subagent_slot,
+    ExecutedChildSlot, ExecutedSlotOutcome, SlotExecutionError, SubagentSpawnFn,
+    commit_executed_slot, default_subagent_spawn_fn, execute_prepared_slot_with_async,
+    finalize_action_record, finalize_uncommitted_slot, prepare_delegated_skill_slot,
+    prepare_subagent_slot,
 };
 use crate::runtime::virtual_tool::VirtualToolOutcome;
 
@@ -220,13 +222,35 @@ where
 
     // Spawn and execute all slots concurrently; propagate either parent cancellation immediately.
     let batch_cancel = CancellationToken::new();
+    let async_workstreams = state.environment.async_workstreams().clone();
+    let rollouts_dir = state
+        .runtime_config
+        .store_bindings
+        .as_ref()
+        .map(|stores| stores.rollouts.clone());
+    let child_run_registry = state.child_run_registry().clone();
+    let async_launch = default_async_child_launch_fn();
     let mut join_set = JoinSet::new();
     for slot in prepared {
         let slot_agent_files = agent_files.clone();
+        let slot_async_workstreams = async_workstreams.clone();
+        let slot_rollouts_dir = rollouts_dir.clone();
+        let slot_child_run_registry = child_run_registry.clone();
         let slot_cancel = batch_cancel.clone();
         let slot_spawn = spawn_fn.clone();
+        let slot_async_launch = async_launch.clone();
         join_set.spawn(async move {
-            execute_prepared_slot(slot, slot_agent_files, slot_cancel, slot_spawn).await
+            execute_prepared_slot_with_async(
+                slot,
+                slot_agent_files,
+                slot_async_workstreams,
+                slot_rollouts_dir,
+                slot_child_run_registry,
+                slot_cancel,
+                slot_spawn,
+                slot_async_launch,
+            )
+            .await
         });
     }
 
@@ -280,16 +304,18 @@ where
             crate::runtime::delegated_child_run::ChildRuntimeResult::cancelled_before_launch();
         for remaining in completed_iter {
             finalize_uncommitted_slot(&remaining, rollouts_dir.as_deref(), &cancelled).await;
-            if let Ok(result) = &remaining.outcome {
+            if let Ok(ExecutedSlotOutcome::Completed(result)) = &remaining.outcome {
                 let _ = finalize_action_record(
                     &agent_files,
                     remaining.action_id.as_deref(),
                     &remaining.kind,
                     &remaining.label,
-                    result,
+                    result.as_ref(),
                 )
                 .await;
-            } else if !matches!(remaining.outcome, Err(SlotExecutionError::Prelaunch(_))) {
+            } else if let Err(error) = &remaining.outcome
+                && !matches!(error, SlotExecutionError::Prelaunch(_))
+            {
                 let _ = finalize_action_record(
                     &agent_files,
                     remaining.action_id.as_deref(),

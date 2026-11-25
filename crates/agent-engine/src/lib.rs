@@ -73,7 +73,8 @@ pub use rollout::{
     RolloutItem, RolloutRecorder, ToolCallRecord, process_storage_key,
 };
 pub use runtime::{
-    AgentConfig, AgentProcessConfig, CronStreamPolicy, DomainRecallScope, HandoffDispatchPlan,
+    AgentConfig, AgentProcessConfig, AsyncWorkstreamInfo, AsyncWorkstreamRegistry,
+    AsyncWorkstreamStatus, CronStreamPolicy, DomainRecallScope, HandoffDispatchPlan,
     HandoffDisposition, HookDecision, InboxDigestEntry, InboxDigestStatus, MAX_HANDOFF_HOPS,
     MemoryDomain, MemorySearchHit, ProjectBinding, ProjectContinuitySummary,
     ProjectContinuitySummaryView, ProjectLedger, ProjectStartupContext,

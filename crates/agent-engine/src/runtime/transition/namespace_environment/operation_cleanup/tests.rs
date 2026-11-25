@@ -565,7 +565,13 @@ async fn runtime_exit_reports_uncertain_cleanup_and_still_closes_its_writer() {
     let (shutdown, _) = tokio::sync::mpsc::channel(1);
     let (_, ready) = tokio::sync::oneshot::channel();
     let controller = crate::runtime::RuntimeController::spawned(
-        submission, shutdown, task, ready, recorders, cleanup,
+        submission,
+        shutdown,
+        task,
+        ready,
+        recorders,
+        cleanup,
+        Default::default(),
     );
     let handle = controller.handle.clone();
     drop(controller);
