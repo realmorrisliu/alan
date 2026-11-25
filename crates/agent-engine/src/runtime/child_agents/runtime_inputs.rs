@@ -33,6 +33,7 @@ pub(crate) struct ChildLaunchRuntime {
     pub(super) parent_process_path: String,
     pub(super) capability_view: Option<ResolvedCapabilityView>,
     pub(super) task_context: ChildTaskContext,
+    pub(super) async_workstream_lease: Option<String>,
 }
 
 impl ChildLaunchRuntime {
@@ -51,6 +52,12 @@ impl ChildLaunchRuntime {
             parent_process_path,
             capability_view,
             task_context,
+            async_workstream_lease: None,
         }
+    }
+
+    pub(crate) fn with_async_workstream_lease(mut self, lease: Option<String>) -> Self {
+        self.async_workstream_lease = lease;
+        self
     }
 }

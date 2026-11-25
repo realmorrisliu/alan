@@ -247,6 +247,7 @@ fn test_child_for_spawn_never_inherits_project_startup_context() {
         resume: None,
         recovery_rollout: None,
         inherited_resume: false,
+        async_workstream_lease: None,
     };
     let child = parent.child_for_spawn(&request);
     assert!(child.project_startup_context.is_none());

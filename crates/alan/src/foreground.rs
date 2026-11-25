@@ -3,6 +3,7 @@ use super::*;
 mod issue_submit;
 mod login;
 mod oneshot_cwd;
+mod workstreams;
 
 #[cfg_attr(
     not(test),
@@ -106,6 +107,8 @@ pub(super) async fn run_bare_in_foreground_instance(
         .context("listen for Alan foreground interrupt")?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("listen for Alan instance shutdown")?;
+    let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+        .context("listen for Alan terminal hangup")?;
     let shadow_surface = match mode {
         BareRunMode::Interactive { .. } => {
             alan_agent_engine::runtime::EvaluationSurface::Interactive
@@ -217,15 +220,27 @@ pub(super) async fn run_bare_in_foreground_instance(
                         None
                     };
                     let is_unconfigured = root_model.is_none();
+                    let workstream_root = attachment.root.clone();
                     let mut config = interactive_config_with_posture(
                         attachment.root,
                         root_model,
-                        candidate_cwd,
+                        candidate_cwd.clone(),
                         &store,
                         trust_posture,
                     )?;
                     config.initial_attachments = initial_attachments;
                     config.initial_project_mount = initial_project_mount;
+                    config.initial_workstream_overview = workstreams::load_initial_workstream_overview(
+                        &store,
+                        candidate_cwd.as_deref(),
+                        ephemeral,
+                    );
+                    config.workstream_control = Some(workstreams::build_workstream_control_handler(
+                        store.projects().ok(),
+                        candidate_cwd,
+                        workstream_root,
+                        ephemeral,
+                    ));
                     config.update_notice =
                         cli::update::prepare_passive_tui_update_notice(&store, ephemeral);
                     config.login_control = Some(login::build_login_control_handler(paths.clone()));
@@ -393,6 +408,7 @@ pub(super) async fn run_bare_in_foreground_instance(
         }
         => result,
         _ = terminate.recv() => Ok(143),
+        _ = hangup.recv() => Ok(129),
     };
 
     let _ = shutdown.send(());

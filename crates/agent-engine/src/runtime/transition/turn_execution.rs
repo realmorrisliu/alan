@@ -306,6 +306,17 @@ where
     let resumed_active_skills = matches!(turn_kind, TurnRunKind::ResumeTurn)
         .then(|| state.machine.active_skills().to_vec())
         .filter(|active_skills| !active_skills.is_empty());
+    let live_async_workstreams = state.environment.async_workstreams().list();
+    let live_project_context = (!state.runtime_config.ephemeral_context)
+        .then_some(state.runtime_config.project_startup_context.as_ref())
+        .flatten();
+    let refreshed_ledger = super::super::project_startup::render_live_project_and_async_context(
+        live_project_context,
+        &live_async_workstreams,
+    );
+    state
+        .prompt_cache
+        .set_project_ledger_section(refreshed_ledger);
     let prompt_build = build_domain_prompt_with_skills(
         &mut state.prompt_cache,
         user_input_for_skills.as_deref(),

@@ -2,6 +2,7 @@
 //!
 //! Drives the agent loop: receive input → LLM generation → tool execution → state transition.
 
+mod async_workstreams;
 mod child_agents;
 mod child_run_termination_tool;
 mod child_runs;
@@ -58,7 +59,9 @@ mod turn_support;
 mod ui_surfaces;
 mod virtual_tool;
 mod virtual_tools;
+pub mod workstream_handoff;
 
+pub use async_workstreams::{AsyncWorkstreamInfo, AsyncWorkstreamRegistry, AsyncWorkstreamStatus};
 pub use child_runs::{
     ChildRunRecord, ChildRunRegistryError, ChildRunStatus, ChildRunTerminationMode,
     ChildRunTerminationRequest,
@@ -102,6 +105,15 @@ pub use transition::{
     NamespaceEvaluation, NamespaceEvaluationFailure, NamespaceEvaluationUncertainty,
     NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
     NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
+};
+pub use workstream_handoff::{
+    HandoffDispatchPlan, HandoffDisposition, MAX_HANDOFF_HOPS, ROUTE_DEAD_LETTER_PORT,
+    ROUTE_HANDOFF_VERSION, ROUTE_LOOP_GUARD_RULE, ROUTE_MOUNT_PATH, ROUTE_ROOT_PORT,
+    RouteHandoffKind, RouteHandoffMessage, RouteStreamCursor, RoutedRouteRecord, RoutingReceipt,
+    RoutingReceiptKind, WorkstreamAuthorityProfile, WorkstreamHandoffCoordinator,
+    WorkstreamRouteRuleSpec, default_workstream_route_rules, ensure_workstream_route_rules,
+    ensure_workstream_route_rules_at, read_route_audit_log, read_route_audit_log_at,
+    send_handoff_message, send_handoff_message_at, validate_isolated_handoff_mounts,
 };
 
 // Re-export the memory-promotion job for internal runtime modules.

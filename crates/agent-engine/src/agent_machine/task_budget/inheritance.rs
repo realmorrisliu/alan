@@ -1,5 +1,6 @@
 //! Process-bound access to an existing Machine ledger, never a new task manager.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow, ensure};
@@ -27,6 +28,7 @@ pub struct TaskBudgetBinding {
     current: Arc<Mutex<Option<TaskBudget>>>,
     parent: Option<TaskBudget>,
     process_stop: super::CancellationToken,
+    authorized_workstreams: Arc<Mutex<HashSet<String>>>,
 }
 
 impl TaskBudgetBinding {
@@ -46,6 +48,59 @@ impl TaskBudgetBinding {
             current: Default::default(),
             parent: Some(parent),
             process_stop: self.process_stop.child_token(),
+            authorized_workstreams: Default::default(),
+        })
+    }
+
+    /// Mint a single-use in-memory lease authorizing a Root-dispatched async
+    /// child workstream to run beyond Root's immediate dispatch turn while
+    /// staying bound to the parent Process lifetime (`process_stop`).
+    pub(crate) async fn authorize_async_workstream(&self) -> Result<Option<String>> {
+        ensure!(
+            !self.process_stop.is_cancelled(),
+            "parent Agent Process has exited"
+        );
+        let current = self
+            .current
+            .lock()
+            .expect("task budget binding poisoned")
+            .clone();
+        let Some(budget) = current else {
+            return Ok(None);
+        };
+        let snapshot = budget.snapshot().await;
+        ensure!(
+            snapshot.phase == Phase::Running && !snapshot.foreground_complete,
+            "parent Agent Process task budget is not active"
+        );
+        let lease_id = uuid::Uuid::new_v4().to_string();
+        self.authorized_workstreams
+            .lock()
+            .expect("authorized workstreams mutex poisoned")
+            .insert(lease_id.clone());
+        Ok(Some(lease_id))
+    }
+
+    /// Consume a single-use async workstream lease minted by the trusted Root runtime.
+    pub fn child_for_async_workstream(&self, lease_id: &str) -> Result<Self> {
+        ensure!(
+            !self.process_stop.is_cancelled(),
+            "parent Agent Process has exited"
+        );
+        let removed = self
+            .authorized_workstreams
+            .lock()
+            .expect("authorized workstreams mutex poisoned")
+            .remove(lease_id);
+        ensure!(
+            removed,
+            "child Agent Process async workstream lease is invalid or already consumed"
+        );
+        Ok(Self {
+            current: Default::default(),
+            parent: None,
+            process_stop: self.process_stop.child_token(),
+            authorized_workstreams: Default::default(),
         })
     }
 

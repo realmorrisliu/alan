@@ -268,7 +268,8 @@ impl FileBackedApp {
                 | HistoryCell::Command(_)
                 | HistoryCell::InputTail { .. }
                 | HistoryCell::PendingYield(_)
-                | HistoryCell::ConfirmationReceipt { .. } => {
+                | HistoryCell::ConfirmationReceipt { .. }
+                | HistoryCell::RoutingReceipt { .. } => {
                     return None;
                 }
                 _ => {}

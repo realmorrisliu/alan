@@ -80,6 +80,14 @@ impl RuntimeSubmissionQueues {
         model_name: &str,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     ) {
+        if let Err(err) = state
+            .environment
+            .async_workstreams()
+            .quiesce_for_reset(std::time::Duration::from_secs(5))
+            .await
+        {
+            warn!(error = %format!("{err:#}"), "Failed to quiesce active async workstreams before session reset");
+        }
         let files = state.agent_files();
         let host_mount_requests = state.environment.host_mount_requests();
         if let Err(err) = turn_support::reset_turn_after_cancelling_host_mounts(

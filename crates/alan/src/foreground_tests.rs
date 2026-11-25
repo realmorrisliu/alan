@@ -430,3 +430,136 @@ fn oneshot_grant_cwd_resolves_grants_subdirs_and_fails_closed_on_ungranted_cwd()
         .is_err()
     );
 }
+
+#[tokio::test]
+async fn foreground_workstream_adapter_loads_overview_and_handles_controls() {
+    use alan_agent_engine::{
+        CronStreamPolicy, InboxDigestEntry, InboxDigestStatus, WorkstreamPersistence,
+        WorkstreamRecord, WorkstreamState, bind_project_dir, complete_workstream,
+        load_workstream_record, upsert_workstream, write_inbox_digest,
+    };
+    use alan_tui::{WorkstreamControl, WorkstreamControlResult, WorkstreamStatusKind};
+
+    let temp = tempfile::tempdir().unwrap();
+    let store =
+        alan_os_host::SystemStorePaths::from_root(&temp.path().join("System Store")).unwrap();
+    let projects_root = store.projects().unwrap();
+    let repo = temp.path().join("alan-repo");
+    std::fs::create_dir_all(&repo).unwrap();
+
+    let binding = bind_project_dir(&projects_root, &repo, Some("grant-1".into())).unwrap();
+
+    // Seed 1 idle stream, 1 paused_error stream, and 1 unread inbox entry.
+    let idle_stream = WorkstreamRecord::new(
+        "ui-polish",
+        "Polish status bar",
+        WorkstreamPersistence::Persistent,
+    );
+    upsert_workstream(&projects_root, &binding.project_key, idle_stream).unwrap();
+    complete_workstream(
+        &projects_root,
+        &binding.project_key,
+        "ui-polish",
+        Some("ckpt://1".into()),
+        Some("rollouts/1.jsonl".into()),
+    )
+    .unwrap();
+
+    let mut paused = WorkstreamRecord::new(
+        "cron-audit",
+        "Nightly audit",
+        WorkstreamPersistence::Persistent,
+    );
+    paused.state = WorkstreamState::PausedError;
+    paused.cron_binding = Some(CronStreamPolicy {
+        workflow_id: "nightly".into(),
+        max_consecutive_failures: 3,
+        consecutive_failures: 3,
+        compaction_threshold_tokens: None,
+        per_run_budget_usd: None,
+    });
+    upsert_workstream(&projects_root, &binding.project_key, paused).unwrap();
+
+    write_inbox_digest(
+        &projects_root,
+        &binding.project_key,
+        InboxDigestEntry::new(
+            "run-1",
+            "nightly",
+            Some("cron-audit".into()),
+            InboxDigestStatus::PausedError,
+            "Paused after 3 failures",
+            "/tmp/audit.ndjson",
+        ),
+    )
+    .unwrap();
+
+    // Non-ephemeral loads initial overview; ephemeral returns None.
+    let overview =
+        workstreams::load_initial_workstream_overview(&store, Some(&repo), false).unwrap();
+    assert_eq!(overview.counts.idle, 1);
+    assert_eq!(overview.counts.paused_error, 1);
+    assert_eq!(overview.counts.unread_inbox, 1);
+    assert!(workstreams::load_initial_workstream_overview(&store, Some(&repo), true).is_none());
+
+    // Build handler against a minimal MountFs (no live /agent/<pid> needed for store actions).
+    let ns = alan_kernel::Namespace::new();
+    let mount_fs = Arc::new(alan_kernel::MountFs::new(ns));
+    mount_fs.live_namespace().mount(
+        "/agent",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        alan_kernel::Access::ReadOnly,
+    );
+    let root_transport = alan_ap::InProcessTransport::new(mount_fs);
+
+    let handler = workstreams::build_workstream_control_handler(
+        Some(projects_root.clone()),
+        Some(repo),
+        root_transport,
+        false,
+    );
+
+    // Resume paused_error stream -> transitions to idle and resets consecutive_failures.
+    let WorkstreamControlResult::ActionCompleted { overview, .. } =
+        handler(WorkstreamControl::Resume {
+            name: "cron-audit".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("expected ActionCompleted");
+    };
+    assert_eq!(overview.counts.paused_error, 0);
+    assert_eq!(overview.counts.idle, 2);
+    let reloaded = load_workstream_record(&projects_root, &binding.project_key, "cron-audit")
+        .unwrap()
+        .unwrap();
+    assert_eq!(reloaded.state, WorkstreamState::Idle);
+    assert_eq!(reloaded.cron_binding.unwrap().consecutive_failures, 0);
+
+    // ClearInbox marks unread digests as digested.
+    let WorkstreamControlResult::ActionCompleted { overview, .. } =
+        handler(WorkstreamControl::ClearInbox).await.unwrap()
+    else {
+        panic!("expected ActionCompleted");
+    };
+    assert_eq!(overview.counts.unread_inbox, 0);
+
+    // Archive transitions ui-polish to archived.
+    let WorkstreamControlResult::ActionCompleted { overview, .. } =
+        handler(WorkstreamControl::Archive {
+            name: "ui-polish".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("expected ActionCompleted");
+    };
+    assert_eq!(overview.counts.archived, 1);
+    assert!(
+        overview
+            .streams
+            .iter()
+            .any(|s| s.name == "ui-polish" && s.state == WorkstreamStatusKind::Archived)
+    );
+}

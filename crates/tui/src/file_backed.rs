@@ -63,9 +63,16 @@ mod queue_root_lifetime_tests;
 mod resume_picker;
 mod settings;
 mod settings_flow;
+mod streams;
+mod streams_io;
 pub use settings::{
     SettingsControl, SettingsControlFuture, SettingsControlHandler, SettingsResetScope,
     SettingsResult,
+};
+pub use streams::{
+    WorkstreamControl, WorkstreamControlFuture, WorkstreamControlHandler, WorkstreamControlResult,
+    WorkstreamCountsDto, WorkstreamEntryDto, WorkstreamFocusTarget, WorkstreamInboxEntryDto,
+    WorkstreamOverviewDto, WorkstreamPersistenceKind, WorkstreamStatusKind,
 };
 #[cfg(test)]
 mod skill_descriptor_tests;
@@ -149,6 +156,10 @@ mod project_io;
 #[cfg(test)]
 mod ux_polish_tests;
 use project_dispatch::dispatch_with_pending_submissions;
+use streams_io::{
+    drain_lines, receive_file_backed_event, spawn_control_write, spawn_host_workspace_refresh,
+    unix_time_ms,
+};
 
 const MAX_COMPOSER_LINES: usize = 10;
 const MAX_COMPLETION_ROWS: usize = 6;
@@ -201,6 +212,10 @@ pub struct FileBackedRunConfig {
     pub update_notice: Option<String>,
     /// Effective persisted or binary release channel (`"stable"` or `"beta"`).
     pub release_channel: Option<String>,
+    /// Host-local workstream ledger and focus control handler (`/streams`, `/focus`, `/root`).
+    pub workstream_control: Option<WorkstreamControlHandler>,
+    /// Initial read-only workstream and inbox overview hydrated on frame 1.
+    pub initial_workstream_overview: Option<WorkstreamOverviewDto>,
 }
 
 impl FileBackedRunConfig {
@@ -228,6 +243,8 @@ impl FileBackedRunConfig {
             connection_configured: None,
             update_notice: None,
             release_channel: None,
+            workstream_control: None,
+            initial_workstream_overview: None,
         }
     }
 }
@@ -253,6 +270,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     app.connection_configured = config.connection_configured;
     app.update_notice = config.update_notice.clone();
     app.release_channel = config.release_channel.clone();
+    if let Some(overview) = config.initial_workstream_overview.clone() {
+        app.streams.apply_overview(overview);
+    }
     app.set_issue_repo(config.issue_repo.clone());
     if !config.initial_attachments.is_empty() {
         app.pending_attachments = config.initial_attachments.clone();
@@ -272,7 +292,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     if let Some(history_path) = &config.history_path {
         app.composer = Composer::from_history_path(history_path.clone());
     }
-    let follows_root_agent = config.agent_path == "/agent/root";
+    let initial_follows_root = config.agent_path == "/agent/root";
     let mut pending_root_agent_turns = VecDeque::<PendingRootAgentTurn>::new();
     let mut terminal = Some(TerminalSession::enter()?);
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
@@ -288,8 +308,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     }
 
     let mut watchers = AgentWatchers::start(watch_tails, &config.agent_path, tx.clone());
+    let route_log_watch = streams_io::spawn_route_log_watch(shell.clone(), tx.clone());
     let (root_agent_pid_retry, root_agent_pid_retry_rx) = tokio::sync::watch::channel(());
-    let root_agent_pid_refresh = if follows_root_agent {
+    let root_agent_pid_refresh = if initial_follows_root {
         Some(spawn_root_agent_pid_refresh(
             shell.clone(),
             tx.clone(),
@@ -326,7 +347,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     break;
                 };
                 let was_project_mounted = app.project_host_root.is_some();
+                let follows_root_agent = app.agent_path == "/agent/root";
                 let is_input_completed = matches!(event, FileBackedEvent::Ui(UiEvent::InputCompleted { .. }));
+                let is_route_event = matches!(event, FileBackedEvent::RouteLogLine(_));
                 if let FileBackedEvent::Ui(ref event) = event {
                     observe_root_agent_completion(&mut pending_root_agent_turns, event, &mut app);
                 }
@@ -355,6 +378,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         }
                     }
                     FileBackedEvent::RootAgentPidRefresh(result) => {
+                        if !follows_root_agent {
+                            continue;
+                        }
                         let retry = matches!(&result, Ok(Some(_)));
                         watchers.pending_root_agent_pid_result = Some(result);
                         watchers
@@ -522,6 +548,25 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             }
                         }
                     }
+                    FileBackedEvent::FocusTargetResolved {
+                        requested_name,
+                        result,
+                    } => {
+                        streams_io::handle_focus_target_resolved(
+                            &shell,
+                            &mut watchers,
+                            &mut app,
+                            &mut rx,
+                            &mut pending_root_agent_turns,
+                            &tx,
+                            &model_reads,
+                            &skill_reads,
+                            &usage_reads,
+                            requested_name,
+                            result,
+                        )
+                        .await;
+                    }
                     other => {
                         if let Some(action) = dispatch_with_pending_submissions(
                             &mut app,
@@ -541,7 +586,11 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                             pending_root_agent_turns.push_back(PendingRootAgentTurn {
                                                 input: text.clone(),
                                                 submission_id: record.submission_id.clone(),
-                                                submitted_process: if follows_root_agent { watchers.root_agent_pid } else { app.agent_path.strip_prefix("/agent/").and_then(|pid| pid.parse().ok()) },
+                                                submitted_process: if follows_root_agent {
+                                                    watchers.root_agent_pid
+                                                } else {
+                                                    None
+                                                },
                                                 submitted_at_ms,
                                             });
                                             if let Some(host_root) = app.project_host_root.clone()
@@ -732,6 +781,25 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                 FileBackedAction::CancelIssue => {
                                     if let Some((_, prev)) = active_issue_task.take() { prev.abort(); }
                                 }
+                                action @ (FileBackedAction::StreamsControl { .. }
+                                | FileBackedAction::FocusStream { .. }
+                                | FileBackedAction::FocusRoot) => {
+                                    streams_io::handle_streams_action(
+                                        &shell,
+                                        &config.workstream_control,
+                                        &mut watchers,
+                                        &mut app,
+                                        &mut rx,
+                                        &mut pending_root_agent_turns,
+                                        &tx,
+                                        &model_reads,
+                                        &skill_reads,
+                                        &usage_reads,
+                                        &root_agent_pid_retry,
+                                        action,
+                                    )
+                                    .await;
+                                }
                                 FileBackedAction::Suspend => {
                                     reader_stop.store(true, std::sync::atomic::Ordering::SeqCst);
                                     let _ = terminal_reader.await;
@@ -754,6 +822,17 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             }
                         }
                     }
+                }
+                if (is_input_completed || is_route_event) && config.workstream_control.is_some() {
+                    streams_io::spawn_workstream_control(
+                        shell.clone(),
+                        config.workstream_control.clone(),
+                        app.streams.overview.clone(),
+                        app.streams.live_stream_pids.clone(),
+                        WorkstreamControl::Inspect,
+                        false,
+                        tx.clone(),
+                    );
                 }
                 if let Some(host_root) = app.project_host_root.clone()
                     && (is_input_completed || (!was_project_mounted))
@@ -853,6 +932,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     while jobs.join_next().await.is_some() {}
     watchers.stop().await;
     drop(rx);
+    let _ = route_log_watch.await;
     if let Some(task) = root_agent_pid_refresh {
         let _ = task.await;
     }
@@ -862,85 +942,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
 
     draw_result?;
     Ok(())
-}
-
-async fn receive_file_backed_event(
-    pending_terminal_events: &mut VecDeque<FileBackedEvent>,
-    rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
-) -> Option<FileBackedEvent> {
-    match pending_terminal_events.pop_front() {
-        Some(event) => Some(event),
-        None => rx.recv().await,
-    }
-}
-
-fn spawn_control_write(
-    transport: InProcessTransport,
-    tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
-    agent_path: String,
-    command: String,
-    success_notice: String,
-    error_prefix: String,
-) {
-    tokio::spawn(async move {
-        let shell = alan_shell::Shell::new(transport);
-        let result = write_machine_ctl(&shell, &agent_path, &command)
-            .await
-            .map_err(|err| format!("{err:#}"));
-        let _ = tx
-            .send(FileBackedEvent::ControlWriteCompleted {
-                success_notice,
-                error_prefix,
-                result,
-            })
-            .await;
-    });
-}
-
-fn spawn_host_workspace_refresh(
-    host_root: PathBuf,
-    jobs: &mut tokio::task::JoinSet<()>,
-    tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
-) {
-    git_status::spawn_refresh(host_root.clone(), jobs, tx);
-    let refresh_tx = tx.clone();
-    jobs.spawn(async move {
-        let candidates = tokio::task::spawn_blocking(move || {
-            (
-                crate::build_file_index(&host_root, crate::FILE_INDEX_LIMIT),
-                host_root,
-            )
-        })
-        .await
-        .ok();
-        if let Some((candidates, root)) = candidates {
-            let _ = refresh_tx
-                .send(FileBackedEvent::FileIndexUpdated { root, candidates })
-                .await;
-        }
-    });
-}
-
-fn unix_time_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
-fn drain_lines(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
-    let mut lines = Vec::new();
-    while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
-        let mut line = pending.drain(..=newline).collect::<Vec<_>>();
-        line.pop();
-        if line.last() == Some(&b'\r') {
-            line.pop();
-        }
-        if !line.is_empty() {
-            lines.push(line);
-        }
-    }
-    lines
 }
 
 #[cfg(test)]

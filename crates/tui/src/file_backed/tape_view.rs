@@ -111,6 +111,25 @@ pub(in crate::file_backed) fn build_tape_lines_from_app(app: &FileBackedApp) -> 
                     ),
                 ));
             }
+            HistoryCell::RoutingReceipt {
+                source,
+                target,
+                kind,
+                summary,
+            } => {
+                let detail = summary
+                    .as_deref()
+                    .map(|s| format!(" · {}", single_line_summary(s)))
+                    .unwrap_or_default();
+                entries.push((
+                    "[route]",
+                    format!(
+                        "{kind}: {} -> {}{detail}",
+                        single_line_summary(source),
+                        single_line_summary(target)
+                    ),
+                ));
+            }
             HistoryCell::Error(msg) => entries.push(("[error]", single_line_summary(msg))),
             HistoryCell::Assistant(text) | HistoryCell::AssistantTail { text, .. } => {
                 entries.push(("[out]", format!("{:?}", single_line_summary(text))))

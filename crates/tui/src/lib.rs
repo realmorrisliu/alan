@@ -18,7 +18,10 @@ pub use file_backed::{
     LoginSubmission, ProjectAccess, ProjectControl, ProjectControlFuture, ProjectControlHandler,
     ProjectControlResult, ProjectMountReceipt, SettingsControl, SettingsControlFuture,
     SettingsControlHandler, SettingsResetScope, SettingsResult, StdioTaskOptions,
-    run as run_file_backed, run_stdio_task, run_stdio_task_with_options,
+    WorkstreamControl, WorkstreamControlFuture, WorkstreamControlHandler, WorkstreamControlResult,
+    WorkstreamCountsDto, WorkstreamEntryDto, WorkstreamFocusTarget, WorkstreamInboxEntryDto,
+    WorkstreamOverviewDto, WorkstreamPersistenceKind, WorkstreamStatusKind, run as run_file_backed,
+    run_stdio_task, run_stdio_task_with_options,
 };
 
 /// Maximum number of composer history entries kept in memory.

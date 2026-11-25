@@ -1,6 +1,7 @@
 //! Ad-hoc `spawn_subagent` virtual tool and shared child-batch helpers.
 
 mod batch;
+mod commit;
 mod workstream;
 
 use std::future::Future;
@@ -20,9 +21,14 @@ use crate::agent_machine::NormalizedToolCall;
 use crate::agent_machine::pending_resume::ResumeTarget;
 use crate::llm::ToolDefinition;
 
+#[cfg(test)]
+use super::async_workstreams::AsyncChildLaunchFn;
+use super::async_workstreams::default_async_child_launch_fn;
 use super::child_agents::{ChildLaunchRuntime, spawn_child_runtime_cancellable};
 use super::delegated_child_run::ChildRuntimeResult;
-use super::delegated_skill_evidence::build_subagent_action_metadata;
+use super::delegated_skill_evidence::{
+    attach_workstream_action_metadata, build_subagent_action_metadata,
+};
 use super::delegated_skill_tool::{
     DEFAULT_DELEGATED_TIMEOUT_SECS, DelegatedSkillRuntime, MAX_DELEGATED_HOST_MOUNTS,
     MAX_DELEGATED_PATH_CHARS, MAX_DELEGATED_SKILL_ID_CHARS, MAX_DELEGATED_TASK_CHARS,
@@ -34,10 +40,12 @@ use super::transition::NamespaceAgentFiles;
 use super::virtual_tool::VirtualToolOutcome;
 
 pub(in crate::runtime) use batch::{
-    ExecutedChildSlot, PrelaunchFailure, SlotExecutionError, commit_executed_slot,
-    execute_prepared_slot, finalize_action_record, finalize_uncommitted_slot,
-    prepare_delegated_skill_slot, prepare_subagent_slot,
+    ExecutedChildSlot, ExecutedSlotOutcome, PrelaunchFailure, PreparedChildKind,
+    SlotExecutionError, commit_executed_slot, execute_prepared_slot_with_async,
+    finalize_uncommitted_slot, prepare_delegated_skill_slot, prepare_subagent_slot,
 };
+pub(in crate::runtime) use commit::finalize_action_record;
+pub(in crate::runtime) use workstream::{TrackedWorkstream, finalize_tracked_workstream};
 
 pub(super) const MAX_SUBAGENT_ROLE_CHARS: usize = 120;
 pub(super) const MAX_SUBAGENT_MODEL_CHARS: usize = 120;
@@ -64,6 +72,9 @@ pub(in crate::runtime) struct ActionProgressTracker {
     agent_files: NamespaceAgentFiles,
     action_id: String,
     label: String,
+    stream_name: Option<String>,
+    persistence: Option<WorkstreamPersistence>,
+    background: bool,
 }
 
 impl ActionProgressTracker {
@@ -76,7 +87,22 @@ impl ActionProgressTracker {
             agent_files,
             action_id,
             label,
+            stream_name: None,
+            persistence: None,
+            background: false,
         }
+    }
+
+    pub(in crate::runtime) fn with_workstream_metadata(
+        mut self,
+        stream_name: Option<String>,
+        persistence: Option<WorkstreamPersistence>,
+        background: bool,
+    ) -> Self {
+        self.stream_name = stream_name;
+        self.persistence = persistence;
+        self.background = background;
+        self
     }
 
     pub(in crate::runtime) async fn mark_started(
@@ -85,13 +111,19 @@ impl ActionProgressTracker {
         child_run_id: &str,
         process_path: &str,
     ) {
-        let doc = build_subagent_action_metadata(
+        let mut doc = build_subagent_action_metadata(
             &self.label,
             Some(child_pid),
             Some(child_run_id),
             "running",
             Some(process_path),
             None,
+        );
+        attach_workstream_action_metadata(
+            &mut doc,
+            self.stream_name.as_deref(),
+            self.persistence,
+            self.background,
         );
         let _ = self
             .agent_files
@@ -113,6 +145,7 @@ pub(in crate::runtime) struct SubagentSpawnRequest {
     pub(in crate::runtime) stream_name: Option<String>,
     pub(in crate::runtime) persistence: Option<WorkstreamPersistence>,
     pub(in crate::runtime) scope: Option<String>,
+    pub(in crate::runtime) background: bool,
 }
 
 impl SubagentSpawnRequest {
@@ -194,6 +227,10 @@ pub(super) fn spawn_subagent_tool_definition() -> ToolDefinition {
                     "description": "Optional concise responsibility summary recorded for the named workstream in the Project Ledger.",
                     "minLength": 1,
                     "maxLength": MAX_WORKSTREAM_SCOPE_CHARS
+                },
+                "background": {
+                    "type": "boolean",
+                    "description": "When true, launch this workstream asynchronously on an in-instance background task backed by a child Agent Process and return immediately with its running handle (/proc/<pid>, /agent/<pid>, stream_name) while Root remains interactive."
                 }
             },
             "required": ["role", "task"]
@@ -289,6 +326,10 @@ pub(in crate::runtime) fn parse_subagent_spawn_request(
             }
         }
     };
+    let background = match arguments.get("background") {
+        None | Some(Value::Null) => false,
+        Some(value) => value.as_bool()?,
+    };
     Some(SubagentSpawnRequest {
         role,
         task,
@@ -300,6 +341,7 @@ pub(in crate::runtime) fn parse_subagent_spawn_request(
         stream_name,
         persistence,
         scope,
+        background,
     })
 }
 
@@ -456,11 +498,80 @@ where
         }
     });
 
-    let executed = execute_prepared_slot(
+    let executed = batch::execute_prepared_slot_with_async(
         slot,
         runtime.agent_files.clone(),
+        runtime.async_workstreams().clone(),
+        runtime.rollouts_dir().map(Path::to_path_buf),
+        runtime.child_run_registry().clone(),
         child_cancel.clone(),
         spawn_fn,
+        default_async_child_launch_fn(),
+    )
+    .await;
+    child_cancel.cancel();
+    let _ = watcher.await;
+
+    commit_executed_slot(&mut runtime, executed, cancel, task_cancel, emit).await
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Test helper injects custom async child launcher alongside runtime, call arguments, cancellation tokens, and emitter"
+)]
+pub(in crate::runtime) async fn handle_spawn_subagent_with_async_launch<E, F>(
+    mut runtime: DelegatedSkillRuntime<'_>,
+    subagent_spawn_enabled: bool,
+    tool_call: &NormalizedToolCall,
+    tool_arguments: &Value,
+    cancel: &CancellationToken,
+    task_cancel: &CancellationToken,
+    emit: &mut E,
+    async_launch_fn: AsyncChildLaunchFn,
+) -> Result<VirtualToolOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: Future<Output = ()>,
+{
+    emit(Event::ToolCallStarted {
+        title: None,
+        id: tool_call.id.clone(),
+        name: tool_call.name.clone(),
+        audit: None,
+    })
+    .await;
+
+    let slot = prepare_subagent_slot(
+        &mut runtime,
+        subagent_spawn_enabled,
+        0,
+        tool_call,
+        tool_arguments,
+    )
+    .await?;
+
+    let child_cancel = CancellationToken::new();
+    let cancel_parent = cancel.clone();
+    let cancel_task = task_cancel.clone();
+    let cancel_forward = child_cancel.clone();
+    let watcher = tokio::spawn(async move {
+        tokio::select! {
+            _ = cancel_parent.cancelled() => cancel_forward.cancel(),
+            _ = cancel_task.cancelled() => cancel_forward.cancel(),
+            _ = cancel_forward.cancelled() => {}
+        }
+    });
+
+    let executed = batch::execute_prepared_slot_with_async(
+        slot,
+        runtime.agent_files.clone(),
+        runtime.async_workstreams().clone(),
+        runtime.rollouts_dir().map(Path::to_path_buf),
+        runtime.child_run_registry().clone(),
+        child_cancel.clone(),
+        default_subagent_spawn_fn(),
+        async_launch_fn,
     )
     .await;
     child_cancel.cancel();
@@ -515,6 +626,7 @@ mod tests {
             stream_name: None,
             persistence: None,
             scope: None,
+            background: false,
         };
         let err = resolve_subagent_spawn_spec(Path::new("/mnt/project"), &req).unwrap_err();
         assert_eq!(err.error_kind, "read_only_mount_conflict");
@@ -533,6 +645,7 @@ mod tests {
             stream_name: None,
             persistence: None,
             scope: None,
+            background: false,
         };
         let spec = resolve_subagent_spawn_spec(Path::new("/mnt/project"), &req).unwrap();
         assert_eq!(spec.launch.cwd.as_deref(), Some(Path::new("/")));
