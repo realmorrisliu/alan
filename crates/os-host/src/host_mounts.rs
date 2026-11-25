@@ -309,7 +309,7 @@ pub fn approve_host_mount(
     service.approve_export(request_id, export, provenance, actor)
 }
 
-pub(super) fn native_export(
+pub(crate) fn native_export(
     namespace_path: &str,
     host_path: &Path,
     access: HostMountAccess,
