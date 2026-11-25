@@ -306,6 +306,7 @@ impl HostBootConfig {
                 root_package_bindings,
                 explicit_root_package_bindings: Vec::new(),
                 tool_secret_resolver: Some(Arc::new(secret_store)),
+                workspace_isolation_port: Some(cow_runtime.isolation_adapter().clone()),
             },
             ephemeral_rollout: false,
             no_resume_update: false,
@@ -349,6 +350,7 @@ impl HostBootConfig {
             InProcessTransport::new(runtime.branch_fs().clone()),
             Access::ReadWrite,
         );
+        self.service_manager.workspace_isolation_port = Some(runtime.isolation_adapter().clone());
         self.cow_runtime = Some(runtime);
         self
     }
@@ -532,7 +534,7 @@ impl HostBootConfig {
         let cow_runtime = self.cow_runtime.take();
         let manager = ServiceManager::boot(self.service_manager).await?;
         if let Some(runtime) = cow_runtime.as_ref() {
-            runtime.attach_host_mount(manager.host_mount());
+            runtime.attach_host_mount_and_root_pid(manager.host_mount(), manager.root_pid_atomic());
             runtime.ensure_base_branch().await?;
         }
         if !saved_grants.is_empty() {

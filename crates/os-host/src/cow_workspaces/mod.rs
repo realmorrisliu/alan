@@ -45,7 +45,10 @@ use manifest::{TreeManifest, compute_diff_summary};
 use patch::generate_patch;
 use sync::perform_sync_back;
 
-pub use adapters::{CowArenaWorkspaceAdapter, CowBranchWorkspaceAdapter, CowHostRuntime};
+pub use adapters::{
+    CowArenaWorkspaceAdapter, CowBranchWorkspaceAdapter, CowHostRuntime,
+    CowWorkspaceIsolationAdapter,
+};
 pub use types::{
     CloneFallbackPolicy, ConflictReason, CowWorkspaceConfig, CowWorkspaceError,
     CowWorkspaceSummary, CreateWorkspaceOptions, DEFAULT_COW_EXCLUDES,
@@ -221,6 +224,27 @@ impl CowWorkspaceManager {
             .join(&patch_name)
             .is_file()
             .then_some(patch_name)
+    }
+
+    pub(crate) fn write_evidence_patch(
+        &self,
+        workspace_ref: &WorkspaceRef,
+        provenance: &IntentProvenance,
+    ) -> std::result::Result<String, CowWorkspaceError> {
+        let system_store = {
+            let guard = self.state.lock().unwrap();
+            guard.config.system_store.clone()
+        };
+        let report = self.export_patch(workspace_ref, provenance)?;
+        let evidence_dir = system_store.cow_workspace_evidence()?;
+        fs::create_dir_all(&evidence_dir)?;
+        let patch_file_name = format!("{}.patch", workspace_ref.as_str());
+        write_bytes_atomic(
+            &evidence_dir.join(&patch_file_name),
+            report.patch_text.as_bytes(),
+            "evidence patch",
+        )?;
+        Ok(patch_file_name)
     }
 
     /// Fork an isolated full-tree CoW workspace from `host_root`.

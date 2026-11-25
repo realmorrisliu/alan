@@ -2,6 +2,7 @@
 //! ([`alan_branchfs::BranchWorkspacePort`] and [`alan_agent_engine::ArenaWorkspacePort`])
 //! while keeping raw Host filesystem paths strictly inside `alan-os-host` (`ADR-0050`).
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -10,7 +11,9 @@ use alan_agent_engine::{
     ArenaContenderWorkspace, ArenaExitFlushRegistry, ArenaWinnerFlushOutcome,
     ArenaWinnerFlushRequest, ArenaWorkspaceBackingKind, ArenaWorkspaceInspection,
     ArenaWorkspacePort, BranchFsApClient, DEFAULT_ARENA_CONTENDER_MOUNT_TARGET,
-    ExecutableArenaCoordinator, SpawnHostMount, SpawnMountAccess,
+    ExecutableArenaCoordinator, IsolatedWorkspaceAllocation, IsolatedWorkspaceBacking,
+    IsolatedWorkspaceRequest, SpawnHostMount, SpawnMountAccess, WorkspaceIsolationPort,
+    WorkspaceMergeHandoff, WorkspaceSyncConflict, WorkspaceSyncStatus,
 };
 use alan_ap::InProcessTransport;
 use alan_branchfs::{
@@ -419,25 +422,287 @@ impl ArenaWorkspacePort for CowArenaWorkspaceAdapter {
     }
 }
 
+/// Host-owned adapter implementing M8.3 [`WorkspaceIsolationPort`] atop
+/// [`CowWorkspaceManager`] and [`HostMountService`].
+#[derive(Clone, Debug)]
+pub struct CowWorkspaceIsolationAdapter {
+    manager: CowWorkspaceManager,
+    host_mount: Arc<OnceLock<Arc<HostMountService>>>,
+    parent_pid: Arc<OnceLock<Arc<AtomicU64>>>,
+    source_grants: Arc<Mutex<HashMap<String, String>>>,
+    fallback_policy: CloneFallbackPolicy,
+}
+
+impl CowWorkspaceIsolationAdapter {
+    /// Construct a deferred-binding [`WorkspaceIsolationPort`] adapter for Host boot.
+    pub fn new(manager: CowWorkspaceManager) -> Self {
+        Self {
+            manager,
+            host_mount: Arc::new(OnceLock::new()),
+            parent_pid: Arc::new(OnceLock::new()),
+            source_grants: Arc::new(Mutex::new(HashMap::new())),
+            fallback_policy: CloneFallbackPolicy::Auto,
+        }
+    }
+
+    /// Construct an immediately bound adapter for tests with explicit `host_mount` and `parent_pid`.
+    pub fn with_host_mount_and_pid(
+        manager: CowWorkspaceManager,
+        host_mount: Arc<HostMountService>,
+        parent_pid: Pid,
+    ) -> Self {
+        let adapter = Self::new(manager);
+        adapter.attach(host_mount, Arc::new(AtomicU64::new(parent_pid.0)));
+        adapter
+    }
+
+    /// Attach the live [`HostMountService`] and Root PID atomic once `ServiceManager::boot` finishes.
+    pub fn attach(&self, host_mount: Arc<HostMountService>, root_pid: Arc<AtomicU64>) {
+        let _ = self.host_mount.set(host_mount);
+        let _ = self.parent_pid.set(root_pid);
+    }
+
+    /// Override the clone fallback policy (defaults to [`CloneFallbackPolicy::Auto`]).
+    pub fn with_fallback_policy(mut self, policy: CloneFallbackPolicy) -> Self {
+        self.fallback_policy = policy;
+        self
+    }
+
+    fn require_host_and_pid(&self) -> Result<(Arc<HostMountService>, Pid)> {
+        let host_mount = self.host_mount.get().cloned().ok_or_else(|| {
+            anyhow::anyhow!("HostMountService is not attached to CoW isolation port")
+        })?;
+        let pid_val = self
+            .parent_pid
+            .get()
+            .map(|pid| pid.load(Ordering::Acquire))
+            .filter(|&pid| pid > 0)
+            .ok_or_else(|| anyhow::anyhow!("Root PID is not bound to CoW isolation port"))?;
+        Ok((host_mount, Pid(pid_val)))
+    }
+}
+
+#[async_trait]
+impl WorkspaceIsolationPort for CowWorkspaceIsolationAdapter {
+    async fn allocate_workspace(
+        &self,
+        request: IsolatedWorkspaceRequest,
+    ) -> Result<IsolatedWorkspaceAllocation> {
+        let (host_mount, parent_pid) = self.require_host_and_pid()?;
+        anyhow::ensure!(
+            host_mount.process_holds_grant(parent_pid, &request.source_grant_id),
+            "parent Process {} does not hold active source_grant `{}`",
+            parent_pid.0,
+            request.source_grant_id
+        );
+        let host_root = resolve_grant_host_root(&host_mount, &request.source_grant_id)
+            .map_err(anyhow::Error::msg)?;
+
+        let manager = self.manager.clone();
+        let fallback_policy = self.fallback_policy;
+        let summary = tokio::task::spawn_blocking(move || {
+            manager.create_workspace(
+                &host_root,
+                CreateWorkspaceOptions {
+                    fallback_policy,
+                    ..Default::default()
+                },
+            )
+        })
+        .await??;
+
+        let parent_namespace_path = format!("/mnt/cow-{}", summary.workspace_ref.as_str());
+        let grant = match self.manager.project_into_process(
+            &summary.workspace_ref,
+            &host_mount,
+            parent_pid,
+            &parent_namespace_path,
+            HostMountAccess::ReadWrite,
+        ) {
+            Ok(grant) => grant,
+            Err(err) => {
+                let manager = self.manager.clone();
+                let ws_ref = summary.workspace_ref.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    manager.discard_workspace(&ws_ref, Some(&host_mount), "workstream-rollback")
+                })
+                .await;
+                return Err(err);
+            }
+        };
+
+        let ws_ref_str = summary.workspace_ref.as_str().to_string();
+        self.source_grants
+            .lock()
+            .unwrap()
+            .insert(ws_ref_str.clone(), request.source_grant_id);
+
+        Ok(IsolatedWorkspaceAllocation {
+            workspace_ref: ws_ref_str,
+            backing: to_isolated_backing(summary.backing_kind),
+            narrowed_grant: SpawnHostMount {
+                grant: grant.id,
+                target: request.source_namespace_path,
+                access: SpawnMountAccess::ReadWrite,
+            },
+            branch_ref: None,
+        })
+    }
+
+    async fn collect_handoff(
+        &self,
+        allocation: &IsolatedWorkspaceAllocation,
+        workstream_name: &str,
+        rollout_ref: Option<&str>,
+        why: &str,
+    ) -> Result<WorkspaceMergeHandoff> {
+        let ws_ref = WorkspaceRef::parse(&allocation.workspace_ref)?;
+        let provenance = build_single_line_provenance(
+            Some(workstream_name),
+            rollout_ref,
+            Some(why),
+            "Isolated M8.3 CoW workstream delta",
+        )
+        .map_err(anyhow::Error::msg)?;
+
+        let manager = self.manager.clone();
+        let ws_ref_clone = ws_ref.clone();
+        let provenance_clone = provenance.clone();
+        let (diff, patch_evidence_ref) = tokio::task::spawn_blocking(move || {
+            let diff = manager.diff_summary(&ws_ref_clone)?;
+            let patch_ref = if diff.is_empty() {
+                None
+            } else {
+                let file_name = manager.write_evidence_patch(&ws_ref_clone, &provenance_clone)?;
+                Some(format!("evidence://patches/{file_name}"))
+            };
+            Ok::<_, CowWorkspaceError>((diff, patch_ref))
+        })
+        .await??;
+
+        let changed_files = diff
+            .changed_paths
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        let diff_summary = format_opaque_diff_summary(&diff);
+        validate_no_raw_host_path(&diff_summary)
+            .map_err(|_| anyhow::anyhow!("diff summary unexpectedly contained a raw Host path"))?;
+
+        let source_grant_id = self
+            .source_grants
+            .lock()
+            .unwrap()
+            .get(&allocation.workspace_ref)
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(WorkspaceMergeHandoff {
+            workspace_ref: allocation.workspace_ref.clone(),
+            backing: allocation.backing,
+            source_grant_id,
+            workstream_name: workstream_name.to_string(),
+            rollout_ref: rollout_ref.map(str::to_string),
+            why: why.to_string(),
+            branch_ref: allocation.branch_ref.clone(),
+            changed_files,
+            diff_summary,
+            patch_evidence_ref,
+            sync_status: WorkspaceSyncStatus::PendingMerge,
+            conflicts: Vec::new(),
+        })
+    }
+
+    async fn sync_back(
+        &self,
+        allocation: &IsolatedWorkspaceAllocation,
+        workstream_name: &str,
+        rollout_ref: Option<&str>,
+        why: &str,
+    ) -> Result<WorkspaceMergeHandoff> {
+        let mut handoff = self
+            .collect_handoff(allocation, workstream_name, rollout_ref, why)
+            .await?;
+        if handoff.changed_files.is_empty() {
+            handoff.sync_status = WorkspaceSyncStatus::SyncedBack;
+            return Ok(handoff);
+        }
+
+        let ws_ref = WorkspaceRef::parse(&allocation.workspace_ref)?;
+        let provenance = build_single_line_provenance(
+            Some(workstream_name),
+            rollout_ref,
+            Some(why),
+            "Isolated M8.3 CoW workstream sync-back",
+        )
+        .map_err(anyhow::Error::msg)?;
+
+        let manager = self.manager.clone();
+        let sync_res =
+            tokio::task::spawn_blocking(move || manager.sync_back(&ws_ref, &provenance)).await?;
+
+        match sync_res {
+            Ok(_) => {
+                handoff.sync_status = WorkspaceSyncStatus::SyncedBack;
+                Ok(handoff)
+            }
+            Err(CowWorkspaceError::SyncConflict { conflicts }) => {
+                handoff.sync_status = WorkspaceSyncStatus::ConflictAborted;
+                handoff.conflicts = conflicts
+                    .into_iter()
+                    .map(|c| WorkspaceSyncConflict {
+                        path: c.path,
+                        reason: format!("{:?}", c.reason),
+                    })
+                    .collect();
+                handoff.diff_summary = format!(
+                    "Sync-back aborted fail-closed due to {} concurrent Host conflict(s); patch preserved.",
+                    handoff.conflicts.len()
+                );
+                Ok(handoff)
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    async fn discard_workspace(&self, workspace_ref: &str) -> Result<()> {
+        let ws_ref = WorkspaceRef::parse(workspace_ref)?;
+        self.source_grants.lock().unwrap().remove(workspace_ref);
+        let manager = self.manager.clone();
+        let host_mount = self.host_mount.get().cloned();
+        match tokio::task::spawn_blocking(move || {
+            manager.discard_workspace(&ws_ref, host_mount.as_deref(), "workstream-discard")
+        })
+        .await?
+        {
+            Ok(()) | Err(CowWorkspaceError::UnknownWorkspace(_)) => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    }
+}
+
 /// Host-lifetime bundle holding [`CowWorkspaceManager`], `/mnt/branch` [`BranchFs`],
-/// its [`CowBranchWorkspaceAdapter`], and the [`ArenaExitFlushRegistry`].
+/// its [`CowBranchWorkspaceAdapter`], [`CowWorkspaceIsolationAdapter`], and [`ArenaExitFlushRegistry`].
 #[derive(Clone)]
 pub struct CowHostRuntime {
     manager: CowWorkspaceManager,
     branch_fs: Arc<BranchFs>,
     branch_adapter: Arc<CowBranchWorkspaceAdapter>,
+    isolation_adapter: Arc<CowWorkspaceIsolationAdapter>,
     arena_exit_registry: ArenaExitFlushRegistry,
 }
 
 impl CowHostRuntime {
-    /// Construct a CoW host runtime, binding `/mnt/branch` to `CowBranchWorkspaceAdapter`.
+    /// Construct a CoW host runtime, binding `/mnt/branch` and `WorkspaceIsolationPort`.
     pub fn new(manager: CowWorkspaceManager) -> Self {
         let branch_adapter = Arc::new(CowBranchWorkspaceAdapter::new(manager.clone()));
         let branch_fs = Arc::new(BranchFs::with_workspace_port(branch_adapter.clone()));
+        let isolation_adapter = Arc::new(CowWorkspaceIsolationAdapter::new(manager.clone()));
         Self {
             manager,
             branch_fs,
             branch_adapter,
+            isolation_adapter,
             arena_exit_registry: ArenaExitFlushRegistry::new(),
         }
     }
@@ -454,12 +719,25 @@ impl CowHostRuntime {
         &self.branch_adapter
     }
 
+    pub fn isolation_adapter(&self) -> &Arc<CowWorkspaceIsolationAdapter> {
+        &self.isolation_adapter
+    }
+
     pub fn arena_exit_registry(&self) -> &ArenaExitFlushRegistry {
         &self.arena_exit_registry
     }
 
     pub fn attach_host_mount(&self, host_mount: Arc<HostMountService>) {
         self.branch_adapter.attach_host_mount(host_mount);
+    }
+
+    pub fn attach_host_mount_and_root_pid(
+        &self,
+        host_mount: Arc<HostMountService>,
+        root_pid: Arc<AtomicU64>,
+    ) {
+        self.branch_adapter.attach_host_mount(host_mount.clone());
+        self.isolation_adapter.attach(host_mount, root_pid);
     }
 
     /// Ensure `/mnt/branch/branches/base` exists so `fork` commands targeting `"base"` succeed.
@@ -543,6 +821,15 @@ fn to_arena_backing_kind(backing: WorkspaceBacking) -> ArenaWorkspaceBackingKind
             ArenaWorkspaceBackingKind::NativeCow
         }
         WorkspaceBacking::GitWorktree => ArenaWorkspaceBackingKind::GitWorktree,
+    }
+}
+
+fn to_isolated_backing(backing: WorkspaceBacking) -> IsolatedWorkspaceBacking {
+    match backing {
+        WorkspaceBacking::NativeCow | WorkspaceBacking::SiblingVolumeCow => {
+            IsolatedWorkspaceBacking::OsCowClone
+        }
+        WorkspaceBacking::GitWorktree => IsolatedWorkspaceBacking::GitWorktree,
     }
 }
 

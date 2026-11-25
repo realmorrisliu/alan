@@ -19,10 +19,11 @@ mod secret_store;
 pub use boot::HostBootConfig;
 pub use cow_workspaces::{
     CloneFallbackPolicy, ConflictReason, CowArenaWorkspaceAdapter, CowBranchWorkspaceAdapter,
-    CowHostRuntime, CowWorkspaceConfig, CowWorkspaceError, CowWorkspaceManager,
-    CowWorkspaceSummary, CreateWorkspaceOptions, DiffPathEntry, DiffSummary, ExitFlushReport,
-    FileChangeKind, FlushedWorkspaceEvidence, GcReport, GitBranchExportReport, IntentProvenance,
-    PatchExportReport, SyncBackReport, SyncConflict, WorkspaceBacking, WorkspaceRef,
+    CowHostRuntime, CowWorkspaceConfig, CowWorkspaceError, CowWorkspaceIsolationAdapter,
+    CowWorkspaceManager, CowWorkspaceSummary, CreateWorkspaceOptions, DiffPathEntry, DiffSummary,
+    ExitFlushReport, FileChangeKind, FlushedWorkspaceEvidence, GcReport, GitBranchExportReport,
+    IntentProvenance, PatchExportReport, SyncBackReport, SyncConflict, WorkspaceBacking,
+    WorkspaceRef,
 };
 pub use embed::{
     AgentSessionHandle, EmbedEvent, EmbedEventStream, EmbeddedAlan, EmbeddedConfig, HookDecision,

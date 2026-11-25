@@ -75,6 +75,8 @@ pub(crate) struct AgentRuntimeService {
     next_root_rollout: Mutex<Option<history_discovery::PendingRootRolloutSwitch>>,
     history_bound: tokio::sync::OnceCell<()>,
     pub(crate) service_activation: std::sync::OnceLock<ServiceActivationDeps>,
+    pub(crate) workspace_isolation_port:
+        std::sync::OnceLock<Arc<dyn alan_agent_engine::WorkspaceIsolationPort>>,
 }
 
 struct PendingRootLaunch {
@@ -120,6 +122,7 @@ impl AgentRuntimeService {
             next_root_rollout: Mutex::new(None),
             history_bound: tokio::sync::OnceCell::new(),
             service_activation: std::sync::OnceLock::new(),
+            workspace_isolation_port: std::sync::OnceLock::new(),
         })
     }
 
@@ -461,6 +464,9 @@ impl AgentRuntimeService {
                 launch.namespace.clone(),
                 launch.template.process.trust_posture,
             ));
+        }
+        if let Some(port) = self.workspace_isolation_port.get() {
+            environment = environment.with_workspace_isolation_port(port.clone());
         }
         if let Some(selection) = &launch.template.input_shadow {
             let captured = evaluator.context("selected evaluator was not captured")?;

@@ -8,7 +8,8 @@ use alan_agent_engine::tools::SandboxBackendKind;
 use alan_agent_engine::{
     ArenaContenderRequest, ArenaMode, ArenaSpawnFn, ArenaSubagentOutput, ArenaVerifierRequest,
     BranchFsApClient, DEFAULT_ARENA_CONTENDER_MOUNT_TARGET, ExecutableArenaError,
-    ExecutableArenaRequest, LlmClient, ToolRegistry,
+    ExecutableArenaRequest, IsolatedWorkspaceRequest, LlmClient, ToolRegistry,
+    WorkspaceIsolationPort, WorkspaceSyncStatus,
 };
 use alan_agent_protocol::{SpawnHandle, SpawnMountAccess};
 use alan_ap::InProcessTransport;
@@ -16,8 +17,9 @@ use alan_branchfs::contains_raw_host_path;
 use alan_kernel::{Access, LiveNamespace, MountFs, Namespace, Pid};
 use alan_llm::MockLlmProvider;
 use alan_os_host::{
-    AlanOsHost, CowHostRuntime, CowWorkspaceConfig, CowWorkspaceManager, HostBootConfig,
-    HostEndpointPaths, LocalAttachment, SystemStorePaths, host_mounts,
+    AlanOsHost, CowHostRuntime, CowWorkspaceConfig, CowWorkspaceIsolationAdapter,
+    CowWorkspaceManager, HostBootConfig, HostEndpointPaths, LocalAttachment, SystemStorePaths,
+    host_mounts,
 };
 use alan_service_manager::{HostMountAccess, HostMountService};
 use alan_shell::Shell;
@@ -444,4 +446,176 @@ async fn alan_os_host_boots_mounts_branchfs_and_flushes_cow_on_shutdown() {
         evidence_dir.join(format!("{ws_ref}.patch")).is_file(),
         "expected Host shutdown to flush selected /mnt/branch workspace evidence"
     );
+}
+
+#[tokio::test]
+async fn m83_cow_workspace_isolation_port_handles_clean_sync_and_fail_closed_conflict() {
+    let temp = tempfile::tempdir().unwrap();
+    let host_repo = temp.path().join("project");
+    init_temp_git_repo(&host_repo);
+    let canonical_repo = fs::canonicalize(&host_repo).unwrap();
+
+    let system_store = SystemStorePaths::from_root(&temp.path().join("System Store")).unwrap();
+    let (cow_manager, _) = CowWorkspaceManager::new(
+        CowWorkspaceConfig::new(system_store.clone(), "m83-cow-e2e").unwrap(),
+    )
+    .unwrap();
+
+    let host_mount = HostMountService::new(Arc::new(host_mounts::NativeHostMountExportAdapter));
+    let parent_pid = Pid(77);
+    host_mount.register_process(parent_pid, LiveNamespace::new(Namespace::new()));
+    let req_id = host_mount
+        .request_project_mount(parent_pid, HostMountAccess::ReadWrite)
+        .unwrap();
+    let source_grant = host_mounts::approve_host_mount(
+        &host_mount,
+        &req_id,
+        &canonical_repo,
+        "test-approval",
+        "local-user",
+    )
+    .unwrap();
+
+    let adapter = CowWorkspaceIsolationAdapter::with_host_mount_and_pid(
+        cow_manager.clone(),
+        host_mount.clone(),
+        parent_pid,
+    );
+
+    // 1. Allocate isolated workspace for `write_mode = "cow_workspace"`, mutate via narrowed child mount, sync_back cleanly.
+    let alloc1 = adapter
+        .allocate_workspace(IsolatedWorkspaceRequest {
+            workstream_name: "ws-clean".to_string(),
+            source_grant_id: source_grant.id.clone(),
+            source_namespace_path: PathBuf::from(&source_grant.namespace_path),
+            rollout_ref: Some("rollout-m83-1".to_string()),
+            why: "Clean M8.3 CoW sync-back".to_string(),
+        })
+        .await
+        .unwrap();
+    assert_ne!(alloc1.narrowed_grant.grant, source_grant.id);
+    assert_eq!(
+        alloc1.narrowed_grant.target,
+        PathBuf::from(&source_grant.namespace_path)
+    );
+    assert!(!contains_raw_host_path(&alloc1.workspace_ref));
+
+    let child1_pid = Pid(101);
+    let child1_ns = LiveNamespace::new(Namespace::new());
+    host_mount
+        .register_child_process(
+            parent_pid,
+            child1_pid,
+            child1_ns.clone(),
+            std::slice::from_ref(&alloc1.narrowed_grant),
+        )
+        .unwrap();
+    let child1_shell = Shell::new(InProcessTransport::new(Arc::new(
+        MountFs::from_live_namespace(child1_ns),
+    )));
+    child1_shell
+        .write(
+            &format!("{}/src/lib.rs", source_grant.namespace_path),
+            b"pub fn val() -> i32 {\n    77\n}\n",
+        )
+        .await
+        .unwrap();
+    host_mount.unregister_process(child1_pid);
+
+    let handoff = adapter
+        .collect_handoff(
+            &alloc1,
+            "ws-clean",
+            Some("rollout-m83-1"),
+            "Clean sync-back",
+        )
+        .await
+        .unwrap();
+    assert_eq!(handoff.sync_status, WorkspaceSyncStatus::PendingMerge);
+    assert_eq!(handoff.changed_files, vec!["src/lib.rs".to_string()]);
+    assert!(handoff.patch_evidence_ref.is_some());
+
+    let synced = adapter
+        .sync_back(
+            &alloc1,
+            "ws-clean",
+            Some("rollout-m83-1"),
+            "Clean sync-back",
+        )
+        .await
+        .unwrap();
+    assert_eq!(synced.sync_status, WorkspaceSyncStatus::SyncedBack);
+    assert_eq!(
+        fs::read_to_string(canonical_repo.join("src/lib.rs")).unwrap(),
+        "pub fn val() -> i32 {\n    77\n}\n"
+    );
+    adapter
+        .discard_workspace(&alloc1.workspace_ref)
+        .await
+        .unwrap();
+    assert_eq!(cow_manager.active_count(), 0);
+
+    // 2. Concurrent Host edit triggers fail-closed 3-way SyncConflict while preserving patch evidence.
+    let alloc2 = adapter
+        .allocate_workspace(IsolatedWorkspaceRequest {
+            workstream_name: "ws-conflict".to_string(),
+            source_grant_id: source_grant.id.clone(),
+            source_namespace_path: PathBuf::from(&source_grant.namespace_path),
+            rollout_ref: Some("rollout-m83-2".to_string()),
+            why: "Verify fail-closed 3-way conflict check".to_string(),
+        })
+        .await
+        .unwrap();
+    let child2_pid = Pid(102);
+    let child2_ns = LiveNamespace::new(Namespace::new());
+    host_mount
+        .register_child_process(
+            parent_pid,
+            child2_pid,
+            child2_ns.clone(),
+            std::slice::from_ref(&alloc2.narrowed_grant),
+        )
+        .unwrap();
+    let child2_shell = Shell::new(InProcessTransport::new(Arc::new(
+        MountFs::from_live_namespace(child2_ns),
+    )));
+    child2_shell
+        .write(
+            &format!("{}/src/lib.rs", source_grant.namespace_path),
+            b"pub fn val() -> i32 {\n    88\n}\n",
+        )
+        .await
+        .unwrap();
+    host_mount.unregister_process(child2_pid);
+
+    // Concurrent Host mutation on the same file.
+    fs::write(
+        canonical_repo.join("src/lib.rs"),
+        "pub fn val() -> i32 {\n    999\n}\n",
+    )
+    .unwrap();
+
+    let conflicted = adapter
+        .sync_back(
+            &alloc2,
+            "ws-conflict",
+            Some("rollout-m83-2"),
+            "Verify fail-closed 3-way conflict check",
+        )
+        .await
+        .unwrap();
+    assert_eq!(conflicted.sync_status, WorkspaceSyncStatus::ConflictAborted);
+    assert_eq!(conflicted.conflicts.len(), 1);
+    assert_eq!(conflicted.conflicts[0].path, "src/lib.rs");
+    assert!(conflicted.patch_evidence_ref.is_some());
+    assert_eq!(
+        fs::read_to_string(canonical_repo.join("src/lib.rs")).unwrap(),
+        "pub fn val() -> i32 {\n    999\n}\n"
+    );
+
+    adapter
+        .discard_workspace(&alloc2.workspace_ref)
+        .await
+        .unwrap();
+    assert_eq!(cow_manager.active_count(), 0);
 }

@@ -817,3 +817,49 @@ pub(super) fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistr
     }
     Ok(())
 }
+
+pub(super) async fn verify_readiness(
+    root: &InProcessTransport,
+    boot_id: uuid::Uuid,
+    state: &Arc<tokio::sync::Mutex<ManagerState>>,
+) -> Result<()> {
+    let shell = alan_shell::Shell::new(root.clone());
+    let root_entries = shell.ls("/").await.context("read Standard Namespace")?;
+    for required in ["proc", "agent", "srv", "bin", "lib", "man", "mnt"] {
+        ensure!(
+            root_entries.iter().any(|entry| entry == required),
+            "Standard Namespace is missing /{required}"
+        );
+    }
+    shell.ls("/agent/root").await.context("read /agent/root")?;
+    let published_boot_id = String::from_utf8(shell.cat(super::BOOT_ID_PATH).await?)?;
+    ensure!(
+        published_boot_id.trim() == boot_id.to_string(),
+        "boot ID mismatch"
+    );
+    ensure!(
+        shell.cat(super::BOOT_STATE_PATH).await? == b"ready\n",
+        "Host readiness file is not ready"
+    );
+    let service_handles = shell.ls("/srv").await.context("read /srv")?;
+    for required in [
+        "service-manager",
+        "agent-runtime",
+        "connection",
+        "package",
+        "host-mount",
+        "local-entry",
+        "llm",
+        alan_routefs::SRV_HANDLE,
+    ] {
+        ensure!(
+            service_handles.iter().any(|entry| entry == required),
+            "required service /srv/{required} is absent"
+        );
+    }
+    ensure!(
+        state.lock().await.status() == crate::SystemStatus::Ready,
+        "Service Manager did not reach ready"
+    );
+    Ok(())
+}
