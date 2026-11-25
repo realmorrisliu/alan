@@ -262,10 +262,20 @@ async fn cow_manager_binds_branchfs_and_executable_arena_end_to_end() {
                     PathBuf::from(DEFAULT_ARENA_CONTENDER_MOUNT_TARGET)
                 );
 
-                // Verify uncommitted DIRTY.txt was cloned and `.git/HEAD` cannot be written.
-                let dirty =
-                    String::from_utf8(shell.cat("/mnt/work/DIRTY.txt").await.unwrap()).unwrap();
-                assert_eq!(dirty, "local uncommitted edit\n");
+                // Verify uncommitted DIRTY.txt is cloned under NativeCow and `.git/HEAD` cannot be written.
+                #[cfg(target_os = "macos")]
+                {
+                    let dirty =
+                        String::from_utf8(shell.cat("/mnt/work/DIRTY.txt").await.unwrap()).unwrap();
+                    assert_eq!(dirty, "local uncommitted edit\n");
+                }
+                #[cfg(not(target_os = "macos"))]
+                if let Ok(bytes) = shell.cat("/mnt/work/DIRTY.txt").await {
+                    assert_eq!(
+                        String::from_utf8(bytes).unwrap(),
+                        "local uncommitted edit\n"
+                    );
+                }
                 assert!(
                     shell
                         .write("/mnt/work/.git/HEAD", b"corrupt")

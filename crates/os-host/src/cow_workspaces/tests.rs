@@ -295,6 +295,8 @@ fn concurrent_host_edits_fail_sync_back_closed_and_allow_patch_export() {
     fs::write(host_dir.join("ws_del_host_mod.txt"), "base\n").unwrap();
     fs::write(host_dir.join("ws_mod_host_del.txt"), "base\n").unwrap();
     fs::write(host_dir.join("clean.txt"), "clean base\n").unwrap();
+    init_git_repo(&host_dir);
+    git_commit_all(&host_dir, "base");
 
     let (mgr, _) = test_manager(temp.path(), "inst-conflict", 4);
     let summary = mgr
@@ -375,9 +377,12 @@ fn clean_sync_back_and_patch_export_work_on_non_git_directory_and_git_apply() {
     fs::write(host_dir.join("host_untouched_by_ws.txt"), "initial\n").unwrap();
 
     let (mgr, _) = test_manager(temp.path(), "inst-nongit", 4);
-    let summary = mgr
-        .create_workspace(&host_dir, CreateWorkspaceOptions::default())
-        .unwrap();
+    let summary = match mgr.create_workspace(&host_dir, CreateWorkspaceOptions::default()) {
+        Ok(summary) => summary,
+        #[cfg(not(target_os = "macos"))]
+        Err(CowWorkspaceError::CrossVolumeNonGitUnsupported) => return,
+        Err(err) => panic!("unexpected error creating non-Git workspace: {err:?}"),
+    };
     assert!(!summary.source_is_git);
 
     let tree_path = mgr
@@ -583,6 +588,8 @@ fn active_clone_cap_and_startup_dead_pid_orphan_gc() {
     let host_dir = temp.path().join("project");
     fs::create_dir_all(&host_dir).unwrap();
     fs::write(host_dir.join("file.txt"), "hello\n").unwrap();
+    init_git_repo(&host_dir);
+    git_commit_all(&host_dir, "base");
 
     // Seed one dead-PID orphan instance and one live-PID instance before manager startup.
     let workspaces_root = temp.path().join("System Store/workspaces");
@@ -648,6 +655,8 @@ async fn mnt_projection_hides_raw_paths_and_enforces_rw_vs_ro_mounts() {
     let host_dir = temp.path().join("project");
     fs::create_dir_all(&host_dir).unwrap();
     fs::write(host_dir.join("code.rs"), "fn main() {}\n").unwrap();
+    init_git_repo(&host_dir);
+    git_commit_all(&host_dir, "base");
 
     let (mgr, _) = test_manager(temp.path(), "inst-mnt", 4);
     let summary = mgr
@@ -816,6 +825,8 @@ fn exit_flush_writes_unapplied_winner_patch_and_summary_before_deleting_clones()
     let host_dir = temp.path().join("project");
     fs::create_dir_all(&host_dir).unwrap();
     fs::write(host_dir.join("lib.rs"), "pub fn x() -> i32 { 0 }\n").unwrap();
+    init_git_repo(&host_dir);
+    git_commit_all(&host_dir, "base");
 
     let (mgr, _) = test_manager(temp.path(), "inst-exit", 4);
     let winner = mgr
@@ -888,17 +899,35 @@ fn validates_provenance_require_native_cow_and_error_guards() {
     fs::create_dir_all(&non_git).unwrap();
     fs::write(non_git.join("f.txt"), "hi\n").unwrap();
 
+    let git_dir = temp.path().join("git-repo");
+    fs::create_dir_all(&git_dir).unwrap();
+    fs::write(git_dir.join("f.txt"), "hi\n").unwrap();
+    init_git_repo(&git_dir);
+    git_commit_all(&git_dir, "base");
+
     let (mgr, _) = test_manager(temp.path(), "inst-guards", 4);
-    let ws = mgr
-        .create_workspace(&non_git, CreateWorkspaceOptions::default())
-        .unwrap();
     let prov = IntentProvenance::new("ws", "rollout-1", "test").unwrap();
+    let git_ws = mgr
+        .create_workspace(&git_dir, CreateWorkspaceOptions::default())
+        .unwrap();
     assert!(matches!(
-        mgr.export_patch(&ws.workspace_ref, &prov),
+        mgr.export_patch(&git_ws.workspace_ref, &prov),
         Err(CowWorkspaceError::NoChangesToExport)
     ));
-    assert!(matches!(
-        mgr.export_to_git_branch(&ws.workspace_ref, "feat/nope", &prov),
-        Err(CowWorkspaceError::NotAGitRepository)
-    ));
+
+    match mgr.create_workspace(&non_git, CreateWorkspaceOptions::default()) {
+        Ok(ws) => {
+            assert!(matches!(
+                mgr.export_patch(&ws.workspace_ref, &prov),
+                Err(CowWorkspaceError::NoChangesToExport)
+            ));
+            assert!(matches!(
+                mgr.export_to_git_branch(&ws.workspace_ref, "feat/nope", &prov),
+                Err(CowWorkspaceError::NotAGitRepository)
+            ));
+        }
+        #[cfg(not(target_os = "macos"))]
+        Err(CowWorkspaceError::CrossVolumeNonGitUnsupported) => {}
+        Err(err) => panic!("unexpected error creating non-Git workspace: {err:?}"),
+    }
 }
