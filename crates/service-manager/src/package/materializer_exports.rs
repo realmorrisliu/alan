@@ -51,7 +51,9 @@ pub(super) fn build_content_exports(
                 max_source_file_bytes,
             )?;
             if parsed_manifest.is_some() && exports.is_empty() {
-                bail!("skill manifest requires at least one SKILL.md or skills/*.md export");
+                bail!(
+                    "skill manifest requires at least one SKILL.md, skills/*.md, or commands/*.md export"
+                );
             }
             Ok(ComputedExports {
                 export_kind: PackageExportKind::Skill,
@@ -99,9 +101,12 @@ pub(super) fn build_content_exports(
                     capability_is_argument_dependent: tool.capability_is_argument_dependent,
                     timeout_secs: tool.timeout_secs,
                     execution: ToolExecutionHints {
-                        arguments: "json_first_arg".to_string(),
+                        arguments: tool.arguments.clone(),
                         result: "stdout_json".to_string(),
                     },
+                    network_domains: tool.network_domains.clone(),
+                    required_secrets: tool.required_secrets.clone(),
+                    required_adc: tool.required_adc.clone(),
                 };
                 runtime_manifest.validate_for_name(&tool.name)?;
                 let encoded = serde_json::to_vec_pretty(&runtime_manifest)?;
@@ -292,6 +297,14 @@ pub(super) fn verify_materialized_exports(
                 let manifest: ToolPackageManifest =
                     serde_json::from_slice(&fs::read(content_root.join(&tool.manifest_path))?)?;
                 manifest.validate_for_name(&tool.name)?;
+                ensure!(
+                    manifest.execution.arguments == tool.arguments
+                        && manifest.network_domains == tool.network_domains
+                        && manifest.required_secrets == tool.required_secrets
+                        && manifest.required_adc == tool.required_adc,
+                    "materialized tool `{}` manifest metadata mismatch",
+                    tool.name
+                );
             }
         }
         PackageExportKind::Mcp => {
@@ -398,6 +411,13 @@ fn verify_skill_exports(content_root: &Path, exports: &[PackageExport]) -> Resul
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum CommandIngestionMode {
+    None,
+    SkillsOnlyDir,
+    SkillsAndCommandsDirs,
+}
+
 fn materialize_companion_skills_in_map(
     snapshot: &PackageSnapshot,
     content_files: &mut BTreeMap<String, (Vec<u8>, bool)>,
@@ -408,7 +428,7 @@ fn materialize_companion_skills_in_map(
     materialize_skill_roots_and_commands(
         snapshot,
         roots,
-        true,
+        CommandIngestionMode::SkillsOnlyDir,
         content_files,
         generated_files,
         max_source_file_bytes,
@@ -422,24 +442,50 @@ fn materialize_skill_exports_in_map(
     max_source_file_bytes: usize,
 ) -> Result<Vec<PackageExport>> {
     let roots = native_skill_roots(snapshot)?;
-    let include_command_md = !snapshot
+    let has_root_skill_md = snapshot
         .entries
         .iter()
         .any(|entry| entry.path == "SKILL.md");
-    materialize_skill_roots_and_commands(
+    let command_mode = if has_root_skill_md {
+        CommandIngestionMode::None
+    } else {
+        CommandIngestionMode::SkillsAndCommandsDirs
+    };
+    let exports = materialize_skill_roots_and_commands(
         snapshot,
         roots,
-        include_command_md,
+        command_mode,
         content_files,
         generated_files,
         max_source_file_bytes,
-    )
+    )?;
+    preserve_shared_package_assets(snapshot, content_files);
+    Ok(exports)
+}
+
+fn preserve_shared_package_assets(
+    snapshot: &PackageSnapshot,
+    content_files: &mut BTreeMap<String, (Vec<u8>, bool)>,
+) {
+    for entry in &snapshot.entries {
+        let Some(Component::Normal(first)) = Path::new(&entry.path).components().next() else {
+            continue;
+        };
+        if matches!(
+            first.to_str(),
+            Some("playbooks" | "references" | "templates" | "assets")
+        ) {
+            content_files
+                .entry(entry.path.clone())
+                .or_insert_with(|| (entry.bytes.clone(), false));
+        }
+    }
 }
 
 fn materialize_skill_roots_and_commands(
     snapshot: &PackageSnapshot,
     roots: Vec<PathBuf>,
-    include_command_md: bool,
+    command_mode: CommandIngestionMode,
     content_files: &mut BTreeMap<String, (Vec<u8>, bool)>,
     generated_files: &mut BTreeSet<String>,
     max_source_file_bytes: usize,
@@ -485,11 +531,20 @@ fn materialize_skill_roots_and_commands(
         });
     }
 
-    if include_command_md {
+    let command_dirs: &[&str] = match command_mode {
+        CommandIngestionMode::None => &[],
+        CommandIngestionMode::SkillsOnlyDir => &["skills"],
+        CommandIngestionMode::SkillsAndCommandsDirs => &["skills", "commands"],
+    };
+    if !command_dirs.is_empty() {
         for entry in &snapshot.entries {
             let path = Path::new(&entry.path);
+            let is_command_dir = path
+                .parent()
+                .and_then(|parent| parent.to_str())
+                .is_some_and(|dir| command_dirs.contains(&dir));
             if path.components().count() != 2
-                || path.parent() != Some(Path::new("skills"))
+                || !is_command_dir
                 || path.extension().and_then(|value| value.to_str()) != Some("md")
             {
                 continue;
@@ -507,7 +562,9 @@ fn materialize_skill_roots_and_commands(
             let body =
                 std::str::from_utf8(&entry.bytes).context("command-style Skill is not UTF-8")?;
             let dependencies = detect_availability_dependencies(&entry.bytes);
-            let document = command_skill_document(&skill_id, body, &dependencies);
+            let placeholder_mappings = detect_foreign_placeholder_mappings(&entry.bytes);
+            let document =
+                command_skill_document(&skill_id, body, &dependencies, &placeholder_mappings);
             ensure!(
                 document.len() <= max_source_file_bytes,
                 "generated command-style Skill exceeds descriptor file size limit"
@@ -563,6 +620,39 @@ fn detect_availability_dependencies(document: &[u8]) -> Vec<SkillTypedDependency
     dependencies.into_values().collect()
 }
 
+fn detect_foreign_placeholder_mappings(document: &[u8]) -> Vec<(&'static str, &'static str)> {
+    let text = String::from_utf8_lossy(document);
+    [
+        ("Read", "read_file"),
+        ("Edit", "edit_file"),
+        ("Bash", "bash"),
+        ("Subagent", "spawn_subagent"),
+    ]
+    .into_iter()
+    .filter(|(needle, _)| contains_ascii_word(&text, needle))
+    .collect()
+}
+
+fn contains_ascii_word(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let mut start = 0;
+    while let Some(offset) = haystack[start..].find(needle) {
+        let match_start = start + offset;
+        let match_end = match_start + needle.len();
+        let left_ok = match_start == 0 || !is_word_byte(bytes[match_start - 1]);
+        let right_ok = match_end == bytes.len() || !is_word_byte(bytes[match_end]);
+        if left_ok && right_ok {
+            return true;
+        }
+        start = match_start + 1;
+    }
+    false
+}
+
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
 fn merge_dependencies(
     left: Vec<SkillTypedDependency>,
     right: Vec<SkillTypedDependency>,
@@ -580,6 +670,7 @@ fn command_skill_document(
     skill_id: &str,
     body: &str,
     dependencies: &[SkillTypedDependency],
+    placeholder_mappings: &[(&'static str, &'static str)],
 ) -> String {
     let yaml_skill_id = serde_yaml::to_string(skill_id)
         .expect("validated Skill id serialization must succeed")
@@ -604,7 +695,18 @@ fn command_skill_document(
             }
         }
     }
-    document.push_str("---\n\n# Alan adapter\n\nThis Skill was imported by Package Service materializer `alan-skill-v1`. Treat foreign command placeholders as instruction context; unavailable capabilities remain explicit dependencies.\n\n");
+    document.push_str("---\n\n# Alan adapter\n\nThis Skill was imported by Package Service materializer `alan-skill-v1`. Treat foreign command placeholders as instruction context; unavailable capabilities remain explicit dependencies.");
+    if !placeholder_mappings.is_empty() {
+        let mappings = placeholder_mappings
+            .iter()
+            .map(|(foreign, alan)| format!("`{foreign}` -> `{alan}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        document.push_str(&format!(
+            " Foreign workflow placeholder mapping: {mappings}."
+        ));
+    }
+    document.push_str("\n\n");
     document.push_str(body);
     document
 }
@@ -682,8 +784,10 @@ fn has_non_export_component(path: &Path) -> bool {
                             | "bin"
                             | "evals"
                             | "eval-viewer"
+                            | "playbooks"
                             | "references"
                             | "scripts"
+                            | "templates"
                     )
                 )
         )

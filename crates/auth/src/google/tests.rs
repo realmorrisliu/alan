@@ -407,3 +407,165 @@ async fn list_active_gcp_projects_follows_pagination_and_sorts() {
     let ids: Vec<&str> = projects.iter().map(|p| p.project_id.as_str()).collect();
     assert_eq!(ids, vec!["alpha-proj", "zeta-proj"]);
 }
+
+#[tokio::test]
+async fn drive_pkce_defaults_to_readonly_and_enforces_drive_file_scope() {
+    let dir = TempDir::new().unwrap();
+    let storage_path = dir.path().join("gdrive").join("auth.json");
+
+    let token_listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let token_addr = token_listener.local_addr().unwrap();
+    let id_token = fake_id_token_with_email("drive@example.com");
+
+    tokio::spawn(async move {
+        let (mut socket, _) = token_listener.accept().await.unwrap();
+        let _req = read_http_request(&mut socket).await;
+        let resp_body = format!(
+            r#"{{"access_token":"ya29.drive-ro-secret","refresh_token":"1//drive-refresh-ro","expires_in":3600,"id_token":"{id_token}","scope":"https://www.googleapis.com/auth/drive.readonly"}}"#
+        );
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            resp_body.len(),
+            resp_body
+        );
+        socket.write_all(reply.as_bytes()).await.unwrap();
+    });
+
+    let manager = GoogleDriveAuthManager::new(GoogleDriveAuthConfig {
+        storage_path: storage_path.clone(),
+        auth_url: GOOGLE_AUTH_URL.to_string(),
+        token_url: format!("http://{token_addr}/token"),
+        client_id: Some("drive-cid".to_string()),
+        client_secret: Some("drive-csec".to_string()),
+        callback_port: 0,
+        scope: GoogleDriveScope::default(),
+    })
+    .unwrap();
+
+    let pending = manager.start_browser_login().await.unwrap();
+    let parsed_auth = Url::parse(pending.authorize_url()).unwrap();
+    let params: HashMap<_, _> = parsed_auth.query_pairs().into_owned().collect();
+    assert_eq!(
+        params.get("scope").map(String::as_str),
+        Some(GOOGLE_DRIVE_READONLY_SCOPE)
+    );
+    let state = params.get("state").unwrap().clone();
+    let callback = format!("{}?code=drive-code&state={state}", pending.callback_url());
+    let browser = tokio::spawn(async move {
+        let resp = reqwest::get(callback).await.unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    });
+    let login = pending
+        .wait_and_exchange(Duration::from_secs(5))
+        .await
+        .unwrap();
+    browser.await.unwrap();
+    assert_eq!(login.scopes, vec![GOOGLE_DRIVE_READONLY_SCOPE.to_string()]);
+    assert!(!manager.has_file_write_scope());
+
+    let resolved = resolve_drive_access_token(Some(&storage_path), GoogleDriveScope::ReadOnly)
+        .await
+        .unwrap();
+    assert_eq!(resolved.access_token, "ya29.drive-ro-secret");
+    assert!(!resolved.has_file_write_scope());
+    assert!(!format!("{resolved:?}").contains("ya29.drive-ro-secret"));
+
+    let err = resolve_drive_access_token(Some(&storage_path), GoogleDriveScope::File)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, GoogleAuthError::InsufficientScope { .. }));
+}
+
+#[tokio::test]
+async fn drive_file_scope_single_flight_refresh_preserves_scope_and_isolation() {
+    let dir = TempDir::new().unwrap();
+    let vertex_path = dir.path().join("auth.json");
+    let drive_path = dir.path().join("gdrive").join("auth.json");
+    let vertex_storage = AuthStorage::new(vertex_path.clone()).unwrap();
+    vertex_storage
+        .save(&AuthStore {
+            version: 1,
+            chatgpt: None,
+            google: Some(StoredGoogleAuth {
+                refresh_token: "vertex-refresh".to_string(),
+                access_token: "vertex-access".to_string(),
+                expires_at: Some(Utc::now() + ChronoDuration::hours(1)),
+                client_id: Some("vertex-cid".to_string()),
+                client_secret: None,
+                token_uri: None,
+                email: Some("vertex@example.com".to_string()),
+                last_refresh_at: Some(Utc::now()),
+            }),
+        })
+        .unwrap();
+
+    let token_listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let token_addr = token_listener.local_addr().unwrap();
+    let refresh_calls = Arc::new(AtomicUsize::new(0));
+    let calls_clone = refresh_calls.clone();
+
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = token_listener.accept().await {
+            let calls = calls_clone.clone();
+            tokio::spawn(async move {
+                let _req = read_http_request(&mut socket).await;
+                calls.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                let resp_body = r#"{"access_token":"ya29.fresh-drive-rw","refresh_token":"1//rotated-drive","expires_in":3600}"#;
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    resp_body.len(),
+                    resp_body
+                );
+                socket.write_all(reply.as_bytes()).await.unwrap();
+            });
+        }
+    });
+
+    let drive_storage = AuthStorage::new(drive_path.clone()).unwrap();
+    drive_storage
+        .save(&AuthStore {
+            version: 1,
+            chatgpt: None,
+            google: Some(StoredGoogleAuth {
+                refresh_token: "1//stale-drive".to_string(),
+                access_token: "ya29.stale-drive".to_string(),
+                expires_at: Some(Utc::now() - ChronoDuration::minutes(10)),
+                client_id: Some("drive-cid".to_string()),
+                client_secret: Some("drive-sec".to_string()),
+                token_uri: Some(format!("http://{token_addr}/token")),
+                email: Some("drive@example.com".to_string()),
+                last_refresh_at: None,
+            }),
+        })
+        .unwrap();
+    drive::persist_scope_metadata(
+        &drive_storage,
+        &[
+            GOOGLE_DRIVE_READONLY_SCOPE.to_string(),
+            GOOGLE_DRIVE_FILE_SCOPE.to_string(),
+        ],
+    )
+    .unwrap();
+
+    let manager = GoogleDriveAuthManager::with_storage_path_and_scope(
+        drive_path.clone(),
+        GoogleDriveScope::ReadOnlyAndFile,
+    )
+    .unwrap();
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..4 {
+        let mgr = manager.clone();
+        set.spawn(async move { mgr.access_token_for_scope(GoogleDriveScope::File).await });
+    }
+    while let Some(res) = set.join_next().await {
+        let tok = res.unwrap().unwrap();
+        assert_eq!(tok.access_token, "ya29.fresh-drive-rw");
+        assert!(tok.has_file_write_scope());
+    }
+    assert_eq!(refresh_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        vertex_storage.load().unwrap().google.unwrap().access_token,
+        "vertex-access"
+    );
+}

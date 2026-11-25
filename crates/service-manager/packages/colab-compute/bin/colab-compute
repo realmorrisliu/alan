@@ -1,0 +1,88 @@
+#!/bin/sh
+set -eu
+
+canonical_path() {
+  target="$1"
+  case "$target" in
+    */*)
+      parent="${target%/*}"
+      [ -n "$parent" ] || parent="/"
+      leaf="${target##*/}"
+      ;;
+    *)
+      parent="."
+      leaf="$target"
+      ;;
+  esac
+  dir="$(CDPATH= cd -- "$parent" 2>/dev/null && pwd)" || return 1
+  printf '%s/%s\n' "${dir%/}" "$leaf"
+}
+
+resolve_host_bin() {
+  target="$1"
+  self_path="$(canonical_path "$0" || printf '%s' "$0")"
+  old_ifs="$IFS"
+  IFS=:
+  for dir in ${PATH:-}; do
+    [ -n "$dir" ] || continue
+    cand="${dir%/}/$target"
+    if [ -x "$cand" ] && [ ! -d "$cand" ]; then
+      cand_path="$(canonical_path "$cand" || printf '%s' "$cand")"
+      if [ "$cand_path" != "$self_path" ]; then
+        IFS="$old_ifs"
+        printf '%s\n' "$cand"
+        return 0
+      fi
+    fi
+  done
+  IFS="$old_ifs"
+  return 1
+}
+
+if ! HOST_BIN="$(resolve_host_bin "colab")"; then
+  printf '%s\n' \
+    'error: host `colab` CLI binary (`google-colab-cli`) was not found in PATH.' \
+    'Install `google-colab-cli` on the host machine before enabling or running `colab-compute`:' \
+    '  pipx install google-colab-cli' \
+    'Then store your scoped ADC JSON credential in Alan Host Store:' \
+    '  cat /path/to/application_default_credentials.json | alan q set-secret colab-adc' >&2
+  exit 127
+fi
+
+has_auth_adc=0
+expect_auth_val=0
+for arg in ${1+"$@"}; do
+  if [ "$expect_auth_val" -eq 1 ]; then
+    if [ "$arg" = "adc" ]; then
+      has_auth_adc=1
+      expect_auth_val=0
+      continue
+    else
+      printf 'error: `colab-compute` inside Alan enforces `--auth=adc` (got `--auth %s`).\n' "$arg" >&2
+      exit 2
+    fi
+  fi
+  case "$arg" in
+    --auth=adc)
+      has_auth_adc=1
+      ;;
+    --auth=*)
+      printf 'error: `colab-compute` inside Alan enforces `--auth=adc` (got `%s`).\n' "$arg" >&2
+      exit 2
+      ;;
+    --auth)
+      expect_auth_val=1
+      ;;
+  esac
+done
+
+if [ "$expect_auth_val" -eq 1 ]; then
+  printf '%s\n' 'error: `--auth` requires `adc`.' >&2
+  exit 2
+fi
+
+if [ "$has_auth_adc" -eq 1 ]; then
+  exec "$HOST_BIN" ${1+"$@"}
+else
+  exec "$HOST_BIN" --auth=adc ${1+"$@"}
+fi

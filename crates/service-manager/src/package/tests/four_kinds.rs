@@ -292,3 +292,120 @@ default_base_url = "https://evil.example.com"
         .unwrap();
     assert!(!res.success);
 }
+
+#[test]
+fn tool_manifest_validates_argv_network_domains_and_secret_refs() {
+    let service = PackageService::ephemeral().unwrap();
+
+    // 1. Valid governed tool package with `arguments = "argv"`, `network_domains`, `required_secrets`, `required_adc`.
+    let valid_tool = snapshot_with_manifest(
+        "governed-tool",
+        r#"
+schema_version = 1
+kind = "tool"
+description = "Governed CLI wrapper"
+
+[tool]
+name = "gemini_api"
+description = "Run gemini-api CLI"
+entrypoint = "bin/run.sh"
+capability = "network"
+allow_network = true
+network_domains = ["generativelanguage.googleapis.com"]
+arguments = "argv"
+
+[[tool.required_secrets]]
+env = "GEMINI_API_KEY"
+credential_id = "gemini-api-key"
+
+[tool.required_adc]
+env = "GOOGLE_APPLICATION_CREDENTIALS"
+credential_id = "colab-adc"
+"#,
+        vec![("bin/run.sh", b"#!/bin/sh\necho '{}'\n", true)],
+    );
+    let ok = service
+        .execute(PackageCommand::Install {
+            request_id: "install-governed-tool".to_string(),
+            package_id: "governed-tool".to_string(),
+            snapshot: valid_tool,
+        })
+        .unwrap();
+    assert!(ok.success, "{}", ok.message);
+    let record = service.resolve("governed-tool").unwrap();
+    let export = &record.tool_exports[0];
+    assert_eq!(export.arguments, "argv");
+    assert_eq!(
+        export.network_domains,
+        vec!["generativelanguage.googleapis.com".to_string()]
+    );
+    assert_eq!(export.required_secrets.len(), 1);
+    assert_eq!(export.required_secrets[0].env, "GEMINI_API_KEY");
+    assert_eq!(export.required_secrets[0].credential_id, "gemini-api-key");
+    assert_eq!(
+        export
+            .required_adc
+            .as_ref()
+            .map(|r| (r.env.as_str(), r.credential_id.as_str())),
+        Some(("GOOGLE_APPLICATION_CREDENTIALS", "colab-adc"))
+    );
+
+    // 2. Rejects `allow_network = true` with empty `network_domains`.
+    let empty_domains = snapshot_with_manifest(
+        "empty-domains",
+        r#"
+kind = "tool"
+[tool]
+name = "empty_domains"
+description = "Bad network tool"
+entrypoint = "bin/run.sh"
+capability = "network"
+allow_network = true
+arguments = "argv"
+"#,
+        vec![("bin/run.sh", b"#!/bin/sh\n", true)],
+    );
+    let res = service
+        .execute(PackageCommand::Install {
+            request_id: "reject-empty-domains".to_string(),
+            package_id: "empty-domains".to_string(),
+            snapshot: empty_domains,
+        })
+        .unwrap();
+    assert!(!res.success);
+    assert!(res.message.contains("network_domains"), "{}", res.message);
+
+    // 3. Rejects raw credential in `required_secrets` or `required_adc`.
+    for (id, bad_cred) in [
+        ("raw-sk", "sk-proj-rawsecret123"),
+        ("raw-aiza", "AIzaSyD1234567890"),
+        ("raw-path", "/Users/me/.config/adc.json"),
+    ] {
+        let bad = snapshot_with_manifest(
+            id,
+            &format!(
+                r#"
+kind = "tool"
+[tool]
+name = "bad_tool"
+description = "Bad secret ref"
+entrypoint = "bin/run.sh"
+arguments = "argv"
+
+[[tool.required_secrets]]
+env = "API_KEY"
+credential_id = "{bad_cred}"
+"#
+            ),
+            vec![("bin/run.sh", b"#!/bin/sh\n", true)],
+        );
+        let res = service
+            .execute(PackageCommand::Install {
+                request_id: format!("reject-{id}"),
+                package_id: id.to_string(),
+                snapshot: bad,
+            })
+            .unwrap();
+        assert!(!res.success, "expected rejection for {bad_cred}");
+    }
+}

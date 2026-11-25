@@ -4,12 +4,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use alan_agent_engine::runtime::tool_packages::{EphemeralSecretFile, validate_adc_json_payload};
+use alan_agent_engine::tools::ToolSecretResolver;
 use alan_agent_engine::{Config, LlmProvider};
 use alan_service_manager::{ConnectionsFile, ResolvedConnectionProfile};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 const SECRET_STORE_FILE_NAME: &str = "secrets.toml";
+
+/// Short-lived `0600` ADC JSON file projected from Host Store for one confined Tool call.
+pub type EphemeralAdcFile = EphemeralSecretFile;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -106,6 +111,40 @@ impl SecretStore {
             .cloned())
     }
 
+    /// Store or update a named secret in Host Store `secrets.toml` without echoing bytes.
+    pub fn set_named_secret(&self, credential_id: &str, secret: &str) -> anyhow::Result<()> {
+        let credential_id = validated_identifier_component("credential id", credential_id)?;
+        let trimmed = secret.trim();
+        anyhow::ensure!(
+            !trimmed.is_empty(),
+            "secret for `{credential_id}` must not be empty"
+        );
+        anyhow::ensure!(
+            !trimmed.contains('\0'),
+            "secret for `{credential_id}` contains invalid null bytes"
+        );
+        self.save(credential_id, trimmed)
+    }
+
+    /// Resolve a named secret from Host Store `secrets.toml` (`None` when absent or revoked).
+    pub fn resolve_named_secret(&self, credential_id: &str) -> anyhow::Result<Option<String>> {
+        self.load(credential_id)
+    }
+
+    /// Project a stored JSON ADC credential into an ephemeral `0600` file inside `tmp_dir`.
+    pub fn project_ephemeral_adc_file(
+        &self,
+        credential_id: &str,
+        tmp_dir: &Path,
+    ) -> anyhow::Result<Option<EphemeralAdcFile>> {
+        let Some(payload) = self.resolve_named_secret(credential_id)? else {
+            return Ok(None);
+        };
+        validate_adc_json_payload(&payload, credential_id)?;
+        let file = EphemeralSecretFile::create_0600(tmp_dir, "alan-adc", payload.as_bytes())?;
+        Ok(Some(file))
+    }
+
     pub fn save(&self, credential_id: &str, secret: &str) -> anyhow::Result<()> {
         let credential_id = validated_identifier_component("credential id", credential_id)?;
         let _lock = self.lock()?;
@@ -191,6 +230,12 @@ impl SecretStore {
             .context("failed to replace secret store")?;
         std::fs::File::open(&self.credentials_dir)?.sync_all()?;
         Ok(())
+    }
+}
+
+impl ToolSecretResolver for SecretStore {
+    fn resolve_named_secret(&self, credential_id: &str) -> anyhow::Result<Option<String>> {
+        self.resolve_named_secret(credential_id)
     }
 }
 
@@ -573,5 +618,65 @@ mod tests {
                 .as_deref(),
             Some("vk-secret")
         );
+    }
+
+    #[test]
+    fn named_secret_and_ephemeral_adc_helpers_round_trip_and_cleanup() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SecretStore::from_directory(&temp.path().join("creds")).unwrap();
+        let tmp_dir = temp.path().join("tmp");
+
+        assert!(store.set_named_secret("gemini-api-key", "   ").is_err());
+        store
+            .set_named_secret("gemini-api-key", "  gk-secret-123  ")
+            .unwrap();
+        assert_eq!(
+            store
+                .resolve_named_secret("gemini-api-key")
+                .unwrap()
+                .as_deref(),
+            Some("gk-secret-123")
+        );
+
+        let resolver: &dyn ToolSecretResolver = &store;
+        assert_eq!(
+            resolver
+                .resolve_named_secret("gemini-api-key")
+                .unwrap()
+                .as_deref(),
+            Some("gk-secret-123")
+        );
+
+        assert!(
+            store
+                .project_ephemeral_adc_file("missing-adc", &tmp_dir)
+                .unwrap()
+                .is_none()
+        );
+        store
+            .set_named_secret("bad-adc", "not-json-secret-value")
+            .unwrap();
+        let err = store
+            .project_ephemeral_adc_file("bad-adc", &tmp_dir)
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains("not-json-secret-value"), "{err}");
+
+        let adc_payload = r#"{"type":"authorized_user","refresh_token":"tok"}"#;
+        store.set_named_secret("colab-adc", adc_payload).unwrap();
+        let adc_file = store
+            .project_ephemeral_adc_file("colab-adc", &tmp_dir)
+            .unwrap()
+            .expect("adc file");
+        let adc_path = adc_file.path().to_path_buf();
+        assert_eq!(std::fs::read_to_string(&adc_path).unwrap(), adc_payload);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&adc_path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        drop(adc_file);
+        assert!(!adc_path.exists());
     }
 }

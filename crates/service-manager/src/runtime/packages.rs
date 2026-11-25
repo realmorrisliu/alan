@@ -379,15 +379,17 @@ fn project_packaged_tool(
         capability_is_argument_dependent: tool_export.capability_is_argument_dependent,
         timeout_secs: tool_export.timeout_secs,
         execution: ToolExecutionHints {
-            arguments: "json_first_arg".to_string(),
+            arguments: tool_export.arguments.clone(),
             result: "stdout_json".to_string(),
         },
+        network_domains: tool_export.network_domains.clone(),
+        required_secrets: tool_export.required_secrets.clone(),
+        required_adc: tool_export.required_adc.clone(),
     };
-    let tool = Arc::new(PackagedTool::new(
-        manifest.clone(),
-        executable,
-        tool_export.allow_network,
-    )?);
+    let tool = Arc::new(
+        PackagedTool::new(manifest.clone(), executable, tool_export.allow_network)?
+            .with_optional_secret_resolver(launch_context.tool_secret_resolver.clone()),
+    );
     mount_projected_tool(launch_context, tool, &manifest)
 }
 
@@ -494,6 +496,27 @@ pub fn prepare_fileserver_launch_grant(
                     access: ReifiedMountAccess::ReadOnly,
                 });
             }
+        }
+    }
+
+    if service_id == "gdrive" && package_id == "gdrive-fileserver" && allow_network {
+        let env_override = std::env::var("ALAN_GDRIVEFS_AUTH_STORAGE").ok();
+        let home = std::env::var_os("HOME")
+            .filter(|val| !val.is_empty())
+            .map(PathBuf::from);
+        let xdg_data_home = std::env::var_os("XDG_DATA_HOME")
+            .filter(|val| !val.is_empty())
+            .map(PathBuf::from);
+        if let Some((auth_path, auth_dir)) = resolve_gdrive_auth_storage_paths(
+            env_override.as_deref(),
+            home.as_deref(),
+            xdg_data_home.as_deref(),
+        ) {
+            runtime_env.insert(
+                "ALAN_GDRIVEFS_AUTH_STORAGE".to_string(),
+                auth_path.display().to_string(),
+            );
+            push_rw_dir_mount(&mut host_mounts, "/host/gdrive-auth", &auth_dir);
         }
     }
 
@@ -731,140 +754,84 @@ fn push_ro_parent_dir_mount(
     let Some(parent) = binary_path.parent() else {
         return;
     };
-    let parent = canonical_or_owned(parent);
-    if !parent.is_dir() {
+    push_dir_mount(
+        host_mounts,
+        namespace_path,
+        parent,
+        ReifiedMountAccess::ReadOnly,
+        false,
+    );
+}
+
+fn push_rw_dir_mount(host_mounts: &mut Vec<SandboxHostMount>, namespace_path: &str, dir: &Path) {
+    push_dir_mount(
+        host_mounts,
+        namespace_path,
+        dir,
+        ReifiedMountAccess::ReadWrite,
+        true,
+    );
+}
+
+fn push_dir_mount(
+    host_mounts: &mut Vec<SandboxHostMount>,
+    namespace_path: &str,
+    dir: &Path,
+    access: ReifiedMountAccess,
+    allow_uncreated_dir: bool,
+) {
+    let dir = canonical_or_owned(dir);
+    if dir.exists() {
+        if !dir.is_dir() {
+            return;
+        }
+    } else if !allow_uncreated_dir {
         return;
     }
-    if matches!(parent.to_str(), Some("/" | "/bin" | "/usr/bin")) {
+    if matches!(dir.to_str(), Some("/" | "/bin" | "/usr/bin")) {
         return;
     }
-    if host_mounts
-        .iter()
-        .any(|existing| existing.host_path == parent)
-    {
+    if host_mounts.iter().any(|existing| existing.host_path == dir) {
         return;
     }
     host_mounts.push(SandboxHostMount {
         namespace_path: PathBuf::from(namespace_path),
-        host_path: parent,
-        access: ReifiedMountAccess::ReadOnly,
+        host_path: dir,
+        access,
     });
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prepare_fileserver_launch_grant_requires_github_fileserver_identity_and_network_for_host_token()
-     {
-        let granted = prepare_fileserver_launch_grant(
-            "github-fileserver",
-            "github",
-            FileserverMountAccess::ReadOnly,
-            true,
-            TrustPosture::Governed,
-            None,
-            None,
-        );
-        assert!(granted.allow_host_gh_token);
-
-        for (pkg, svc, net) in [
-            ("github-fileserver", "github", false),
-            ("third-party-pack", "github", true),
-            ("github-fileserver", "other", true),
-        ] {
-            let denied = prepare_fileserver_launch_grant(
-                pkg,
-                svc,
-                FileserverMountAccess::ReadOnly,
-                net,
-                TrustPosture::Governed,
-                None,
-                None,
-            );
-            assert!(
-                !denied.allow_host_gh_token,
-                "expected allow_host_gh_token=false for ({pkg}, {svc}, net={net})"
-            );
-        }
-    }
-
-    #[test]
-    fn preinstalled_github_fileserver_snapshot_matches_source_and_seeds_catalog_only() {
-        let pkg_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("packages/github-fileserver");
-        let embedded = preinstalled_github_fileserver_snapshot().unwrap();
-        #[cfg(unix)]
-        {
-            let from_dir = PackageSnapshot::from_directory(&pkg_dir).unwrap();
-            assert_eq!(embedded, from_dir);
-        }
-        assert!(
-            alan_agent_engine::skills::preinstalled_skill_package_ids()
-                .all(|id| id != GITHUB_FILESERVER_PACKAGE_ID)
-        );
-
-        let service = PackageService::ephemeral().unwrap();
-        seed_preinstalled_packages(&service).unwrap();
-
-        let record = service.resolve(GITHUB_FILESERVER_PACKAGE_ID).unwrap();
-        assert_eq!(record.kind, PackageKind::Preinstalled);
-        assert_eq!(record.export_kind, PackageExportKind::Fileserver);
-        assert_eq!(
-            record.fileserver_export.as_ref().unwrap().service_id,
-            "github"
-        );
-        assert!(
-            service
-                .root_binding(GITHUB_FILESERVER_PACKAGE_ID)
-                .unwrap()
-                .is_none(),
-            "preinstalled github-fileserver must seed catalog-only with no Root binding"
-        );
-
-        let listed = service
-            .execute(crate::PackageCommand::List {
-                request_id: "list-preinstalled".to_string(),
-            })
-            .unwrap();
-        assert!(listed.success);
-        let catalog = listed.catalog.unwrap();
-        let entry = catalog.packages.get(GITHUB_FILESERVER_PACKAGE_ID).unwrap();
-        assert_eq!(entry.kind, PackageKind::Preinstalled);
-        assert_eq!(entry.export_kind, PackageExportKind::Fileserver);
-
-        // Enabling after preinstalled seeding works without a local source checkout.
-        let binding = service
-            .bind_for_root(
-                GITHUB_FILESERVER_PACKAGE_ID,
-                RootBindingMode::Active,
-                Some(crate::RootFileserverActivation {
-                    access: FileserverMountAccess::ReadWrite,
-                    allow_network: true,
-                    host_grant_ids: Vec::new(),
-                }),
-            )
-            .unwrap();
-        assert_eq!(binding.mode, RootBindingMode::Active);
-        assert!(binding.fileserver.as_ref().unwrap().allow_network);
-    }
-
-    #[test]
-    fn seed_preinstalled_packages_preserves_operator_installed_github_fileserver() {
-        let pkg_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("packages/github-fileserver");
-        let snapshot = PackageSnapshot::from_directory(&pkg_dir).unwrap();
-        let service = PackageService::ephemeral().unwrap();
-        let installed = service
-            .execute(crate::PackageCommand::Install {
-                request_id: "operator-install-gh".to_string(),
-                package_id: GITHUB_FILESERVER_PACKAGE_ID.to_string(),
-                snapshot,
-            })
-            .unwrap();
-        assert!(installed.success, "{}", installed.message);
-
-        seed_preinstalled_packages(&service).unwrap();
-        let record = service.resolve(GITHUB_FILESERVER_PACKAGE_ID).unwrap();
-        assert_eq!(record.kind, PackageKind::Installed);
-    }
+fn resolve_gdrive_auth_storage_paths(
+    env_override: Option<&str>,
+    home: Option<&Path>,
+    xdg_data_home: Option<&Path>,
+) -> Option<(PathBuf, PathBuf)> {
+    let raw_path = if let Some(val) = env_override
+        .map(str::trim)
+        .filter(|val| !val.is_empty() && !val.contains(['\0', '\n', '\r']))
+    {
+        PathBuf::from(val)
+    } else {
+        let data_dir = if cfg!(target_os = "macos") {
+            home.map(|h| h.join("Library").join("Application Support"))?
+        } else {
+            xdg_data_home
+                .filter(|path| path.is_absolute())
+                .map(Path::to_path_buf)
+                .or_else(|| home.map(|h| h.join(".local").join("share")))?
+        };
+        data_dir
+            .join("Alan")
+            .join("Host Store")
+            .join("gdrive")
+            .join("auth.json")
+    };
+    let parent = raw_path.parent()?;
+    let file_name = raw_path.file_name()?;
+    let canonical_parent = canonical_or_owned(parent);
+    Some((canonical_parent.join(file_name), canonical_parent))
 }
+
+#[cfg(test)]
+#[path = "packages_tests.rs"]
+mod tests;

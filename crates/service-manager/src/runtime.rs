@@ -83,6 +83,8 @@ pub struct ServiceManagerConfig {
     pub root_package_bindings: Vec<crate::RootPackageBinding>,
     /// Explicit per-invocation Root bindings (`--package` / `--fileserver`, fail-closed).
     pub explicit_root_package_bindings: Vec<crate::RootPackageBinding>,
+    /// Optional Host-owned secret resolver hook for confined packaged Tool execution.
+    pub tool_secret_resolver: Option<Arc<dyn alan_agent_engine::tools::ToolSecretResolver>>,
 }
 
 pub trait LlmClientFactory: std::fmt::Debug + Send + Sync {
@@ -150,7 +152,17 @@ impl ServiceManagerConfig {
             include_builtin_skills: true,
             root_package_bindings: Vec::new(),
             explicit_root_package_bindings: Vec::new(),
+            tool_secret_resolver: None,
         }
+    }
+
+    /// Attach a Host-owned secret resolver hook for confined packaged Tool execution.
+    pub fn with_tool_secret_resolver(
+        mut self,
+        resolver: Arc<dyn alan_agent_engine::tools::ToolSecretResolver>,
+    ) -> Self {
+        self.tool_secret_resolver = Some(resolver);
+        self
     }
 
     /// Control whether Alan's preinstalled built-in skills are projected onto Agent Processes.
@@ -210,6 +222,7 @@ pub struct ServiceManager {
     package: Arc<PackageService>,
     package_handle: Arc<SwitchableFileServer>,
     fileserver_manager: Arc<crate::FileserverManager>,
+    tool_secret_resolver: Option<Arc<dyn alan_agent_engine::tools::ToolSecretResolver>>,
     #[cfg(test)]
     root_namespace: InProcessTransport,
     supervisor_cmd: tokio::sync::mpsc::UnboundedSender<supervisor::SupervisorCommand>,
@@ -220,6 +233,10 @@ pub struct ServiceManager {
 impl ServiceManager {
     pub async fn boot(mut config: ServiceManagerConfig) -> Result<Self> {
         trust::validate_boot_trust_and_resume(&config)?;
+        if let Some(resolver) = config.tool_secret_resolver.clone() {
+            config.launch_context.set_tool_secret_resolver(resolver);
+        }
+        let tool_secret_resolver = config.tool_secret_resolver.clone();
         ensure!(
             config.launch_context.package_references.is_empty(),
             "initial package references must be resolved by Package Service"
@@ -411,6 +428,7 @@ impl ServiceManager {
             package,
             package_handle,
             fileserver_manager,
+            tool_secret_resolver,
             #[cfg(test)]
             root_namespace: root,
             supervisor_cmd,
@@ -449,6 +467,11 @@ impl ServiceManager {
         launch_context: &mut ProcessLaunchContext,
         package_id: &str,
     ) -> Result<()> {
+        if launch_context.tool_secret_resolver.is_none()
+            && let Some(resolver) = self.tool_secret_resolver.clone()
+        {
+            launch_context.set_tool_secret_resolver(resolver);
+        }
         self.package_handle
             .while_bound_async(|| {
                 packages::project_package_reference_async(&self.package, launch_context, package_id)

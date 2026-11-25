@@ -357,3 +357,190 @@ done
         .await;
     assert_eq!(after_exit.exit_code, 127);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn governed_argv_tool_receives_secrets_adc_and_domain_proxy_only_for_bound_process() {
+    use alan_agent_engine::tools::ToolSecretResolver;
+    use std::sync::Mutex;
+
+    #[derive(Debug, Default)]
+    struct TestSecretResolver {
+        values: Mutex<std::collections::BTreeMap<String, String>>,
+    }
+    impl ToolSecretResolver for TestSecretResolver {
+        fn resolve_named_secret(&self, credential_id: &str) -> anyhow::Result<Option<String>> {
+            Ok(self.values.lock().unwrap().get(credential_id).cloned())
+        }
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let server_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let body = r#"{"upstream":"ok"}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+
+    let packages = crate::PackageService::ephemeral().unwrap();
+    let src = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(src.path().join("bin")).unwrap();
+    std::fs::write(
+        src.path().join("alan-package.toml"),
+        r#"
+kind = "tool"
+description = "Governed argv + secret + domain tool"
+
+[tool]
+name = "governed_cli"
+description = "Governed CLI wrapper"
+entrypoint = "bin/cli.py"
+capability = "network"
+allow_network = true
+network_domains = ["127.0.0.1"]
+arguments = "argv"
+
+[[tool.required_secrets]]
+env = "DEMO_API_KEY"
+credential_id = "demo-api-key"
+
+[tool.required_adc]
+env = "GOOGLE_APPLICATION_CREDENTIALS"
+credential_id = "demo-adc"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        src.path().join("bin/cli.py"),
+        r#"#!/usr/bin/env python3
+import json, os, stat, sys, urllib.request, urllib.error
+
+adc_path = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+adc_mode = stat.S_IMODE(os.stat(adc_path).st_mode)
+url = sys.argv[1]
+try:
+    with urllib.request.urlopen(url, timeout=3) as resp:
+        net = json.loads(resp.read().decode("utf-8"))
+except urllib.error.HTTPError as e:
+    net = {"http_status": e.code, "policy": e.headers.get("X-Alan-Network-Policy")}
+
+print(json.dumps({
+    "argv": sys.argv[1:],
+    "stdin": sys.stdin.read(),
+    "has_secret": os.environ.get("DEMO_API_KEY") == "demo-secret-xyz",
+    "adc_mode": oct(adc_mode),
+    "net": net,
+}))
+"#,
+    )
+    .unwrap();
+
+    let res = crate::run_q_command_with_package_service(
+        &packages,
+        Some(src.path()),
+        &[
+            "install".to_string(),
+            "--name".to_string(),
+            "governed-pack".to_string(),
+            crate::CLI_IMPORT_MOUNT_PATH.to_string(),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(res.exit_code, 0, "{}", String::from_utf8_lossy(&res.output));
+
+    let resolver = Arc::new(TestSecretResolver::default());
+    let mut ctx =
+        ProcessLaunchContext::new(Namespace::new(), Credentials::user("proc-gov"), "/").unwrap();
+    ctx.set_tool_secret_resolver(resolver.clone());
+    project_package_reference_async(&packages, &mut ctx, "governed-pack")
+        .await
+        .unwrap();
+
+    let runner = ToolRegistry::new().process_runner();
+    let scratch = tempfile::tempdir().unwrap();
+    runner.register_process_binding(
+        201,
+        ToolExecutionBinding::awaiting_host_projection("/".into(), scratch.path().to_path_buf())
+            .with_secret_resolver(resolver.clone()),
+    );
+    runner
+        .register_process_tools(201, ctx.packaged_tools.clone())
+        .unwrap();
+
+    // Missing secret fails deterministically with setup hint.
+    let missing = runner
+        .run(ToolProcessInvocation {
+            pid: 2001,
+            parent: Some(201),
+            executable: "/bin/governed_cli".to_string(),
+            args: vec![format!(
+                r#"{{"args":["http://127.0.0.1:{}/ok"]}}"#,
+                server_addr.port()
+            )],
+        })
+        .await;
+    assert_ne!(missing.exit_code, 0);
+    let missing_text = String::from_utf8_lossy(&missing.output);
+    assert!(missing_text.contains("demo-api-key"), "{missing_text}");
+
+    // Populate secrets and run allowed + disallowed domains.
+    {
+        let mut map = resolver.values.lock().unwrap();
+        map.insert("demo-api-key".to_string(), "demo-secret-xyz".to_string());
+        map.insert(
+            "demo-adc".to_string(),
+            r#"{"type":"authorized_user","refresh_token":"tok-abc"}"#.to_string(),
+        );
+    }
+
+    let ok = runner
+        .run(ToolProcessInvocation {
+            pid: 2002,
+            parent: Some(201),
+            executable: "/bin/governed_cli".to_string(),
+            args: vec![format!(
+                r#"{{"args":["http://127.0.0.1:{}/ok","$(echo nope)"],"stdin":"hi"}}"#,
+                server_addr.port()
+            )],
+        })
+        .await;
+    assert_eq!(ok.exit_code, 0, "{}", String::from_utf8_lossy(&ok.output));
+    let parsed: serde_json::Value = serde_json::from_slice(&ok.output).unwrap();
+    assert_eq!(parsed["has_secret"], serde_json::json!(true));
+    assert_eq!(parsed["adc_mode"], serde_json::json!("0o600"));
+    assert_eq!(parsed["stdin"], serde_json::json!("hi"));
+    assert_eq!(parsed["argv"][1], serde_json::json!("$(echo nope)"));
+    assert_eq!(parsed["net"]["upstream"], serde_json::json!("ok"));
+
+    let denied = runner
+        .run(ToolProcessInvocation {
+            pid: 2003,
+            parent: Some(201),
+            executable: "/bin/governed_cli".to_string(),
+            args: vec![r#"{"args":["http://unlisted.example/blocked"]}"#.to_string()],
+        })
+        .await;
+    assert_eq!(
+        denied.exit_code,
+        0,
+        "{}",
+        String::from_utf8_lossy(&denied.output)
+    );
+    let denied_parsed: serde_json::Value = serde_json::from_slice(&denied.output).unwrap();
+    assert_eq!(denied_parsed["net"]["http_status"], serde_json::json!(403));
+    assert_eq!(
+        denied_parsed["net"]["policy"],
+        serde_json::json!("domain-denied")
+    );
+}

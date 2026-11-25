@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Quartermaster `fileserver` entrypoint for `gdrivefs`.
+#
+# Integration contract:
+# - Installed atomically via `alan q install crates/service-manager/packages/gdrive-fileserver`
+#   with `kind = "fileserver"` (zero ambient authority: no process spawn, mount, or Drive OAuth
+#   token granted at install time).
+# - When explicitly started by Alan Service Manager inside OS confinement, this wrapper execs
+#   `alan __fileserver-gdrive` speaking framed aP wire requests/responses over stdin/stdout
+#   (`alan_ap::export_file_server` via `alan_service_manager::gdrivefs::serve_stdio`).
+# - Service Manager publishes the imported tree at `/srv/gdrive` and enforces explicit
+#   `ReadOnly` vs `ReadWrite` mount access at `/mnt/gdrive`.
+# - Google Drive OAuth tokens stay strictly in Host Store (`AuthStorage`); raw tokens never
+#   appear in any namespace file.
+
+exec "${ALAN_BIN:-alan}" __fileserver-gdrive "$@"

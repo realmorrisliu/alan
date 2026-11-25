@@ -35,4 +35,4 @@ pub use local::{
 pub use one_shot::complete_one_shot_prompt;
 pub use paths::{AgentRuntimeStorePaths, HostStorePaths, SystemStorePaths};
 pub use reset::{ResetReport, ResetScope, reset_alan_stores};
-pub use secret_store::{SecretStore, apply_profile_to_config};
+pub use secret_store::{EphemeralAdcFile, SecretStore, apply_profile_to_config};

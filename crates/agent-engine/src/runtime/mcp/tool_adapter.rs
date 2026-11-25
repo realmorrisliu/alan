@@ -193,6 +193,9 @@ impl McpProjectedTool {
                 arguments: "json_first_arg".to_string(),
                 result: "stdout_json".to_string(),
             },
+            network_domains: Vec::new(),
+            required_secrets: Vec::new(),
+            required_adc: None,
         };
         manifest.validate_for_name(&self.projected_name)?;
         Ok(manifest)

@@ -6,8 +6,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use super::{
-    about, connection, doctor, fileserver_github, host, login, man, memory, project, q, reset,
-    skill_authoring, skills, skills_list, trust, update, workflow,
+    about, connection, doctor, fileserver_gdrive, fileserver_github, host, login, man, memory,
+    project, q, reset, skill_authoring, skills, skills_list, trust, update, workflow,
 };
 
 /// Top-level `alan` command-line interface.
@@ -110,6 +110,9 @@ pub enum Commands {
     /// Serve the reference GitHub aP file server over stdio
     #[command(name = "__fileserver-github", hide = true)]
     FileserverGithub(fileserver_github::FileserverGithubArgs),
+    /// Serve the Google Drive aP file server over stdio
+    #[command(name = "__fileserver-gdrive", hide = true)]
+    FileserverGdrive(fileserver_gdrive::FileserverGdriveArgs),
 }
 
 /// Execution mode selected for bare `alan` (without subcommands).
@@ -585,6 +588,7 @@ pub async fn dispatch_subcommand(command: Commands) -> Result<Option<LegacyState
         Commands::Update(args) => update::run(args).await?,
         Commands::Reset(args) => reset::run(args)?,
         Commands::FileserverGithub(args) => fileserver_github::run(args).await?,
+        Commands::FileserverGdrive(args) => fileserver_gdrive::run(args).await?,
     }
     Ok(None)
 }

@@ -77,6 +77,9 @@ async fn parallel_batch_state(runner: Arc<dyn ProcessRunner>) -> (RuntimeLoopSta
         capability_is_argument_dependent: false,
         timeout_secs: 5,
         execution: execution.clone(),
+        network_domains: Vec::new(),
+        required_secrets: Vec::new(),
+        required_adc: None,
     })
     .unwrap();
     let write_manifest = serde_json::to_vec(&ToolPackageManifest {
@@ -88,6 +91,9 @@ async fn parallel_batch_state(runner: Arc<dyn ProcessRunner>) -> (RuntimeLoopSta
         capability_is_argument_dependent: false,
         timeout_secs: 5,
         execution,
+        network_domains: Vec::new(),
+        required_secrets: Vec::new(),
+        required_adc: None,
     })
     .unwrap();
 

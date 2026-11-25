@@ -101,16 +101,72 @@ pub enum QAction {
         /// Optional local package directory to install or upgrade atomically.
         path: Option<PathBuf>,
     },
+    /// Store or replace a named Host Store secret (`required_secrets` / `required_adc`) from stdin or hidden prompt.
+    SetSecret {
+        /// Host Store credential identifier (e.g. `gemini-api-key`, `colab-adc`).
+        credential_id: String,
+    },
 }
 
 /// Executes `alan q` against the current installation's Package Store via Service Manager boundaries.
 pub async fn run(args: QArgs) -> Result<()> {
     alan_os_host::installation::validate_current_invocation()?;
     let _installation_access = alan_os_host::installation::InstallationPaths::detect()?.access()?;
+    if let QAction::SetSecret { credential_id } = args.action {
+        return run_set_secret(&credential_id);
+    }
     let system = SystemStorePaths::detect()?;
     let service = PackageService::open(system.packages()?)?;
     let output = run_with_service(&service, args).await?;
     print!("{output}");
+    Ok(())
+}
+
+fn validate_credential_id(credential_id: &str) -> Result<String> {
+    let trimmed = credential_id.trim();
+    ensure!(
+        !trimmed.is_empty()
+            && !trimmed.contains("..")
+            && !trimmed.contains('/')
+            && !trimmed.contains('\\')
+            && trimmed
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'),
+        "invalid credential id `{credential_id}`"
+    );
+    Ok(trimmed.to_string())
+}
+
+fn read_secret_input(credential_id: &str) -> Result<String> {
+    use std::io::{IsTerminal, Read, Write};
+
+    let mut value = String::new();
+    if std::io::stdin().is_terminal() {
+        print!("Secret for {credential_id}: ");
+        std::io::stdout().flush()?;
+        let _echo = alan_tui::terminal::StdinEchoGuard::disable_if_tty()
+            .map_err(|err| anyhow::anyhow!("disable terminal echo for secret entry: {err}"))?;
+        let read_res = std::io::stdin().read_line(&mut value);
+        println!();
+        read_res?;
+    } else {
+        std::io::stdin().read_to_string(&mut value)?;
+    }
+    let trimmed = value.trim();
+    ensure!(
+        !trimmed.is_empty(),
+        "secret for `{credential_id}` must not be empty"
+    );
+    Ok(trimmed.to_string())
+}
+
+fn run_set_secret(credential_id: &str) -> Result<()> {
+    let credential_id = validate_credential_id(credential_id)?;
+    let host = alan_os_host::HostStorePaths::detect()?;
+    let secret = read_secret_input(&credential_id)?;
+    alan_os_host::SecretStore::from_directory(&host.credentials)?
+        .set_named_secret(&credential_id, &secret)?;
+    println!("Stored secret for `{credential_id}` in Host Store.");
     Ok(())
 }
 
@@ -164,9 +220,32 @@ pub async fn run_with_service(service: &Arc<PackageService>, args: QArgs) -> Res
                     fs_access.as_str()
                 ));
             }
+            if record.export_kind == PackageExportKind::Tool {
+                ensure!(
+                    access.is_none(),
+                    "`--access` only applies to `fileserver` packages"
+                );
+                let requires_network = record.tool_exports.iter().any(|tool| tool.allow_network);
+                ensure!(
+                    allow_network == requires_network,
+                    if requires_network {
+                        format!(
+                            "tool package `{package_id}` requires `--allow-network` to enable outbound egress"
+                        )
+                    } else {
+                        format!(
+                            "tool package `{package_id}` does not declare `allow_network = true`"
+                        )
+                    }
+                );
+                service.bind_for_root(&package_id, RootBindingMode::Active, None)?;
+                return Ok(format!(
+                    "enabled `{package_id}` (`active` tool allow_network={allow_network}; takes effect on next `alan` invocation)\n"
+                ));
+            }
             ensure!(
                 access.is_none() && !allow_network,
-                "`--access` and `--allow-network` only apply to `fileserver` packages"
+                "`--access` and `--allow-network` only apply to `fileserver` or network-enabled `tool` packages"
             );
             service.bind_for_root(&package_id, RootBindingMode::Active, None)?;
             return Ok(format!(
@@ -195,6 +274,11 @@ pub async fn run_with_service(service: &Arc<PackageService>, args: QArgs) -> Res
                 format!("`{package_id}` was not bound to Root\n")
             });
         }
+        QAction::SetSecret { .. } => {
+            bail!(
+                "`alan q set-secret` writes to Host Store and must run via `alan q set-secret <credential_id>`"
+            );
+        }
         _ => {}
     }
 
@@ -218,7 +302,10 @@ pub async fn run_with_service(service: &Arc<PackageService>, args: QArgs) -> Res
             (Some(canonical), q_args)
         }
         QAction::List => (None, vec!["list".to_string()]),
-        QAction::Inspect { .. } | QAction::Enable { .. } | QAction::Disable { .. } => {
+        QAction::Inspect { .. }
+        | QAction::Enable { .. }
+        | QAction::Disable { .. }
+        | QAction::SetSecret { .. } => {
             unreachable!("handled above")
         }
         QAction::Upgrade { package_id, path } => {
@@ -310,10 +397,16 @@ fn emit_inactive_runtime_hint(note: &mut String, package_id: &str, record: &Pack
     if record.export_kind == PackageExportKind::Skill {
         return;
     }
-    let hint = if let Some(fs) = record.fileserver_export.as_ref()
-        && fs.allow_network
+    let hint = if record
+        .fileserver_export
+        .as_ref()
+        .is_some_and(|fs| fs.allow_network)
     {
         format!("alan q enable {package_id} --access read-write --allow-network")
+    } else if record.export_kind == PackageExportKind::Tool
+        && record.tool_exports.iter().any(|tool| tool.allow_network)
+    {
+        format!("alan q enable {package_id} --allow-network")
     } else {
         format!("alan q enable {package_id}")
     };
@@ -556,6 +649,45 @@ fn render_package_inspection(
 mod tests {
     use super::*;
 
+    async fn run_q(service: &Arc<PackageService>, action: QAction) -> Result<String> {
+        run_with_service(service, QArgs { action }).await
+    }
+
+    async fn install_q(
+        service: &Arc<PackageService>,
+        name: Option<&str>,
+        catalog_only: bool,
+        path: &Path,
+    ) -> Result<String> {
+        run_q(
+            service,
+            QAction::Install {
+                name: name.map(str::to_string),
+                catalog_only,
+                path: path.to_path_buf(),
+            },
+        )
+        .await
+    }
+
+    async fn enable_q(
+        service: &Arc<PackageService>,
+        package_id: &str,
+        access: Option<FileserverAccessArg>,
+        allow_network: bool,
+    ) -> Result<String> {
+        run_q(
+            service,
+            QAction::Enable {
+                package_id: package_id.to_string(),
+                access,
+                allow_network,
+                skills_only: false,
+            },
+        )
+        .await
+    }
+
     #[tokio::test]
     async fn cli_q_install_list_sync_upgrade_and_uninstall_round_trip() {
         let service = PackageService::ephemeral().unwrap();
@@ -581,31 +713,15 @@ parameters = { type = "object" }
         )
         .unwrap();
 
-        let installed = run_with_service(
-            &service,
-            QArgs {
-                action: QAction::Install {
-                    name: Some("cli-probe-pack".to_string()),
-                    catalog_only: false,
-                    path: pkg_dir.path().to_path_buf(),
-                },
-            },
-        )
-        .await
-        .unwrap();
+        let installed = install_q(&service, Some("cli-probe-pack"), false, pkg_dir.path())
+            .await
+            .unwrap();
         assert!(
             installed.starts_with("installed cli-probe-pack"),
             "{installed}"
         );
 
-        let listing = run_with_service(
-            &service,
-            QArgs {
-                action: QAction::List,
-            },
-        )
-        .await
-        .unwrap();
+        let listing = run_q(&service, QAction::List).await.unwrap();
         assert!(listing.contains("cli-probe-pack"), "{listing}");
         assert!(listing.contains("export=tool"), "{listing}");
 
@@ -614,25 +730,21 @@ parameters = { type = "object" }
             "#!/bin/sh\necho '{\"v\":2}'\n",
         )
         .unwrap();
-        let synced = run_with_service(
+        let synced = run_q(
             &service,
-            QArgs {
-                action: QAction::Sync {
-                    name: Some("cli-probe-pack".to_string()),
-                    path: Some(pkg_dir.path().to_path_buf()),
-                },
+            QAction::Sync {
+                name: Some("cli-probe-pack".to_string()),
+                path: Some(pkg_dir.path().to_path_buf()),
             },
         )
         .await
         .unwrap();
         assert!(synced.starts_with("upgraded cli-probe-pack"), "{synced}");
 
-        let uninstalled = run_with_service(
+        let uninstalled = run_q(
             &service,
-            QArgs {
-                action: QAction::Uninstall {
-                    package_id: "cli-probe-pack".to_string(),
-                },
+            QAction::Uninstall {
+                package_id: "cli-probe-pack".to_string(),
             },
         )
         .await
@@ -669,31 +781,15 @@ args = ["--serve"]
         .unwrap();
         std::fs::write(pkg_dir.path().join("bin/demo-fs"), "#!/bin/sh\nexit 0\n").unwrap();
 
-        let installed = run_with_service(
-            &service,
-            QArgs {
-                action: QAction::Install {
-                    name: Some("demo-fileserver".to_string()),
-                    catalog_only: false,
-                    path: pkg_dir.path().to_path_buf(),
-                },
-            },
-        )
-        .await
-        .unwrap();
+        let installed = install_q(&service, Some("demo-fileserver"), false, pkg_dir.path())
+            .await
+            .unwrap();
         assert!(
             installed.starts_with("installed demo-fileserver"),
             "{installed}"
         );
 
-        let listing = run_with_service(
-            &service,
-            QArgs {
-                action: QAction::List,
-            },
-        )
-        .await
-        .unwrap();
+        let listing = run_q(&service, QAction::List).await.unwrap();
         assert!(listing.contains("demo-fileserver"), "{listing}");
         assert!(listing.contains("export=fileserver"), "{listing}");
         assert!(
@@ -701,12 +797,10 @@ args = ["--serve"]
             "expected fileserver summary in listing: {listing}"
         );
 
-        let inspected = run_with_service(
+        let inspected = run_q(
             &service,
-            QArgs {
-                action: QAction::Inspect {
-                    package_id: "demo-fileserver".to_string(),
-                },
+            QAction::Inspect {
+                package_id: "demo-fileserver".to_string(),
             },
         )
         .await
@@ -757,18 +851,9 @@ type = "stdio"
         .unwrap();
 
         // 1. Default `alan q install` attaches Companion Skills (`SkillsOnly`) while keeping runtime inactive.
-        let installed = run_with_service(
-            &service,
-            QArgs {
-                action: QAction::Install {
-                    name: Some("guide-pack".to_string()),
-                    catalog_only: false,
-                    path: pkg_dir.path().to_path_buf(),
-                },
-            },
-        )
-        .await
-        .unwrap();
+        let installed = install_q(&service, Some("guide-pack"), false, pkg_dir.path())
+            .await
+            .unwrap();
         assert!(
             installed.contains("root_skills: attached (guide)"),
             "{installed}"
@@ -779,12 +864,10 @@ type = "stdio"
             RootBindingMode::SkillsOnly
         );
 
-        let inspected = run_with_service(
+        let inspected = run_q(
             &service,
-            QArgs {
-                action: QAction::Inspect {
-                    package_id: "guide-pack".to_string(),
-                },
+            QAction::Inspect {
+                package_id: "guide-pack".to_string(),
             },
         )
         .await
@@ -796,57 +879,31 @@ type = "stdio"
         assert!(inspected.contains("companion_skills: guide"), "{inspected}");
 
         // 2. `enable` without escalation defaults to `ReadOnly` and `allow_network = false`.
-        let enabled_ro = run_with_service(
-            &service,
-            QArgs {
-                action: QAction::Enable {
-                    package_id: "guide-pack".to_string(),
-                    access: None,
-                    allow_network: false,
-                    skills_only: false,
-                },
-            },
-        )
-        .await
-        .unwrap();
+        let enabled_ro = enable_q(&service, "guide-pack", None, false).await.unwrap();
         assert!(enabled_ro.contains("access=read_only"), "{enabled_ro}");
         assert!(enabled_ro.contains("allow_network=false"), "{enabled_ro}");
 
         // 3. Explicit `enable --access rw --allow-network` updates binding cleanly.
-        let enabled_rw = run_with_service(
+        let enabled_rw = enable_q(
             &service,
-            QArgs {
-                action: QAction::Enable {
-                    package_id: "guide-pack".to_string(),
-                    access: Some(FileserverAccessArg::ReadWrite),
-                    allow_network: true,
-                    skills_only: false,
-                },
-            },
+            "guide-pack",
+            Some(FileserverAccessArg::ReadWrite),
+            true,
         )
         .await
         .unwrap();
         assert!(enabled_rw.contains("access=read_write"), "{enabled_rw}");
         assert!(enabled_rw.contains("allow_network=true"), "{enabled_rw}");
-        let list_rw = run_with_service(
-            &service,
-            QArgs {
-                action: QAction::List,
-            },
-        )
-        .await
-        .unwrap();
+        let list_rw = run_q(&service, QAction::List).await.unwrap();
         assert!(list_rw.contains("root=active(rw,net)"), "{list_rw}");
         assert!(list_rw.contains("companion_skills=guide"), "{list_rw}");
 
         // 4. `disable --keep-skills` downgrades back to `skills_only`; `disable` removes binding.
-        let kept = run_with_service(
+        let kept = run_q(
             &service,
-            QArgs {
-                action: QAction::Disable {
-                    package_id: "guide-pack".to_string(),
-                    keep_skills: true,
-                },
+            QAction::Disable {
+                package_id: "guide-pack".to_string(),
+                keep_skills: true,
             },
         )
         .await
@@ -857,13 +914,11 @@ type = "stdio"
             RootBindingMode::SkillsOnly
         );
 
-        run_with_service(
+        run_q(
             &service,
-            QArgs {
-                action: QAction::Disable {
-                    package_id: "guide-pack".to_string(),
-                    keep_skills: false,
-                },
+            QAction::Disable {
+                package_id: "guide-pack".to_string(),
+                keep_skills: false,
             },
         )
         .await
@@ -892,18 +947,9 @@ parameters = { type = "object" }
             "---\nname: helper\ndescription: Helper.\n---\nBody.\n",
         )
         .unwrap();
-        let cat_out = run_with_service(
-            &service,
-            QArgs {
-                action: QAction::Install {
-                    name: Some("cat-pack".to_string()),
-                    catalog_only: true,
-                    path: cat_dir.path().to_path_buf(),
-                },
-            },
-        )
-        .await
-        .unwrap();
+        let cat_out = install_q(&service, Some("cat-pack"), true, cat_dir.path())
+            .await
+            .unwrap();
         assert!(cat_out.contains("catalog-only"), "{cat_out}");
         assert!(service.root_binding("cat-pack").unwrap().is_none());
 
@@ -911,44 +957,19 @@ parameters = { type = "object" }
         let repo_packages =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../service-manager/packages");
         let gh_pkg = repo_packages.join("github-fileserver");
-        run_with_service(
+        install_q(&service, None, false, &gh_pkg).await.unwrap();
+        enable_q(
             &service,
-            QArgs {
-                action: QAction::Install {
-                    name: None,
-                    catalog_only: false,
-                    path: gh_pkg.clone(),
-                },
-            },
-        )
-        .await
-        .unwrap();
-        run_with_service(
-            &service,
-            QArgs {
-                action: QAction::Enable {
-                    package_id: "github-fileserver".to_string(),
-                    access: Some(FileserverAccessArg::ReadWrite),
-                    allow_network: true,
-                    skills_only: false,
-                },
-            },
+            "github-fileserver",
+            Some(FileserverAccessArg::ReadWrite),
+            true,
         )
         .await
         .unwrap();
         for catalog_only in [false, true] {
-            let reinstall = run_with_service(
-                &service,
-                QArgs {
-                    action: QAction::Install {
-                        name: None,
-                        catalog_only,
-                        path: gh_pkg.clone(),
-                    },
-                },
-            )
-            .await
-            .unwrap();
+            let reinstall = install_q(&service, None, catalog_only, &gh_pkg)
+                .await
+                .unwrap();
             assert!(
                 reinstall.contains("preserved (active(rw,net))"),
                 "{reinstall}"
@@ -960,21 +981,7 @@ parameters = { type = "object" }
             assert!(fs.allow_network);
         }
 
-        // Non-fileserver `--allow-network` fails cleanly.
-        assert!(
-            run_with_service(
-                &service,
-                QArgs {
-                    action: QAction::Enable {
-                        package_id: "cat-pack".to_string(),
-                        access: None,
-                        allow_network: true,
-                        skills_only: false,
-                    },
-                },
-            )
-            .await
-            .is_err()
-        );
+        // Non-network tool `--allow-network` fails cleanly.
+        assert!(enable_q(&service, "cat-pack", None, true).await.is_err());
     }
 }

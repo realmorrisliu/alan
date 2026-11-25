@@ -742,7 +742,8 @@ impl AgentRuntimeService {
         let binding = alan_agent_engine::tools::ToolExecutionBinding::awaiting_host_projection(
             Path::new(&launch_context.cwd).to_path_buf(),
             scratch_dir,
-        );
+        )
+        .with_optional_secret_resolver(launch_context.tool_secret_resolver.clone());
         let binding = self.host_mount.reconcile(pid.0, binding)?;
         self.tool_runner.register_process_binding(pid.0, binding);
         if !launch_context.packaged_tools.is_empty() {

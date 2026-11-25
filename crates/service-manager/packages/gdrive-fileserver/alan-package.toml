@@ -1,0 +1,19 @@
+schema_version = 1
+kind = "fileserver"
+version = "0.1.0"
+description = "Native pure-Rust Google Drive aP file-server package projecting /mnt/gdrive with Host-owned OAuth."
+
+[fileserver]
+id = "gdrive"
+description = "Mounts Google Drive at /mnt/gdrive: read by-id/<id>/{meta.json,content}, files/<path>, and search/<query> with read_only + network; write ctl or uploads/new with read_write + drive.file scope."
+entrypoint = "bin/gdrivefs"
+allow_network = true
+network_domains = ["www.googleapis.com", "oauth2.googleapis.com"]
+timeout_secs = 30
+max_message_bytes = 1048576
+
+[fileserver.transport]
+type = "stdio"
+command = "bin/gdrivefs"
+args = []
+env = {}

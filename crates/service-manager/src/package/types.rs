@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use alan_agent_engine::runtime::tool_packages::{TOOL_ARGUMENTS_JSON_FIRST_ARG, ToolSecretRef};
 use alan_agent_engine::skills::SkillTypedDependency;
 use alan_agent_engine::tools::ToolCapability;
 use anyhow::{Result, ensure};
@@ -99,8 +100,24 @@ pub struct ToolPackageExport {
     /// Whether outbound network is allowed inside the OS sandbox.
     #[serde(default)]
     pub allow_network: bool,
+    /// Declared outbound network domain allowlist (`allow_network = true` requires non-empty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network_domains: Vec<String>,
+    /// Named Host Store secrets projected into the confined subprocess environment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_secrets: Vec<ToolSecretRef>,
+    /// Optional Host Store ADC JSON credential projected as an ephemeral `0600` file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_adc: Option<ToolSecretRef>,
+    /// Argument passing convention (`"json_first_arg"` or `"argv"`).
+    #[serde(default = "default_tool_arguments_hint")]
+    pub arguments: String,
     /// Relative path inside materialized `content/` to the JSON `ToolPackageManifest`.
     pub manifest_path: String,
+}
+
+fn default_tool_arguments_hint() -> String {
+    TOOL_ARGUMENTS_JSON_FIRST_ARG.to_string()
 }
 
 /// Transport definition for one exported MCP server.

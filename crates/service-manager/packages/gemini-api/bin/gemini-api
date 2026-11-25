@@ -1,0 +1,69 @@
+#!/bin/sh
+set -eu
+
+canonical_path() {
+  target="$1"
+  case "$target" in
+    */*)
+      parent="${target%/*}"
+      [ -n "$parent" ] || parent="/"
+      leaf="${target##*/}"
+      ;;
+    *)
+      parent="."
+      leaf="$target"
+      ;;
+  esac
+  dir="$(CDPATH= cd -- "$parent" 2>/dev/null && pwd)" || return 1
+  printf '%s/%s\n' "${dir%/}" "$leaf"
+}
+
+resolve_host_bin() {
+  target="$1"
+  self_path="$(canonical_path "$0" || printf '%s' "$0")"
+  old_ifs="$IFS"
+  IFS=:
+  for dir in ${PATH:-}; do
+    [ -n "$dir" ] || continue
+    cand="${dir%/}/$target"
+    if [ -x "$cand" ] && [ ! -d "$cand" ]; then
+      cand_path="$(canonical_path "$cand" || printf '%s' "$cand")"
+      if [ "$cand_path" != "$self_path" ]; then
+        IFS="$old_ifs"
+        printf '%s\n' "$cand"
+        return 0
+      fi
+    fi
+  done
+  IFS="$old_ifs"
+  return 1
+}
+
+if ! HOST_BIN="$(resolve_host_bin "gemini-api")"; then
+  printf '%s\n' \
+    'error: host `gemini-api` CLI binary was not found in PATH.' \
+    'Install `gemini-api-cli` on the host machine before enabling or running `gemini-api`:' \
+    '  curl -fsSL https://raw.githubusercontent.com/google-gemini/gemini-api-cli/main/scripts/install.sh | bash' \
+    'Then store your Gemini API key in Alan Host Store:' \
+    '  alan q set-secret gemini-api-key' >&2
+  exit 127
+fi
+
+has_no_interactive=0
+for arg in ${1+"$@"}; do
+  case "$arg" in
+    --interactive|--interactive=true|--interactive=1)
+      printf '%s\n' 'error: `gemini-api` inside Alan requires `--no-interactive` mode.' >&2
+      exit 2
+      ;;
+    --no-interactive|--no-interactive=true)
+      has_no_interactive=1
+      ;;
+  esac
+done
+
+if [ "$has_no_interactive" -eq 1 ]; then
+  exec "$HOST_BIN" ${1+"$@"}
+else
+  exec "$HOST_BIN" --no-interactive ${1+"$@"}
+fi

@@ -1,0 +1,4 @@
+schema_version = 1
+kind = "skill"
+version = "0.1.0"
+description = "Thin Alan-native multi-provider read-only design bakeoff and root-cause arena orchestrating parallel spawn_subagent contenders across distinct configured models with independent read-only verifier scoring."

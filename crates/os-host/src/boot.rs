@@ -266,6 +266,7 @@ impl HostBootConfig {
         let root_package_bindings =
             alan_service_manager::PackageService::load_root_bindings_from_store(&packages_dir)?;
         let tools = product_tool_registry(Arc::new(process.agent_config.core_config.clone()));
+        let secret_store = SecretStore::from_directory(&host_store.credentials)?;
         let llm_factory = Arc::new(ProductLlmClientFactory {
             credentials_dir: host_store.credentials.clone(),
             managed_auth: Some(host_store.managed_auth),
@@ -289,6 +290,7 @@ impl HostBootConfig {
                 include_builtin_skills: true,
                 root_package_bindings,
                 explicit_root_package_bindings: Vec::new(),
+                tool_secret_resolver: Some(Arc::new(secret_store)),
             },
             ephemeral_rollout: false,
             saved_grants: Vec::new(),

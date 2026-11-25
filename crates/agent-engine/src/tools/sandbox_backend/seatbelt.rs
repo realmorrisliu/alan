@@ -42,6 +42,32 @@ pub fn seatbelt_profile(
     read_denylist: &[PathBuf],
     allow_network: bool,
 ) -> String {
+    let network_rule = if allow_network {
+        ""
+    } else {
+        "(deny network*)\n"
+    };
+    seatbelt_profile_with_network_rule(writable_roots, read_denylist, network_rule)
+}
+
+/// Generate a macOS Seatbelt (SBPL) profile that confines filesystem writes to
+/// writable roots (plus the temp dir) and allows outbound TCP only to `127.0.0.1:<proxy_port>`.
+pub fn seatbelt_profile_for_loopback_proxy(
+    writable_roots: &[PathBuf],
+    read_denylist: &[PathBuf],
+    proxy_port: u16,
+) -> String {
+    let network_rule = format!(
+        "(deny network*)\n(allow network-outbound (remote tcp \"localhost:{proxy_port}\"))\n"
+    );
+    seatbelt_profile_with_network_rule(writable_roots, read_denylist, &network_rule)
+}
+
+fn seatbelt_profile_with_network_rule(
+    writable_roots: &[PathBuf],
+    read_denylist: &[PathBuf],
+    network_rule: &str,
+) -> String {
     // sandbox-exec evaluates real (symlink-resolved) paths, so the subpath
     // rules must use canonical paths (e.g. /var -> /private/var on macOS).
     let tmpdir = std::env::var("TMPDIR").ok();
@@ -81,11 +107,6 @@ pub fn seatbelt_profile(
     // shell-wrapper-nested path writes), which leaves program-internal writes
     // (git porcelain, memory) intact.
     // The OS sandbox's role here is the host_mount + network boundary.
-    let network_rule = if allow_network {
-        ""
-    } else {
-        "(deny network*)\n"
-    };
     format!(
         "(version 1)\n\
          (allow default)\n\
