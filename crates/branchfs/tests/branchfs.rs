@@ -268,3 +268,333 @@ async fn event_read_blocks_until_branch_activity_is_appended() {
     let events = read_text(&fs, &["events"], Fid(4)).await;
     assert!(events.contains(r#""type":"fork""#), "{events}");
 }
+
+#[derive(Default)]
+struct MockWorkspacePort {
+    created: tokio::sync::Mutex<Vec<String>>,
+    discarded: tokio::sync::Mutex<Vec<String>>,
+    flushed: tokio::sync::Mutex<Vec<alan_branchfs::BranchWorkspaceExitFlushRequest>>,
+    inject_host_path_on_create: bool,
+}
+
+#[async_trait::async_trait]
+impl alan_branchfs::BranchWorkspacePort for MockWorkspacePort {
+    async fn create_workspace(
+        &self,
+        request: &alan_branchfs::BranchWorkspaceCreateRequest,
+    ) -> Result<alan_branchfs::BranchWorkspaceProvisioned, alan_branchfs::BranchWorkspacePortError>
+    {
+        if self.inject_host_path_on_create {
+            return Ok(alan_branchfs::BranchWorkspaceProvisioned {
+                workspace_ref: "/Users/alice/System Store/workspaces/1/ws-bad".to_string(),
+                backing_kind: alan_branchfs::WorkspaceBackingKind::NativeCow,
+                diff_summary: None,
+                checks_summary: None,
+            });
+        }
+        let ws_ref = format!("ws-{}", request.branch_id);
+        self.created.lock().await.push(ws_ref.clone());
+        Ok(alan_branchfs::BranchWorkspaceProvisioned {
+            workspace_ref: ws_ref,
+            backing_kind: alan_branchfs::WorkspaceBackingKind::NativeCow,
+            diff_summary: Some("0 files changed".to_string()),
+            checks_summary: None,
+        })
+    }
+
+    async fn discard_workspace(
+        &self,
+        request: &alan_branchfs::BranchWorkspaceDiscardRequest,
+    ) -> Result<(), alan_branchfs::BranchWorkspacePortError> {
+        self.discarded
+            .lock()
+            .await
+            .push(request.workspace_ref.clone());
+        Ok(())
+    }
+
+    async fn flush_selected_on_exit(
+        &self,
+        request: &alan_branchfs::BranchWorkspaceExitFlushRequest,
+    ) -> Result<
+        alan_branchfs::BranchWorkspaceExitFlushOutcome,
+        alan_branchfs::BranchWorkspacePortError,
+    > {
+        self.flushed.lock().await.push(request.clone());
+        Ok(alan_branchfs::BranchWorkspaceExitFlushOutcome {
+            patch_artifact_ref: Some(format!("patch-{}.patch", request.branch_id)),
+            clone_purged: true,
+        })
+    }
+}
+
+#[tokio::test]
+async fn branch_record_and_selected_publish_opaque_workspace_metadata() {
+    let fs = BranchFs::new();
+    fs.install_base_branch("base", [b"a\n".to_vec()])
+        .await
+        .unwrap();
+
+    write_ctl(
+        &fs,
+        Fid(1),
+        json!({
+            "op": "fork",
+            "id": "cand-a",
+            "from": "base",
+            "delta": "crates/branchfs/src/lib.rs (+14/-3)\n",
+            "workspace_ref": "ws-cand-a",
+            "backing_kind": "native_cow",
+            "diff_summary": "1 file changed (+14/-3): crates/branchfs/src/lib.rs",
+            "checks_summary": "cargo test -p alan-branchfs: 8 passed"
+        }),
+    )
+    .await
+    .unwrap();
+
+    write_ctl(
+        &fs,
+        Fid(2),
+        json!({
+            "op": "score",
+            "id": "cand-a",
+            "score": 0.94,
+            "summary": "all unit tests pass",
+            "diff_summary": "1 file changed (+14/-3): crates/branchfs/src/lib.rs at /mnt/work/crates/branchfs/src/lib.rs",
+            "checks_summary": "cargo test -p alan-branchfs: 12 passed, 0 failed"
+        }),
+    )
+    .await
+    .unwrap();
+    write_ctl(&fs, Fid(3), json!({"op": "select", "id": "cand-a"}))
+        .await
+        .unwrap();
+
+    let record: BranchRecord =
+        serde_json::from_str(&read_text(&fs, &["branches", "cand-a"], Fid(4)).await).unwrap();
+    assert_eq!(record.workspace_ref.as_deref(), Some("ws-cand-a"));
+    assert_eq!(
+        record.backing_kind,
+        Some(alan_branchfs::WorkspaceBackingKind::NativeCow)
+    );
+    assert!(
+        record
+            .diff_summary
+            .as_deref()
+            .unwrap()
+            .contains("crates/branchfs/src/lib.rs")
+    );
+    assert_eq!(
+        record.checks_summary.as_deref(),
+        Some("cargo test -p alan-branchfs: 12 passed, 0 failed")
+    );
+
+    let selected: Value =
+        serde_json::from_str(&read_text(&fs, &["selected"], Fid(5)).await).unwrap();
+    assert_eq!(selected["workspace_ref"], "ws-cand-a");
+    assert_eq!(selected["backing_kind"], "native_cow");
+
+    let events = read_text(&fs, &["events"], Fid(6)).await;
+    assert!(
+        events.contains(r#""workspace_ref":"ws-cand-a""#),
+        "{events}"
+    );
+    assert!(
+        events.contains(r#""backing_kind":"native_cow""#),
+        "{events}"
+    );
+}
+
+#[tokio::test]
+async fn ctl_rejects_raw_host_paths_across_all_fields() {
+    let fs = BranchFs::new();
+    fs.install_base_branch("base", [b"a\n".to_vec()])
+        .await
+        .unwrap();
+
+    // 1. workspace_ref must be an opaque handle, never a path.
+    for bad_ref in [
+        "/Users/alice/ws-1",
+        "/mnt/work/ws-1",
+        "dir/ws-1",
+        "../ws-1",
+        "C:\\ws-1",
+    ] {
+        let err = write_ctl(
+            &fs,
+            Fid(1),
+            json!({
+                "op": "fork",
+                "id": "cand-bad-ref",
+                "from": "base",
+                "delta": "ok\n",
+                "workspace_ref": bad_ref
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, ErrorCode::BadRequest, "bad_ref={bad_ref}");
+    }
+
+    // 2. diff_summary, checks_summary, delta, and score summary must never embed raw Host paths.
+    for bad_text in [
+        "/Users/morris/repo/src/lib.rs",
+        "/home/dev/project/main.rs",
+        "/tmp/cow-clone-1",
+        "/var/folders/ab/cdef/T/ws",
+        "/private/tmp/ws-1",
+        "~/Library/Application Support/Alan/System Store/workspaces/1/ws-1",
+        "C:\\Users\\alice\\repo\\lib.rs",
+        "file:///Users/morris/repo",
+        "staged at System Store/workspaces/inst-1/ws-1",
+    ] {
+        let err = write_ctl(
+            &fs,
+            Fid(2),
+            json!({
+                "op": "fork",
+                "id": "cand-bad-diff",
+                "from": "base",
+                "delta": "ok\n",
+                "workspace_ref": "ws-ok",
+                "diff_summary": bad_text
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, ErrorCode::BadRequest, "bad_text={bad_text}");
+
+        let err = write_ctl(
+            &fs,
+            Fid(3),
+            json!({
+                "op": "fork",
+                "id": "cand-bad-delta",
+                "from": "base",
+                "delta": bad_text
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, ErrorCode::BadRequest, "bad_delta={bad_text}");
+    }
+
+    // Verify none of the rejected commands created branches or polluted events.
+    let branches = read_text(&fs, &["branches"], Fid(4)).await;
+    assert_eq!(branches.trim(), "base");
+    let events = read_text(&fs, &["events"], Fid(5)).await;
+    assert!(!events.contains("/Users/"), "{events}");
+    assert!(!events.contains("/tmp/"), "{events}");
+    assert!(!events.contains("System Store/workspaces"), "{events}");
+}
+
+#[tokio::test]
+async fn workspace_port_coordinates_fork_immediate_discard_and_exit_flush() {
+    let port = Arc::new(MockWorkspacePort::default());
+    let fs = BranchFs::with_workspace_port(port.clone());
+    fs.install_base_branch("base", [b"a\n".to_vec()])
+        .await
+        .unwrap();
+
+    // Fork two candidates without pre-supplied workspace_ref -> port provisions them.
+    write_ctl(
+        &fs,
+        Fid(1),
+        json!({"op": "fork", "id": "cand-a", "from": "base", "delta": "delta-a\n"}),
+    )
+    .await
+    .unwrap();
+    write_ctl(
+        &fs,
+        Fid(2),
+        json!({"op": "fork", "id": "cand-b", "from": "base", "delta": "delta-b\n"}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        *port.created.lock().await,
+        vec!["ws-cand-a".to_string(), "ws-cand-b".to_string()]
+    );
+
+    // Score both, select cand-a, and immediately discard losing clones.
+    write_ctl(
+        &fs,
+        Fid(3),
+        json!({
+            "op": "score",
+            "id": "cand-a",
+            "score": 0.95,
+            "summary": "winner",
+            "diff_summary": "1 file changed",
+            "checks_summary": "all passed"
+        }),
+    )
+    .await
+    .unwrap();
+    write_ctl(
+        &fs,
+        Fid(4),
+        json!({"op": "score", "id": "cand-b", "score": 0.40, "summary": "loser"}),
+    )
+    .await
+    .unwrap();
+    write_ctl(&fs, Fid(5), json!({"op": "select", "id": "cand-a"}))
+        .await
+        .unwrap();
+
+    let discarded = fs.discard_unselected_candidates().await.unwrap();
+    assert_eq!(discarded, vec!["cand-b".to_string()]);
+    assert_eq!(*port.discarded.lock().await, vec!["ws-cand-b".to_string()]);
+    assert!(fs.branch("cand-b").await.is_none());
+
+    // Normal exit before host sync-back flushes unapplied winner .patch + purges clone.
+    let flushed = fs.flush_on_exit().await.unwrap();
+    assert_eq!(flushed.len(), 1);
+    assert_eq!(flushed[0].branch_id, "cand-a");
+    assert_eq!(flushed[0].workspace_ref, "ws-cand-a");
+    assert_eq!(
+        flushed[0].patch_artifact_ref.as_deref(),
+        Some("patch-cand-a.patch")
+    );
+    assert!(flushed[0].clone_purged);
+
+    let winner = fs.branch("cand-a").await.unwrap();
+    assert!(
+        winner.workspace_ref.is_none(),
+        "purged winner workspace_ref should be cleared"
+    );
+
+    let events = read_text(&fs, &["events"], Fid(6)).await;
+    assert!(events.contains(r#""type":"exit_flush""#), "{events}");
+    assert!(
+        events.contains(r#""patch_artifact_ref":"patch-cand-a.patch""#),
+        "{events}"
+    );
+}
+
+#[tokio::test]
+async fn workspace_port_leaking_host_path_is_rejected_and_purged() {
+    let port = Arc::new(MockWorkspacePort {
+        inject_host_path_on_create: true,
+        ..Default::default()
+    });
+    let fs = BranchFs::with_workspace_port(port.clone());
+    fs.install_base_branch("base", [b"a\n".to_vec()])
+        .await
+        .unwrap();
+
+    let err = write_ctl(
+        &fs,
+        Fid(1),
+        json!({"op": "fork", "id": "cand-leak", "from": "base", "delta": "delta\n"}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err, ErrorCode::BadRequest);
+    assert!(fs.branch("cand-leak").await.is_none());
+    assert_eq!(
+        *port.discarded.lock().await,
+        vec!["/Users/alice/System Store/workspaces/1/ws-bad".to_string()]
+    );
+}

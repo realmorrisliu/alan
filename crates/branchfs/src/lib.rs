@@ -1,21 +1,33 @@
 //! alan-branchfs — headless branching execution as an aP file server.
 //!
 //! Ring 3/4 aP file server retained in the workspace: exposes speculative
-//! `alan-knowledge` checkpoint branches as plain files (`ctl`, `branches/`,
-//! `selected`, `events`). It does not run a scheduler or model calls; it proves
-//! the file boundary that a later scheduler can drive: create cheap forks,
-//! score branches, select a branch, discard branches, and tail lifecycle events.
+//! `alan-knowledge` checkpoint branches and opaque CoW workspace metadata as
+//! plain files (`ctl`, `branches/`, `selected`, `events`). It never stores or
+//! exposes raw Host filesystem paths (`ADR-0050`), and coordinates physical
+//! clone creation, immediate losing-clone discard, and exit `.patch` flush
+//! through the host-agnostic [`BranchWorkspacePort`].
 
-use std::collections::{BTreeMap, HashMap};
-use std::hash::{Hash, Hasher};
+mod state;
+pub mod workspace;
 
-use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream, VersionTable,
-};
-use alan_knowledge::{ContentHash, KnowledgeStore};
+use std::sync::Arc;
+
+use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
+use alan_knowledge::ContentHash;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+
+use state::{
+    BranchFid, EventRecord, InsertForkedBranch, Node, State, is_writable, knowledge_error,
+    node_identity, slice, validate_branch_id, validate_workspace_fields,
+};
+pub use workspace::{
+    BranchWorkspaceCreateRequest, BranchWorkspaceDiscardRequest, BranchWorkspaceExitFlushOutcome,
+    BranchWorkspaceExitFlushRequest, BranchWorkspacePort, BranchWorkspacePortError,
+    BranchWorkspacePortErrorKind, BranchWorkspaceProvisioned, WorkspaceBackingKind,
+    contains_raw_host_path, validate_no_raw_host_path, validate_opaque_workspace_ref,
+};
 
 const MAX_DOC_BYTES: usize = 1 << 20; // 1 MiB
 
@@ -35,7 +47,7 @@ pub enum BranchStatus {
 }
 
 /// Inspectable branch metadata served at `branches/<id>`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BranchRecord {
     pub version: u16,
     pub id: String,
@@ -47,6 +59,14 @@ pub struct BranchRecord {
     pub score: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backing_kind: Option<WorkspaceBackingKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks_summary: Option<String>,
 }
 
 impl BranchRecord {
@@ -59,10 +79,22 @@ impl BranchRecord {
             status: BranchStatus::Active,
             score: None,
             summary: None,
+            workspace_ref: None,
+            backing_kind: None,
+            diff_summary: None,
+            checks_summary: None,
         }
     }
 
-    fn fork(id: String, base: String, root: ContentHash) -> Self {
+    fn fork(
+        id: String,
+        base: String,
+        root: ContentHash,
+        workspace_ref: Option<String>,
+        backing_kind: Option<WorkspaceBackingKind>,
+        diff_summary: Option<String>,
+        checks_summary: Option<String>,
+    ) -> Self {
         Self {
             version: 1,
             id,
@@ -71,6 +103,10 @@ impl BranchRecord {
             status: BranchStatus::Active,
             score: None,
             summary: None,
+            workspace_ref,
+            backing_kind,
+            diff_summary,
+            checks_summary,
         }
     }
 }
@@ -84,57 +120,59 @@ pub enum BranchCommand {
         id: String,
         from: String,
         delta: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        backing_kind: Option<WorkspaceBackingKind>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        diff_summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checks_summary: Option<String>,
     },
-    /// Record an explicit branch score and optional summary.
+    /// Record an explicit branch score and optional summary/evidence summaries.
     Score {
         id: String,
         score: f64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        diff_summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checks_summary: Option<String>,
+    },
+    /// Attach or update opaque workspace metadata on an existing visible branch.
+    UpdateWorkspace {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        backing_kind: Option<WorkspaceBackingKind>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        diff_summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checks_summary: Option<String>,
     },
     /// Explicitly select a visible branch.
     Select { id: String },
-    /// Hide a visible branch while retaining lifecycle evidence in `events`.
+    /// Hide a visible branch while immediately discarding any physical workspace
+    /// and retaining lifecycle evidence in `events`.
     Discard { id: String },
 }
 
-#[derive(Serialize)]
-struct SelectedBranch<'a> {
-    id: &'a str,
-    root: &'a ContentHash,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    score: Option<f64>,
-}
-
-struct State {
-    store: KnowledgeStore,
-    branches: BTreeMap<String, BranchRecord>,
-    selected: Option<String>,
-    events: Stream,
-    versions: VersionTable,
-    fids: HashMap<Fid, BranchFid>,
-}
-
-struct BranchFid {
-    node: Node,
-    mode: Option<OpenMode>,
-    write_buf: Vec<u8>,
-    wrote: bool,
-}
-
-#[derive(Debug, Clone)]
-enum Node {
-    Root,
-    Ctl,
-    BranchesDir,
-    Branch(String),
-    Selected,
-    Events,
+/// Summary of one selected branch processed during [`BranchFs::flush_on_exit`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchExitFlushRecord {
+    pub branch_id: String,
+    pub workspace_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_artifact_ref: Option<String>,
+    pub clone_purged: bool,
 }
 
 /// Branching execution file server.
 pub struct BranchFs {
     state: Mutex<State>,
+    workspace_port: Option<Arc<dyn BranchWorkspacePort>>,
 }
 
 impl Default for BranchFs {
@@ -144,17 +182,19 @@ impl Default for BranchFs {
 }
 
 impl BranchFs {
-    /// Create an empty branchfs.
+    /// Create an empty branchfs without a physical workspace host port.
     pub fn new() -> Self {
         Self {
-            state: Mutex::new(State {
-                store: KnowledgeStore::new(),
-                branches: BTreeMap::new(),
-                selected: None,
-                events: Stream::new(),
-                versions: VersionTable::new(),
-                fids: HashMap::new(),
-            }),
+            state: Mutex::new(State::new()),
+            workspace_port: None,
+        }
+    }
+
+    /// Create a branchfs wired to a host-agnostic [`BranchWorkspacePort`].
+    pub fn with_workspace_port(port: Arc<dyn BranchWorkspacePort>) -> Self {
+        Self {
+            state: Mutex::new(State::new()),
+            workspace_port: Some(port),
         }
     }
 
@@ -200,6 +240,110 @@ impl BranchFs {
         self.state.lock().await.branches.get(id).cloned()
     }
 
+    /// Discard all active non-selected candidate branches, immediately purging any
+    /// physical CoW clones through the attached [`BranchWorkspacePort`].
+    pub async fn discard_unselected_candidates(&self) -> Result<Vec<String>, ErrorCode> {
+        let candidates = {
+            let state = self.state.lock().await;
+            state
+                .branches
+                .iter()
+                .filter(|(_, record)| {
+                    record.status != BranchStatus::Selected
+                        && (record.base.is_some() || record.workspace_ref.is_some())
+                })
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let mut discarded = Vec::with_capacity(candidates.len());
+        for id in candidates {
+            self.discard_branch_inner(id.clone()).await?;
+            discarded.push(id);
+        }
+        Ok(discarded)
+    }
+
+    /// Exit-time cleanup: immediately purge any remaining non-selected candidate
+    /// clones and persist unified `.patch` + scorecard evidence for an unapplied
+    /// selected winner before removing its physical clone directory.
+    pub async fn flush_on_exit(&self) -> Result<Vec<BranchExitFlushRecord>, ErrorCode> {
+        self.discard_unselected_candidates().await?;
+
+        let selected_record = {
+            let state = self.state.lock().await;
+            let Some(selected_id) = state.selected.as_deref() else {
+                return Ok(Vec::new());
+            };
+            let Some(record) = state.branches.get(selected_id) else {
+                return Ok(Vec::new());
+            };
+            record.workspace_ref.as_ref().map(|_| record.clone())
+        };
+
+        let Some(record) = selected_record else {
+            return Ok(Vec::new());
+        };
+        let workspace_ref = record
+            .workspace_ref
+            .clone()
+            .expect("checked workspace_ref presence");
+
+        let outcome = if let Some(port) = &self.workspace_port {
+            let outcome = port
+                .flush_selected_on_exit(&BranchWorkspaceExitFlushRequest {
+                    branch_id: record.id.clone(),
+                    workspace_ref: workspace_ref.clone(),
+                    backing_kind: record.backing_kind,
+                    score: record.score,
+                    summary: record.summary.clone(),
+                    diff_summary: record.diff_summary.clone(),
+                    checks_summary: record.checks_summary.clone(),
+                })
+                .await
+                .map_err(|err| err.to_error_code())?;
+            if let Some(artifact_ref) = outcome.patch_artifact_ref.as_deref() {
+                validate_no_raw_host_path(artifact_ref)?;
+            }
+            outcome
+        } else {
+            BranchWorkspaceExitFlushOutcome {
+                patch_artifact_ref: None,
+                clone_purged: false,
+            }
+        };
+
+        let mut state = self.state.lock().await;
+        if let Some(current) = state.branches.get_mut(&record.id)
+            && current.workspace_ref.as_deref() == Some(&workspace_ref)
+            && outcome.clone_purged
+        {
+            current.workspace_ref = None;
+            state
+                .versions
+                .bump(node_identity(&Node::Branch(record.id.clone())).1);
+            if state.selected.as_deref() == Some(&record.id) {
+                state.versions.bump(node_identity(&Node::Selected).1);
+            }
+        }
+        state
+            .append_event(EventRecord::ExitFlush {
+                id: &record.id,
+                workspace_ref: &workspace_ref,
+                backing_kind: record.backing_kind,
+                patch_artifact_ref: outcome.patch_artifact_ref.as_deref(),
+                clone_purged: outcome.clone_purged,
+            })
+            .await?;
+
+        Ok(vec![BranchExitFlushRecord {
+            branch_id: record.id,
+            workspace_ref,
+            patch_artifact_ref: outcome.patch_artifact_ref,
+            clone_purged: outcome.clone_purged,
+        }])
+    }
+
     /// Number of stored raw knowledge blocks.
     pub async fn block_count(&self) -> usize {
         self.state.lock().await.store.block_count()
@@ -209,201 +353,202 @@ impl BranchFs {
     pub async fn node_count(&self) -> usize {
         self.state.lock().await.store.node_count()
     }
-}
 
-impl State {
-    fn node_of(&self, fid: Fid) -> Result<Node, ErrorCode> {
-        if fid == Fid::ROOT {
-            return Ok(Node::Root);
-        }
-        self.fids
-            .get(&fid)
-            .map(|f| f.node.clone())
-            .ok_or(ErrorCode::NotFound)
-    }
-
-    fn qid(&self, node: &Node) -> Qid {
-        let (kind, path) = node_identity(node);
-        Qid {
-            kind,
-            version: self.versions.get(path),
-            path,
-        }
-    }
-
-    fn child(&self, node: &Node, name: &str) -> Result<Node, ErrorCode> {
-        match node {
-            Node::Root => match name {
-                "ctl" => Ok(Node::Ctl),
-                "branches" => Ok(Node::BranchesDir),
-                "selected" => Ok(Node::Selected),
-                "events" => Ok(Node::Events),
-                _ => Err(ErrorCode::NotFound),
-            },
-            Node::BranchesDir => {
-                if self.branches.contains_key(name) {
-                    Ok(Node::Branch(name.to_string()))
-                } else {
-                    Err(ErrorCode::NotFound)
-                }
-            }
-            _ => Err(ErrorCode::NotDirectory),
-        }
-    }
-
-    fn computed_bytes(&self, node: &Node) -> Result<Vec<u8>, ErrorCode> {
-        let bytes = match node {
-            Node::Root => b"ctl\nbranches\nselected\nevents".to_vec(),
-            Node::Ctl => {
-                b"# branchfs ctl: write one branch command JSON document, then clunk\n".to_vec()
-            }
-            Node::BranchesDir => listing(self.branches.keys()),
-            Node::Branch(id) => json_line(self.branches.get(id).ok_or(ErrorCode::NotFound)?)?,
-            Node::Selected => self.selected_bytes()?,
-            Node::Events => return Err(ErrorCode::Unsupported),
-        };
-        Ok(bytes)
-    }
-
-    fn stream_for(&self, node: &Node) -> Option<Stream> {
-        match node {
-            Node::Events => Some(self.events.clone()),
-            _ => None,
-        }
-    }
-
-    fn selected_bytes(&self) -> Result<Vec<u8>, ErrorCode> {
-        let Some(id) = self.selected.as_deref() else {
-            return Ok(b"null\n".to_vec());
-        };
-        let branch = self.branches.get(id).ok_or(ErrorCode::NotFound)?;
-        json_line(&SelectedBranch {
-            id,
-            root: &branch.root,
-            score: branch.score,
-        })
-    }
-
-    async fn commit_ctl(&mut self, bytes: Vec<u8>) -> Result<(), ErrorCode> {
+    async fn commit_ctl(&self, bytes: Vec<u8>) -> Result<(), ErrorCode> {
         let text = String::from_utf8(bytes).map_err(|_| ErrorCode::BadRequest)?;
+        validate_no_raw_host_path(&text)?;
         let command: BranchCommand =
             serde_json::from_str(&text).map_err(|_| ErrorCode::BadRequest)?;
         match command {
-            BranchCommand::Fork { id, from, delta } => self.fork_branch(id, from, delta).await,
-            BranchCommand::Score { id, score, summary } => {
-                self.score_branch(id, score, summary).await
+            BranchCommand::Fork {
+                id,
+                from,
+                delta,
+                workspace_ref,
+                backing_kind,
+                diff_summary,
+                checks_summary,
+            } => {
+                self.fork_branch_inner(ForkBranchArgs {
+                    id,
+                    from,
+                    delta,
+                    workspace_ref,
+                    backing_kind,
+                    diff_summary,
+                    checks_summary,
+                })
+                .await
             }
-            BranchCommand::Select { id } => self.select_branch(id).await,
-            BranchCommand::Discard { id } => self.discard_branch(id).await,
+            BranchCommand::Score {
+                id,
+                score,
+                summary,
+                diff_summary,
+                checks_summary,
+            } => {
+                self.state
+                    .lock()
+                    .await
+                    .score_branch(id, score, summary, diff_summary, checks_summary)
+                    .await
+            }
+            BranchCommand::UpdateWorkspace {
+                id,
+                workspace_ref,
+                backing_kind,
+                diff_summary,
+                checks_summary,
+            } => {
+                self.state
+                    .lock()
+                    .await
+                    .update_workspace(
+                        id,
+                        workspace_ref,
+                        backing_kind,
+                        diff_summary,
+                        checks_summary,
+                    )
+                    .await
+            }
+            BranchCommand::Select { id } => self.state.lock().await.select_branch(id).await,
+            BranchCommand::Discard { id } => self.discard_branch_inner(id).await,
         }
     }
 
-    async fn fork_branch(
-        &mut self,
-        id: String,
-        from: String,
-        delta: String,
-    ) -> Result<(), ErrorCode> {
-        validate_branch_id(&id)?;
-        validate_branch_id(&from)?;
-        if self.branches.contains_key(&id) {
-            return Err(ErrorCode::BadRequest);
-        }
-        let base = self.branches.get(&from).ok_or(ErrorCode::NotFound)?;
-        let root = self
-            .store
-            .fork_append_bytes(&base.root, [delta.into_bytes()])
-            .map_err(knowledge_error)?;
-        self.branches.insert(
-            id.clone(),
-            BranchRecord::fork(id.clone(), from.clone(), root.clone()),
-        );
-        self.versions.bump(node_identity(&Node::BranchesDir).1);
-        self.versions
-            .bump(node_identity(&Node::Branch(id.clone())).1);
-        self.append_event(EventRecord::Fork {
-            id: &id,
-            from: &from,
-            root: &root,
-        })
-        .await
-    }
+    async fn fork_branch_inner(&self, args: ForkBranchArgs) -> Result<(), ErrorCode> {
+        validate_branch_id(&args.id)?;
+        validate_branch_id(&args.from)?;
+        validate_no_raw_host_path(&args.delta)?;
+        validate_workspace_fields(
+            args.workspace_ref.as_deref(),
+            args.diff_summary.as_deref(),
+            args.checks_summary.as_deref(),
+        )?;
 
-    async fn score_branch(
-        &mut self,
-        id: String,
-        score: f64,
-        summary: Option<String>,
-    ) -> Result<(), ErrorCode> {
-        validate_branch_id(&id)?;
-        if !score.is_finite() {
-            return Err(ErrorCode::BadRequest);
-        }
-        let branch = self.branches.get_mut(&id).ok_or(ErrorCode::NotFound)?;
-        branch.score = Some(score);
-        branch.summary = summary;
-        let summary = branch.summary.clone();
-        self.versions
-            .bump(node_identity(&Node::Branch(id.clone())).1);
-        if self.selected.as_deref() == Some(&id) {
-            self.versions.bump(node_identity(&Node::Selected).1);
-        }
-        self.append_event(EventRecord::Score {
-            id: &id,
-            score,
-            summary: summary.as_deref(),
-        })
-        .await
-    }
+        let from_workspace_ref = {
+            let state = self.state.lock().await;
+            if state.branches.contains_key(&args.id) {
+                return Err(ErrorCode::BadRequest);
+            }
+            let base = state.branches.get(&args.from).ok_or(ErrorCode::NotFound)?;
+            base.workspace_ref.clone()
+        };
 
-    async fn select_branch(&mut self, id: String) -> Result<(), ErrorCode> {
-        validate_branch_id(&id)?;
-        if !self.branches.contains_key(&id) {
-            return Err(ErrorCode::NotFound);
-        }
-        if let Some(previous) = self.selected.take()
-            && let Some(branch) = self.branches.get_mut(&previous)
-        {
-            branch.status = BranchStatus::Active;
-            self.versions.bump(node_identity(&Node::Branch(previous)).1);
-        }
-        let branch = self.branches.get_mut(&id).ok_or(ErrorCode::NotFound)?;
-        branch.status = BranchStatus::Selected;
-        let root = branch.root.clone();
-        self.selected = Some(id.clone());
-        self.versions.bump(node_identity(&Node::Selected).1);
-        self.versions
-            .bump(node_identity(&Node::Branch(id.clone())).1);
-        self.append_event(EventRecord::Select {
-            id: &id,
-            root: &root,
-        })
-        .await
-    }
+        let mut created_workspace_ref = None;
+        let (workspace_ref, backing_kind, diff_summary, checks_summary) =
+            if args.workspace_ref.is_none()
+                && let Some(port) = &self.workspace_port
+            {
+                let provisioned = port
+                    .create_workspace(&BranchWorkspaceCreateRequest {
+                        branch_id: args.id.clone(),
+                        from_branch_id: args.from.clone(),
+                        from_workspace_ref,
+                    })
+                    .await
+                    .map_err(|err| err.to_error_code())?;
+                if validate_workspace_fields(
+                    Some(&provisioned.workspace_ref),
+                    provisioned.diff_summary.as_deref(),
+                    provisioned.checks_summary.as_deref(),
+                )
+                .is_err()
+                {
+                    let _ = port
+                        .discard_workspace(&BranchWorkspaceDiscardRequest {
+                            branch_id: args.id.clone(),
+                            workspace_ref: provisioned.workspace_ref,
+                            backing_kind: Some(provisioned.backing_kind),
+                        })
+                        .await;
+                    return Err(ErrorCode::BadRequest);
+                }
+                created_workspace_ref =
+                    Some((provisioned.workspace_ref.clone(), provisioned.backing_kind));
+                (
+                    Some(provisioned.workspace_ref),
+                    Some(args.backing_kind.unwrap_or(provisioned.backing_kind)),
+                    args.diff_summary.or(provisioned.diff_summary),
+                    args.checks_summary.or(provisioned.checks_summary),
+                )
+            } else {
+                (
+                    args.workspace_ref,
+                    args.backing_kind,
+                    args.diff_summary,
+                    args.checks_summary,
+                )
+            };
 
-    async fn discard_branch(&mut self, id: String) -> Result<(), ErrorCode> {
-        validate_branch_id(&id)?;
-        let branch = self.branches.remove(&id).ok_or(ErrorCode::NotFound)?;
-        if self.selected.as_deref() == Some(&id) {
-            self.selected = None;
-            self.versions.bump(node_identity(&Node::Selected).1);
-        }
-        self.versions.bump(node_identity(&Node::BranchesDir).1);
-        self.versions
-            .bump(node_identity(&Node::Branch(id.clone())).1);
-        self.append_event(EventRecord::Discard {
-            id: &id,
-            root: &branch.root,
-        })
-        .await
-    }
+        let insert_result = {
+            let mut state = self.state.lock().await;
+            state
+                .insert_forked_branch(InsertForkedBranch {
+                    id: args.id.clone(),
+                    from: args.from,
+                    delta: args.delta,
+                    workspace_ref,
+                    backing_kind,
+                    diff_summary,
+                    checks_summary,
+                })
+                .await
+        };
 
-    async fn append_event(&self, event: EventRecord<'_>) -> Result<(), ErrorCode> {
-        let mut bytes = serde_json::to_vec(&event).map_err(|_| ErrorCode::BadRequest)?;
-        bytes.push(b'\n');
-        self.events.append(&bytes).await;
+        if let Err(err) = insert_result {
+            if let (Some(port), Some((ws_ref, kind))) =
+                (&self.workspace_port, created_workspace_ref)
+            {
+                let _ = port
+                    .discard_workspace(&BranchWorkspaceDiscardRequest {
+                        branch_id: args.id,
+                        workspace_ref: ws_ref,
+                        backing_kind: Some(kind),
+                    })
+                    .await;
+            }
+            return Err(err);
+        }
         Ok(())
     }
+
+    async fn discard_branch_inner(&self, id: String) -> Result<(), ErrorCode> {
+        validate_branch_id(&id)?;
+        let existing = {
+            let state = self.state.lock().await;
+            state
+                .branches
+                .get(&id)
+                .cloned()
+                .ok_or(ErrorCode::NotFound)?
+        };
+
+        if let (Some(port), Some(ws_ref)) = (&self.workspace_port, existing.workspace_ref.as_ref())
+        {
+            port.discard_workspace(&BranchWorkspaceDiscardRequest {
+                branch_id: id.clone(),
+                workspace_ref: ws_ref.clone(),
+                backing_kind: existing.backing_kind,
+            })
+            .await
+            .map_err(|err| err.to_error_code())?;
+        }
+
+        let mut state = self.state.lock().await;
+        state.discard_branch(id).await
+    }
+}
+
+struct ForkBranchArgs {
+    id: String,
+    from: String,
+    delta: String,
+    workspace_ref: Option<String>,
+    backing_kind: Option<WorkspaceBackingKind>,
+    diff_summary: Option<String>,
+    checks_summary: Option<String>,
 }
 
 #[async_trait]
@@ -521,114 +666,16 @@ impl FileServer for BranchFs {
         if fid == Fid::ROOT {
             return Ok(());
         }
-        let mut state = self.state.lock().await;
-        let f = state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
+        let f = {
+            let mut state = self.state.lock().await;
+            state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?
+        };
         if !f.wrote {
             return Ok(());
         }
         match f.node {
-            Node::Ctl => state.commit_ctl(f.write_buf).await,
+            Node::Ctl => self.commit_ctl(f.write_buf).await,
             _ => Ok(()),
         }
     }
-}
-
-impl BranchFid {
-    fn at(node: Node) -> Self {
-        Self {
-            node,
-            mode: None,
-            write_buf: Vec::new(),
-            wrote: false,
-        }
-    }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case", tag = "type")]
-enum EventRecord<'a> {
-    Base {
-        id: &'a str,
-        root: &'a ContentHash,
-    },
-    Fork {
-        id: &'a str,
-        from: &'a str,
-        root: &'a ContentHash,
-    },
-    Score {
-        id: &'a str,
-        score: f64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        summary: Option<&'a str>,
-    },
-    Select {
-        id: &'a str,
-        root: &'a ContentHash,
-    },
-    Discard {
-        id: &'a str,
-        root: &'a ContentHash,
-    },
-}
-
-fn is_writable(node: &Node) -> bool {
-    matches!(node, Node::Ctl)
-}
-
-fn validate_branch_id(id: &str) -> Result<(), ErrorCode> {
-    if id.is_empty()
-        || !id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(ErrorCode::BadRequest);
-    }
-    Ok(())
-}
-
-fn knowledge_error(error: alan_knowledge::KnowledgeError) -> ErrorCode {
-    match error {
-        alan_knowledge::KnowledgeError::MissingBlock(_)
-        | alan_knowledge::KnowledgeError::MissingNode(_)
-        | alan_knowledge::KnowledgeError::UnknownRoot(_) => ErrorCode::NotFound,
-        alan_knowledge::KnowledgeError::NoAccess => ErrorCode::NoAccess,
-        alan_knowledge::KnowledgeError::HashMismatch(_)
-        | alan_knowledge::KnowledgeError::Cycle(_) => ErrorCode::BadRequest,
-    }
-}
-
-fn json_line(value: &impl Serialize) -> Result<Vec<u8>, ErrorCode> {
-    let mut bytes = serde_json::to_vec(value).map_err(|_| ErrorCode::BadRequest)?;
-    bytes.push(b'\n');
-    Ok(bytes)
-}
-
-fn listing<'a>(names: impl Iterator<Item = &'a String>) -> Vec<u8> {
-    let mut out = Vec::new();
-    for name in names {
-        out.extend_from_slice(name.as_bytes());
-        out.push(b'\n');
-    }
-    out
-}
-
-fn node_identity(node: &Node) -> (FileKind, u64) {
-    let (kind, key) = match node {
-        Node::Root => (FileKind::Dir, "/".to_string()),
-        Node::Ctl => (FileKind::File, "ctl".to_string()),
-        Node::BranchesDir => (FileKind::Dir, "branches".to_string()),
-        Node::Branch(id) => (FileKind::File, format!("branches/{id}")),
-        Node::Selected => (FileKind::File, "selected".to_string()),
-        Node::Events => (FileKind::Stream, "events".to_string()),
-    };
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    key.hash(&mut h);
-    (kind, h.finish())
-}
-
-fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {
-    let start = (offset as usize).min(bytes.len());
-    let end = bytes.len().min(start + count as usize);
-    bytes[start..end].to_vec()
 }
