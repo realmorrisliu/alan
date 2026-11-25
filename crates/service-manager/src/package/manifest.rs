@@ -8,7 +8,10 @@ use alan_agent_engine::runtime::mcp::{
     validate_safe_stdio_env,
 };
 use alan_agent_engine::runtime::tool_packages::{
-    validate_canonical_tool_name, validate_packaged_tool_timeout, validate_tool_parameters_schema,
+    TOOL_ARGUMENTS_ARGV, TOOL_ARGUMENTS_JSON_FIRST_ARG, TOOL_RESULT_STDOUT_JSON, ToolSecretRef,
+    default_argv_parameters_schema, validate_canonical_tool_name,
+    validate_network_domain as validate_shared_network_domain, validate_packaged_tool_timeout,
+    validate_tool_parameters_schema, validate_tool_secret_refs,
 };
 use alan_agent_engine::tools::ToolCapability;
 use anyhow::{Context, Result, bail, ensure};
@@ -89,7 +92,8 @@ struct RawToolManifest {
     name: String,
     description: String,
     entrypoint: String,
-    parameters: toml::Value,
+    #[serde(default)]
+    parameters: Option<toml::Value>,
     #[serde(default = "default_unknown_capability")]
     capability: ToolCapability,
     #[serde(default)]
@@ -98,6 +102,12 @@ struct RawToolManifest {
     timeout_secs: usize,
     #[serde(default)]
     allow_network: bool,
+    #[serde(default)]
+    network_domains: Vec<String>,
+    #[serde(default)]
+    required_secrets: Vec<ToolSecretRef>,
+    #[serde(default)]
+    required_adc: Option<ToolSecretRef>,
     #[serde(default = "default_arguments_hint")]
     arguments: String,
     #[serde(default = "default_result_hint")]
@@ -433,15 +443,22 @@ fn validate_tool_exports(
             "tool `{}` entrypoint `{entrypoint}` does not exist in package snapshot",
             raw.name
         );
-        let parameters = parse_parameters_schema(&raw.parameters)
-            .with_context(|| format!("invalid parameters schema for tool `{}`", raw.name))?;
-        validate_tool_parameters_schema(&parameters)?;
-        let timeout_secs = validate_packaged_tool_timeout(raw.timeout_secs)?;
         ensure!(
-            raw.arguments == "json_first_arg" && raw.result == "stdout_json",
-            "tool `{}` has unsupported execution hints (expected json_first_arg / stdout_json)",
+            matches!(
+                raw.arguments.as_str(),
+                TOOL_ARGUMENTS_JSON_FIRST_ARG | TOOL_ARGUMENTS_ARGV
+            ) && raw.result == TOOL_RESULT_STDOUT_JSON,
+            "tool `{}` has unsupported execution hints (expected json_first_arg|argv / stdout_json)",
             raw.name
         );
+        let parameters = match raw.parameters {
+            Some(value) => parse_parameters_schema(&value)
+                .with_context(|| format!("invalid parameters schema for tool `{}`", raw.name))?,
+            None if raw.arguments == TOOL_ARGUMENTS_ARGV => default_argv_parameters_schema(),
+            None => bail!("tool `{}` requires `parameters` schema", raw.name),
+        };
+        validate_tool_parameters_schema(&parameters)?;
+        let timeout_secs = validate_packaged_tool_timeout(raw.timeout_secs)?;
         if raw.allow_network
             && !matches!(
                 raw.capability,
@@ -454,6 +471,22 @@ fn validate_tool_exports(
                 raw.capability
             );
         }
+        if !raw.allow_network {
+            ensure!(
+                raw.network_domains.is_empty(),
+                "tool `{}` declares network_domains while allow_network is false",
+                raw.name
+            );
+        } else {
+            ensure!(
+                !raw.network_domains.is_empty(),
+                "tool `{}` sets allow_network = true with an empty network_domains list",
+                raw.name
+            );
+        }
+        let network_domains = normalize_network_domains(raw.network_domains, "tool", &raw.name)?;
+        validate_tool_secret_refs(&raw.required_secrets, raw.required_adc.as_ref())
+            .with_context(|| format!("invalid secret reference for tool `{}`", raw.name))?;
         exports.push(ToolPackageExport {
             name: raw.name.clone(),
             description,
@@ -463,6 +496,10 @@ fn validate_tool_exports(
             capability_is_argument_dependent: raw.capability_is_argument_dependent,
             timeout_secs,
             allow_network: raw.allow_network,
+            network_domains,
+            required_secrets: raw.required_secrets,
+            required_adc: raw.required_adc,
+            arguments: raw.arguments,
             manifest_path: format!("tools/{}/manifest.json", raw.name),
         });
     }
@@ -692,12 +729,7 @@ fn validate_fileserver_export(
             raw.id
         );
     }
-    let mut unique_domains = BTreeSet::new();
-    for domain in raw.network_domains {
-        let normalized = validate_network_domain(&domain, &raw.id)?;
-        unique_domains.insert(normalized);
-    }
-    let network_domains = unique_domains.into_iter().collect();
+    let network_domains = normalize_network_domains(raw.network_domains, "fileserver", &raw.id)?;
 
     let declared_entrypoint = raw
         .entrypoint
@@ -813,26 +845,19 @@ fn validate_socket_name(raw: &str, service_id: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-fn validate_network_domain(raw: &str, service_id: &str) -> Result<String> {
-    let normalized = raw.trim().to_ascii_lowercase();
-    ensure!(
-        !normalized.is_empty()
-            && normalized.len() <= 253
-            && !normalized.starts_with('.')
-            && !normalized.ends_with('.')
-            && !normalized.contains("..")
-            && normalized.split('.').all(|label| {
-                !label.is_empty()
-                    && label.len() <= 63
-                    && !label.starts_with('-')
-                    && !label.ends_with('-')
-                    && label
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-            }),
-        "fileserver `{service_id}` declares invalid network domain `{raw}`"
-    );
-    Ok(normalized)
+fn normalize_network_domains(
+    raw_domains: Vec<String>,
+    kind_label: &str,
+    id: &str,
+) -> Result<Vec<String>> {
+    let mut unique_domains = BTreeSet::new();
+    for domain in raw_domains {
+        let normalized = validate_shared_network_domain(&domain).map_err(|_| {
+            anyhow::anyhow!("{kind_label} `{id}` declares invalid network domain `{domain}`")
+        })?;
+        unique_domains.insert(normalized);
+    }
+    Ok(unique_domains.into_iter().collect())
 }
 
 fn validate_canonical_identifier(id: &str, label: &str) -> Result<()> {

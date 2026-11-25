@@ -8,6 +8,7 @@ use std::fs::File;
 mod bootstrap;
 #[cfg(unix)]
 mod bootstrap_wait_budget;
+mod community_bundles;
 mod concurrency;
 mod embedded;
 mod file_surface;

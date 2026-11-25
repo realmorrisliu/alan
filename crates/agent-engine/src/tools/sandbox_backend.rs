@@ -28,7 +28,8 @@ use std::sync::OnceLock;
 
 pub use seatbelt::seatbelt_profile;
 pub(crate) use seatbelt::{
-    read_denylist_excluding_writable_roots, seatbelt_host_mount_exclusions, seatbelt_read_only,
+    read_denylist_excluding_writable_roots, seatbelt_host_mount_exclusions,
+    seatbelt_profile_for_loopback_proxy, seatbelt_read_only,
 };
 
 /// Available sandbox enforcement backends, in order of strength.

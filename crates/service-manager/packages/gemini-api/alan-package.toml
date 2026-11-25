@@ -1,0 +1,18 @@
+schema_version = 1
+kind = "tool"
+version = "0.1.0"
+description = "Thin governed Quartermaster tool wrapper for gemini-api-cli with Host Store GEMINI_API_KEY injection and domain-allowlisted egress."
+
+[tool]
+name = "gemini_api"
+description = "Run non-interactive gemini-api-cli subcommands (generate, image, tts, music, video, analyze, transcribe, agent, files, models, whoami) with argv forwarding."
+entrypoint = "bin/gemini-api"
+capability = "network"
+timeout_secs = 120
+allow_network = true
+network_domains = ["generativelanguage.googleapis.com"]
+arguments = "argv"
+
+[[tool.required_secrets]]
+env = "GEMINI_API_KEY"
+credential_id = "gemini-api-key"

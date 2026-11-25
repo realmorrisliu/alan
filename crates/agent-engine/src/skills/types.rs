@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 mod availability;
 mod execution;
+mod frontmatter;
 
 pub use availability::{
     SkillAvailabilityIssue, SkillAvailabilityState, SkillDependencyIssue, SkillHostCapabilities,
@@ -399,13 +400,16 @@ pub struct Skill {
 pub struct SkillFrontmatter {
     pub name: String,
     pub description: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "frontmatter::deserialize_null_default")]
     pub metadata: FrontmatterMetadata,
     /// Skill capabilities
-    #[serde(default)]
+    #[serde(default, deserialize_with = "frontmatter::deserialize_null_default")]
     pub capabilities: SkillCapabilities,
     /// Compatibility requirements
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "frontmatter::deserialize_tolerant_skill_compatibility"
+    )]
     pub compatibility: SkillCompatibility,
 }
 
@@ -414,7 +418,7 @@ pub struct SkillFrontmatter {
 pub struct FrontmatterMetadata {
     #[serde(rename = "short-description")]
     pub short_description: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "frontmatter::deserialize_tolerant_tags")]
     pub tags: Vec<String>,
 }
 
@@ -825,6 +829,7 @@ impl From<serde_yaml::Error> for SkillsError {
 /// Extract YAML frontmatter from markdown content.
 /// Returns (frontmatter_yaml, body) if successful.
 pub fn extract_frontmatter(content: &str) -> Option<(String, String)> {
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
     let mut lines = content.lines();
 
     // Must start with ---

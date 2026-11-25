@@ -297,6 +297,14 @@ impl EmbeddedConfig {
             }
         };
 
+        let mut tool_secret_resolver: Option<
+            Arc<dyn alan_agent_engine::tools::ToolSecretResolver>,
+        > = match host_store_paths.as_ref() {
+            Some(host_store) => Some(Arc::new(crate::SecretStore::from_directory(
+                &host_store.credentials,
+            )?)),
+            None => None,
+        };
         let llm_factory: Arc<dyn LlmClientFactory> = match self.llm {
             LlmSource::Factory(factory) => factory,
             LlmSource::Client(client) => Arc::new(ReusableClientFactory(client.into_reusable())),
@@ -316,6 +324,9 @@ impl EmbeddedConfig {
                 let product_system_store = SystemStorePaths::detect()?;
                 let product_host_store = HostStorePaths::detect()?;
                 connection_store = Some(product_system_store.connection_bindings()?);
+                tool_secret_resolver = Some(Arc::new(crate::SecretStore::from_directory(
+                    &product_host_store.credentials,
+                )?));
                 Arc::new(ProductLlmClientFactory::new(
                     product_host_store.credentials,
                     Some(product_host_store.managed_auth),
@@ -339,6 +350,7 @@ impl EmbeddedConfig {
             include_builtin_skills: self.builtin_skills,
             root_package_bindings: Vec::new(),
             explicit_root_package_bindings: Vec::new(),
+            tool_secret_resolver,
         };
         Ok((sm_config, self.host_mounts_enabled))
     }

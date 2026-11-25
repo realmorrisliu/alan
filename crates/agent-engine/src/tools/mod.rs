@@ -36,6 +36,7 @@ pub const TOOL_READ_ONLY_SYSTEM_PREFIXES: &[&str] = &[
 pub(crate) use context::test_execution_binding;
 pub use context::{
     ToolContext, ToolExecutionAdapter, ToolExecutionAuthority, ToolExecutionBinding,
+    ToolSecretResolver,
 };
 pub use registry::{
     Tool, ToolProcessInvocation, ToolProcessOutcome, ToolProcessRunner, ToolRegistry, ToolResult,

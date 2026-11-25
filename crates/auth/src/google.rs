@@ -5,7 +5,6 @@
 use crate::browser::{LoopbackCallbackError, LoopbackCallbackServer, generate_state, open_browser};
 use crate::pkce::{PkceCodes, generate_pkce};
 use crate::storage::{AuthStorage, StoredGoogleAuth};
-use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::fs;
@@ -22,6 +21,8 @@ use url::Url;
 pub const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 pub const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 pub const GOOGLE_CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
+pub const GOOGLE_DRIVE_READONLY_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
+pub const GOOGLE_DRIVE_FILE_SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 pub const GOOGLE_PROJECTS_URL: &str =
     "https://cloudresourcemanager.googleapis.com/v1/projects?filter=lifecycleState:ACTIVE";
 
@@ -33,12 +34,23 @@ const ENV_CLOUDSDK_CONFIG: &str = "CLOUDSDK_CONFIG";
 const GCLOUD_ADC_FILE: &str = "application_default_credentials.json";
 const GOOGLE_OAUTH_USER_CONFIG_FILE: &str = "google_oauth.json";
 
+mod drive;
 mod gcloud;
+mod oauth;
 mod projects;
 #[cfg(test)]
 mod tests;
 
+pub use drive::{
+    GoogleDriveAuthConfig, GoogleDriveAuthManager, GoogleDriveLoginSuccess, GoogleDriveScope,
+    PendingGoogleDriveBrowserLogin, ResolvedGoogleDriveToken,
+    default_managed_drive_auth_storage_path, resolve_drive_access_token,
+};
 pub use gcloud::{gcloud_default_project, gcloud_is_available, run_gcloud_adc_login_streaming};
+use oauth::{
+    build_authorize_url_with_scope, exchange_authorization_code, exchange_refresh_token,
+    refresh_stored_google_auth,
+};
 pub use projects::{GcpProject, list_active_gcp_projects, list_active_gcp_projects_at};
 
 /// Errors raised by Google OAuth, ADC, `gcloud`, and project discovery.
@@ -50,6 +62,10 @@ pub enum GoogleAuthError {
     OAuthClientNotConfigured,
     #[error("Google OAuth login required; run `alan login vertex`")]
     NotLoggedIn,
+    #[error("Google Drive OAuth login required (no Drive credentials stored in Host Store)")]
+    DriveNotLoggedIn,
+    #[error("Google Drive OAuth scope `{required}` is required (granted: {granted})")]
+    InsufficientScope { required: String, granted: String },
     #[error("Google OAuth token exchange failed: {0}")]
     TokenExchangeFailed(String),
     #[error("Google OAuth token refresh failed: {0}")]
@@ -269,73 +285,17 @@ impl GoogleAuthManager {
     }
 
     async fn refresh_single_flight(&self, force: bool) -> Result<String, GoogleAuthError> {
-        let _memory_guard = self.inner.refresh_lock.lock().await;
-        let _file_guard = self.inner.storage.lock("auth.refresh.lock")?;
-
-        let Some(existing) = self.inner.storage.load()?.google else {
-            return Err(GoogleAuthError::NotLoggedIn);
-        };
-        if !force
-            && !existing.should_refresh(Utc::now())
-            && !existing.access_token.trim().is_empty()
-        {
-            return Ok(existing.access_token);
-        }
-
-        let token_uri = existing
-            .token_uri
-            .as_deref()
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or(&self.inner.config.token_url);
-        let client_id = existing
-            .client_id
-            .as_deref()
-            .filter(|v| !v.trim().is_empty())
-            .or(self.inner.config.client_id.as_deref())
-            .ok_or(GoogleAuthError::OAuthClientNotConfigured)?;
-        let client_secret = existing
-            .client_secret
-            .as_deref()
-            .filter(|v| !v.trim().is_empty())
-            .or(self.inner.config.client_secret.as_deref());
-
-        let token_resp = exchange_refresh_token(
+        let updated = refresh_stored_google_auth(
+            &self.inner.storage,
             &self.inner.client,
-            token_uri,
-            client_id,
-            client_secret,
-            &existing.refresh_token,
+            &self.inner.refresh_lock,
+            &self.inner.config.token_url,
+            self.inner.config.client_id.as_deref(),
+            self.inner.config.client_secret.as_deref(),
+            force,
+            GoogleAuthError::NotLoggedIn,
         )
-        .await
-        .map_err(GoogleAuthError::RefreshFailed)?;
-
-        let expires_at = token_resp
-            .expires_in
-            .filter(|secs| *secs > 0)
-            .map(|secs| Utc::now() + chrono::Duration::seconds(secs));
-        let updated = StoredGoogleAuth {
-            refresh_token: token_resp
-                .refresh_token
-                .filter(|v| !v.trim().is_empty())
-                .unwrap_or(existing.refresh_token),
-            access_token: token_resp.access_token.clone(),
-            expires_at,
-            client_id: Some(client_id.to_string()),
-            client_secret: client_secret.map(ToOwned::to_owned),
-            token_uri: Some(token_uri.to_string()),
-            email: token_resp
-                .id_token
-                .as_deref()
-                .and_then(parse_jwt_email)
-                .or(existing.email),
-            last_refresh_at: Some(Utc::now()),
-        };
-
-        let saved_entry = updated.clone();
-        self.inner.storage.update(move |store| {
-            store.google = Some(saved_entry);
-        })?;
-
+        .await?;
         Ok(updated.access_token)
     }
 }
@@ -398,67 +358,21 @@ impl PendingGoogleBrowserLogin {
         &self,
         code: &str,
     ) -> Result<GoogleLoginSuccess, GoogleAuthError> {
-        let mut params = vec![
-            ("grant_type", "authorization_code".to_string()),
-            ("code", code.to_string()),
-            ("redirect_uri", self.callback_url.clone()),
-            ("client_id", self.client_id.clone()),
-            ("code_verifier", self.pkce.code_verifier.clone()),
-        ];
-        if let Some(secret) = &self.client_secret {
-            params.push(("client_secret", secret.clone()));
-        }
-
-        let encoded_form = encode_form_params(&params);
-        let response = self
-            .client
-            .post(&self.token_url)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(encoded_form)
-            .send()
-            .await?;
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(GoogleAuthError::TokenExchangeFailed(format!(
-                "HTTP {status}: {body}"
-            )));
-        }
-
-        let parsed: GoogleTokenResponse = serde_json::from_str(&body).map_err(|error| {
-            GoogleAuthError::TokenExchangeFailed(format!("invalid response JSON: {error}"))
-        })?;
-        let refresh_token = parsed
-            .refresh_token
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| {
-                GoogleAuthError::TokenExchangeFailed(
-                    "Google token response omitted `refresh_token`".to_string(),
-                )
-            })?;
-        let expires_at = parsed
-            .expires_in
-            .filter(|secs| *secs > 0)
-            .map(|secs| Utc::now() + chrono::Duration::seconds(secs));
-        let email = parsed.id_token.as_deref().and_then(parse_jwt_email);
-
-        let stored = StoredGoogleAuth {
-            refresh_token,
-            access_token: parsed.access_token,
-            expires_at,
-            client_id: Some(self.client_id.clone()),
-            client_secret: self.client_secret.clone(),
-            token_uri: Some(self.token_url.clone()),
-            email: email.clone(),
-            last_refresh_at: Some(Utc::now()),
-        };
-
-        self.storage.update(move |store| {
-            store.google = Some(stored);
-        })?;
-
-        Ok(GoogleLoginSuccess { email, expires_at })
+        let (stored, _) = exchange_authorization_code(
+            &self.client,
+            &self.storage,
+            &self.token_url,
+            &self.callback_url,
+            &self.client_id,
+            self.client_secret.as_deref(),
+            &self.pkce.code_verifier,
+            code,
+        )
+        .await?;
+        Ok(GoogleLoginSuccess {
+            email: stored.email,
+            expires_at: stored.expires_at,
+        })
     }
 }
 
@@ -761,18 +675,14 @@ fn build_authorize_url(
     pkce: &PkceCodes,
     state: &str,
 ) -> Result<String, GoogleAuthError> {
-    let mut url = Url::parse(auth_url)?;
-    url.query_pairs_mut()
-        .append_pair("client_id", client_id)
-        .append_pair("redirect_uri", redirect_uri)
-        .append_pair("response_type", "code")
-        .append_pair("scope", GOOGLE_CLOUD_PLATFORM_SCOPE)
-        .append_pair("code_challenge", &pkce.code_challenge)
-        .append_pair("code_challenge_method", "S256")
-        .append_pair("state", state)
-        .append_pair("access_type", "offline")
-        .append_pair("prompt", "consent");
-    Ok(url.to_string())
+    build_authorize_url_with_scope(
+        auth_url,
+        client_id,
+        redirect_uri,
+        GOOGLE_CLOUD_PLATFORM_SCOPE,
+        pkce,
+        state,
+    )
 }
 
 fn extract_google_code(
@@ -818,17 +728,6 @@ fn extract_google_code(
 }
 
 #[derive(Debug, Deserialize)]
-struct GoogleTokenResponse {
-    access_token: String,
-    #[serde(default)]
-    refresh_token: Option<String>,
-    #[serde(default)]
-    expires_in: Option<i64>,
-    #[serde(default)]
-    id_token: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct AdcAuthorizedUserJson {
     #[serde(rename = "type")]
     credential_type: Option<String>,
@@ -869,56 +768,4 @@ fn parse_google_oauth_client_json(raw: &str) -> Option<GoogleOAuthClientConfig> 
         client_id,
         client_secret,
     })
-}
-
-async fn exchange_refresh_token(
-    client: &reqwest::Client,
-    token_uri: &str,
-    client_id: &str,
-    client_secret: Option<&str>,
-    refresh_token: &str,
-) -> Result<GoogleTokenResponse, String> {
-    let mut params = vec![
-        ("grant_type", "refresh_token".to_string()),
-        ("client_id", client_id.to_string()),
-        ("refresh_token", refresh_token.to_string()),
-    ];
-    if let Some(secret) = client_secret.map(str::trim).filter(|v| !v.is_empty()) {
-        params.push(("client_secret", secret.to_string()));
-    }
-
-    let encoded_form = encode_form_params(&params);
-    let response = client
-        .post(token_uri)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body(encoded_form)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(format!("HTTP {status}: {body}"));
-    }
-    serde_json::from_str(&body).map_err(|error| format!("invalid token JSON: {error}"))
-}
-
-fn encode_form_params(params: &[(&str, String)]) -> String {
-    url::form_urlencoded::Serializer::new(String::new())
-        .extend_pairs(params.iter().map(|(k, v)| (*k, v.as_str())))
-        .finish()
-}
-
-fn parse_jwt_email(jwt: &str) -> Option<String> {
-    let payload_b64 = jwt.split('.').nth(1)?;
-    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64)
-        .ok()?;
-    let claims: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
-    claims
-        .get("email")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(ToOwned::to_owned)
 }

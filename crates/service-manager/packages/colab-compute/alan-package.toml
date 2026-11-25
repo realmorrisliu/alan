@@ -1,0 +1,24 @@
+schema_version = 1
+kind = "tool"
+version = "0.1.0"
+description = "Thin governed Quartermaster tool wrapper for google-colab-cli (`colab --auth=adc`) with Host Store ADC projection and domain-allowlisted egress."
+
+[tool]
+name = "colab_compute"
+description = "Run google-colab-cli (`colab`) subcommands (usage, run, runtimes, files) forced to --auth=adc with argv forwarding."
+entrypoint = "bin/colab-compute"
+capability = "network"
+timeout_secs = 300
+allow_network = true
+network_domains = [
+  "colab.research.google.com",
+  "colaboratory.googleapis.com",
+  "colab.pa.googleapis.com",
+  "oauth2.googleapis.com",
+  "www.googleapis.com",
+]
+arguments = "argv"
+
+[tool.required_adc]
+env = "GOOGLE_APPLICATION_CREDENTIALS"
+credential_id = "colab-adc"

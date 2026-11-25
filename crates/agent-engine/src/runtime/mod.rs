@@ -43,7 +43,7 @@ mod tool_batch;
 mod tool_effect_lifecycle;
 mod tool_execution;
 pub mod tool_packages;
-pub use tool_packages::ToolPackageManifest;
+pub use tool_packages::{EphemeralSecretFile, ToolPackageManifest, ToolSecretRef};
 mod tool_policy;
 mod tool_policy_hook;
 pub use tool_policy_hook::{HookDecision, ToolPolicyHook};

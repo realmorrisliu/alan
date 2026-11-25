@@ -1,6 +1,6 @@
 use std::{any::Any, collections::BTreeMap, sync::Arc};
 
-use alan_agent_engine::tools::Tool;
+use alan_agent_engine::tools::{Tool, ToolSecretResolver};
 use alan_agent_engine::{ProcessDescriptor, ProcessPackageReference};
 use alan_kernel::{Credentials, LiveNamespace, Namespace};
 use anyhow::Result;
@@ -14,6 +14,7 @@ pub struct ProcessLaunchContext {
     pub package_references: Vec<ProcessPackageReference>,
     pub packaged_tools: Vec<Arc<dyn Tool>>,
     pub(crate) packaged_tool_manifests: Vec<(String, Vec<u8>)>,
+    pub(crate) tool_secret_resolver: Option<Arc<dyn ToolSecretResolver>>,
     pub credentials: Credentials,
     pub cwd: String,
     live_namespace: Option<LiveNamespace>,
@@ -48,6 +49,7 @@ impl ProcessLaunchContext {
             package_references: Vec::new(),
             packaged_tools: Vec::new(),
             packaged_tool_manifests: Vec::new(),
+            tool_secret_resolver: None,
             credentials,
             cwd: normalize_namespace_path(&cwd.into())?,
             live_namespace: None,
@@ -85,6 +87,10 @@ impl ProcessLaunchContext {
         self.packaged_tool_manifests.push((name, manifest_bytes));
     }
 
+    pub fn set_tool_secret_resolver(&mut self, resolver: Arc<dyn ToolSecretResolver>) {
+        self.tool_secret_resolver = Some(resolver);
+    }
+
     pub fn retain_authority<T>(&mut self, authority: Arc<T>)
     where
         T: Any + Send + Sync,
@@ -99,6 +105,7 @@ impl ProcessLaunchContext {
             package_references: self.package_references.clone(),
             packaged_tools: self.packaged_tools.clone(),
             packaged_tool_manifests: self.packaged_tool_manifests.clone(),
+            tool_secret_resolver: self.tool_secret_resolver.clone(),
             credentials: self.credentials.clone(),
             cwd: self.cwd.clone(),
             live_namespace: None,
@@ -120,6 +127,7 @@ impl ProcessLaunchContext {
             package_references: self.package_references.clone(),
             packaged_tools: self.packaged_tools.clone(),
             packaged_tool_manifests: self.packaged_tool_manifests.clone(),
+            tool_secret_resolver: self.tool_secret_resolver.clone(),
             credentials,
             cwd: self.cwd.clone(),
             live_namespace: None,
@@ -134,6 +142,7 @@ impl ProcessLaunchContext {
             package_references: self.package_references.clone(),
             packaged_tools: self.packaged_tools.clone(),
             packaged_tool_manifests: self.packaged_tool_manifests.clone(),
+            tool_secret_resolver: self.tool_secret_resolver.clone(),
             credentials,
             cwd: self.cwd.clone(),
             live_namespace: Some(namespace),

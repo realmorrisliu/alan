@@ -6,6 +6,13 @@ use anyhow::{Result, anyhow};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Copy)]
+pub(super) enum ConfinedNetworkMode {
+    Deny,
+    AllowAll,
+    LoopbackProxyPort(u16),
+}
+
 impl Sandbox {
     /// Build a confined command for launching a direct non-shell executable
     /// (such as a Quartermaster `tool` package binary or `mcp` stdio server).
@@ -17,7 +24,36 @@ impl Sandbox {
         allow_network: bool,
     ) -> Result<tokio::process::Command> {
         let os_args = args.iter().map(OsString::from).collect::<Vec<_>>();
-        self.build_confined_argv(program, &os_args, cwd, allow_network, self.active_backend())
+        let network_mode = if allow_network {
+            ConfinedNetworkMode::AllowAll
+        } else {
+            ConfinedNetworkMode::Deny
+        };
+        self.build_confined_argv_with_network(
+            program,
+            &os_args,
+            cwd,
+            network_mode,
+            self.active_backend(),
+        )
+    }
+
+    /// Build a confined command whose outbound network is pinned to a Host-owned loopback proxy.
+    pub fn build_confined_program_command_with_proxy(
+        &self,
+        program: &Path,
+        args: &[String],
+        cwd: &Path,
+        proxy_port: u16,
+    ) -> Result<tokio::process::Command> {
+        let os_args = args.iter().map(OsString::from).collect::<Vec<_>>();
+        self.build_confined_argv_with_network(
+            program,
+            &os_args,
+            cwd,
+            ConfinedNetworkMode::LoopbackProxyPort(proxy_port),
+            self.active_backend(),
+        )
     }
 
     pub(super) fn build_confined_argv(
@@ -26,6 +62,22 @@ impl Sandbox {
         args: &[OsString],
         cwd: &Path,
         allow_network: bool,
+        backend: SandboxBackendKind,
+    ) -> Result<tokio::process::Command> {
+        let network_mode = if allow_network {
+            ConfinedNetworkMode::AllowAll
+        } else {
+            ConfinedNetworkMode::Deny
+        };
+        self.build_confined_argv_with_network(program, args, cwd, network_mode, backend)
+    }
+
+    fn build_confined_argv_with_network(
+        &self,
+        program: &Path,
+        args: &[OsString],
+        cwd: &Path,
+        network_mode: ConfinedNetworkMode,
         backend: SandboxBackendKind,
     ) -> Result<tokio::process::Command> {
         if self.trust_posture.is_unsandboxed_host_account() {
@@ -48,11 +100,27 @@ impl Sandbox {
 
         let mut command = match backend {
             SandboxBackendKind::Seatbelt => {
-                let mut profile = super::super::sandbox_backend::seatbelt_profile(
-                    &self.spec.writable_roots,
-                    &self.spec.read_denylist,
-                    allow_network,
-                );
+                let mut profile = match network_mode {
+                    ConfinedNetworkMode::Deny => super::super::sandbox_backend::seatbelt_profile(
+                        &self.spec.writable_roots,
+                        &self.spec.read_denylist,
+                        false,
+                    ),
+                    ConfinedNetworkMode::AllowAll => {
+                        super::super::sandbox_backend::seatbelt_profile(
+                            &self.spec.writable_roots,
+                            &self.spec.read_denylist,
+                            true,
+                        )
+                    }
+                    ConfinedNetworkMode::LoopbackProxyPort(proxy_port) => {
+                        super::super::sandbox_backend::seatbelt_profile_for_loopback_proxy(
+                            &self.spec.writable_roots,
+                            &self.spec.read_denylist,
+                            proxy_port,
+                        )
+                    }
+                };
                 profile.push_str(&super::super::sandbox_backend::seatbelt_read_only(
                     &self.spec,
                 ));
@@ -76,6 +144,7 @@ impl Sandbox {
                 use std::os::unix::process::CommandExt;
                 let writable_roots = self.spec.writable_roots.clone();
                 let read_denylist = self.spec.read_denylist.clone();
+                let allow_network = !matches!(network_mode, ConfinedNetworkMode::Deny);
                 let mut command = std::process::Command::new(program);
                 command.args(args);
                 // SAFETY: pre_exec runs in the forked child before exec; it only

@@ -41,44 +41,9 @@ pub fn parse_skill_metadata_with_source(
     source: SkillContentSource,
     package_id: Option<CapabilityPackageId>,
 ) -> Result<SkillMetadata, SkillsError> {
-    let (frontmatter_str, _) =
-        extract_frontmatter(content).ok_or(SkillsError::MissingFrontmatter)?;
-
-    let frontmatter: SkillFrontmatter = serde_yaml::from_str(&frontmatter_str)?;
-
-    // Validate metadata fields
-    validate_skill_metadata(
-        &frontmatter.name,
-        &frontmatter.description,
-        frontmatter.metadata.short_description.as_deref(),
-    )?;
-
-    // Validate capabilities
-    validate_capabilities(&frontmatter.capabilities)?;
-    validate_skill_compatibility(&frontmatter.compatibility)?;
-
-    let id = infer_skill_id(path, &frontmatter.name);
-
-    Ok(SkillMetadata {
-        id,
-        package_id,
-        name: frontmatter.name,
-        description: frontmatter.description,
-        short_description: frontmatter.metadata.short_description,
-        path: path.to_path_buf(),
-        package_root: None,
-        resource_root: None,
-        scope,
-        tags: frontmatter.metadata.tags,
-        capabilities: Some(frontmatter.capabilities),
-        compatibility: frontmatter.compatibility,
-        source,
-        enabled: true,
-        allow_implicit_invocation: true,
-        alan_metadata: AlanSkillRuntimeMetadata::default(),
-        compatible_metadata: CompatibleSkillMetadata::default(),
-        execution: ResolvedSkillExecution::default(),
-    })
+    let (metadata, _, _) =
+        parse_skill_frontmatter_and_metadata(content, path, scope, source, package_id)?;
+    Ok(metadata)
 }
 
 /// Load full skill content (metadata + body).
@@ -101,6 +66,23 @@ pub fn load_skill_from_content(
     source: SkillContentSource,
     package_id: Option<CapabilityPackageId>,
 ) -> Result<Skill, SkillsError> {
+    let (metadata, body, frontmatter) =
+        parse_skill_frontmatter_and_metadata(content, path, scope, source, package_id)?;
+
+    Ok(Skill {
+        metadata,
+        content: body,
+        frontmatter,
+    })
+}
+
+fn parse_skill_frontmatter_and_metadata(
+    content: &str,
+    path: &Path,
+    scope: SkillScope,
+    source: SkillContentSource,
+    package_id: Option<CapabilityPackageId>,
+) -> Result<(SkillMetadata, String, SkillFrontmatter), SkillsError> {
     let (frontmatter_str, body) =
         extract_frontmatter(content).ok_or(SkillsError::MissingFrontmatter)?;
 
@@ -140,11 +122,7 @@ pub fn load_skill_from_content(
         execution: ResolvedSkillExecution::default(),
     };
 
-    Ok(Skill {
-        metadata,
-        content: body,
-        frontmatter,
-    })
+    Ok((metadata, body, frontmatter))
 }
 
 const MAX_SCAN_DEPTH: usize = 6;
@@ -777,5 +755,102 @@ Content here.
         let skill = load_skill(&skill_md, SkillScope::Descriptor).unwrap();
         assert_eq!(skill.metadata.id, "full-test");
         assert!(skill.content.contains("# Body"));
+    }
+
+    #[test]
+    fn test_tolerant_frontmatter_ignores_unknown_keys_and_accepts_string_compatibility() {
+        let content = "\u{feff}---\n\
+name: Community Architect\n\
+description: Multi-step architectural planning playbook.\n\
+license: MIT\n\
+model: claude-opus-4-6\n\
+argument-hint: \"[target-component]\"\n\
+allowed-tools:\n  - Read\n  - Edit\n  - Bash\n\
+alwaysApply: true\n\
+disable-model-invocation: true\n\
+compatibility: Requires git and ripgrep\n\
+metadata:\n  author: community\n  version: \"1.2.0\"\n  tags: \"architecture, planning\"\n---\n\n# Body\n";
+
+        let metadata = parse_skill_metadata(
+            content,
+            Path::new("/tmp/architect/SKILL.md"),
+            SkillScope::Installed,
+        )
+        .unwrap();
+
+        assert_eq!(metadata.id, "architect");
+        assert_eq!(metadata.name, "Community Architect");
+        assert_eq!(
+            metadata.description,
+            "Multi-step architectural planning playbook."
+        );
+        assert_eq!(metadata.tags, vec!["architecture", "planning"]);
+        assert_eq!(
+            metadata.compatibility.requirements.as_deref(),
+            Some("Requires git and ripgrep")
+        );
+        assert!(metadata.compatibility.dependencies.is_empty());
+        assert!(
+            metadata
+                .capabilities
+                .as_ref()
+                .is_some_and(|cap| cap.required_tools.is_empty())
+        );
+        assert!(metadata.allow_implicit_invocation);
+        assert!(metadata.alan_metadata.is_empty());
+        assert_eq!(metadata.execution, ResolvedSkillExecution::default());
+    }
+
+    #[test]
+    fn test_tolerant_frontmatter_handles_null_optional_sections_without_weakening_required_fields()
+    {
+        let content = r#"---
+name: Null Sections
+description: Preserves required validation.
+metadata:
+capabilities:
+compatibility:
+---
+
+Body
+"#;
+        let metadata = parse_skill_metadata(
+            content,
+            Path::new("/tmp/null-sections/SKILL.md"),
+            SkillScope::Installed,
+        )
+        .unwrap();
+        assert_eq!(metadata.name, "Null Sections");
+        assert!(metadata.tags.is_empty());
+
+        let missing_name = "---\ndescription: Missing name\n---\nBody\n";
+        assert!(matches!(
+            parse_skill_metadata(
+                missing_name,
+                Path::new("/tmp/missing/SKILL.md"),
+                SkillScope::Installed
+            ),
+            Err(SkillsError::InvalidYaml(_))
+        ));
+
+        let empty_desc = "---\nname: Empty Desc\ndescription: \"   \"\n---\nBody\n";
+        assert!(matches!(
+            parse_skill_metadata(
+                empty_desc,
+                Path::new("/tmp/empty/SKILL.md"),
+                SkillScope::Installed
+            ),
+            Err(SkillsError::MissingField("description"))
+        ));
+
+        let bad_dep = "---\nname: Bad Dep\ndescription: Invalid dependency\ncompatibility:\n  dependencies:\n    - type: unknown_kind\n      name: foo\n---\nBody\n";
+        assert!(
+            parse_skill_metadata(
+                bad_dep,
+                Path::new("/tmp/bad-dep/SKILL.md"),
+                SkillScope::Installed
+            )
+            .is_err()
+        );
     }
 }

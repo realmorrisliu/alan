@@ -438,6 +438,9 @@ async fn create_namespace_test_state_and_shell_with_package(
                     arguments: "json_first_arg".to_string(),
                     result: "stdout_json".to_string(),
                 },
+                network_domains: Vec::new(),
+                required_secrets: Vec::new(),
+                required_adc: None,
             };
             let path = format!("/lib/exec/{tool_name}");
             let transport =

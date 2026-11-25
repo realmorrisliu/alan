@@ -41,6 +41,16 @@ pub trait ToolExecutionAdapter: std::fmt::Debug + Send + Sync {
     }
 }
 
+/// Host-owned secret resolver hook supplied only by platform Hosts for confined Tool execution.
+///
+/// Raw credential material remains inside Host adapters (`SecretStore`) and is projected
+/// solely into confined child environments or short-lived `0600` files, never persisted
+/// into Alan OS manifests, namespaces, or logs.
+pub trait ToolSecretResolver: std::fmt::Debug + Send + Sync {
+    /// Resolve a named credential ID from Host storage (`None` when absent).
+    fn resolve_named_secret(&self, credential_id: &str) -> Result<Option<String>>;
+}
+
 /// Explicit Process binding for Tool execution.
 #[derive(Clone)]
 pub struct ToolExecutionBinding {
@@ -51,6 +61,7 @@ pub struct ToolExecutionBinding {
     /// Scratch directory for temporary files.
     pub scratch_dir: PathBuf,
     adapter: Option<Arc<dyn ToolExecutionAdapter>>,
+    secret_resolver: Option<Arc<dyn ToolSecretResolver>>,
 }
 
 impl std::fmt::Debug for ToolExecutionBinding {
@@ -60,6 +71,7 @@ impl std::fmt::Debug for ToolExecutionBinding {
             .field("namespace_cwd", &self.namespace_cwd)
             .field("scratch_dir", &self.scratch_dir)
             .field("has_adapter", &self.adapter.is_some())
+            .field("has_secret_resolver", &self.secret_resolver.is_some())
             .finish()
     }
 }
@@ -101,7 +113,33 @@ impl ToolExecutionBinding {
             cwd_grant_id: None,
             scratch_dir,
             adapter: None,
+            secret_resolver: None,
         }
+    }
+
+    /// Attach an optional Host-owned secret resolver hook for confined packaged Tools.
+    pub fn with_optional_secret_resolver(
+        mut self,
+        resolver: Option<Arc<dyn ToolSecretResolver>>,
+    ) -> Self {
+        self.secret_resolver = resolver;
+        self
+    }
+
+    /// Attach a Host-owned secret resolver hook for confined packaged Tools.
+    pub fn with_secret_resolver(mut self, resolver: Arc<dyn ToolSecretResolver>) -> Self {
+        self.secret_resolver = Some(resolver);
+        self
+    }
+
+    /// Replace the Host-owned secret resolver hook.
+    pub fn set_secret_resolver(&mut self, resolver: Option<Arc<dyn ToolSecretResolver>>) {
+        self.secret_resolver = resolver;
+    }
+
+    /// Return the Host-owned secret resolver hook, if bound.
+    pub fn secret_resolver(&self) -> Option<Arc<dyn ToolSecretResolver>> {
+        self.secret_resolver.clone()
     }
 
     /// Bind the opaque Host adapter selected for the current service grant set.
@@ -143,6 +181,7 @@ pub struct ToolContext {
     /// Global configuration
     pub config: Arc<Config>,
     adapter: Option<Arc<dyn ToolExecutionAdapter>>,
+    secret_resolver: Option<Arc<dyn ToolSecretResolver>>,
     namespace: Option<(u64, alan_ap::InProcessTransport)>,
     progress: Option<super::sandbox::command_process::OutputProgressCallback>,
     trust_posture: crate::policy::TrustPosture,
@@ -160,10 +199,22 @@ impl ToolContext {
             scratch_dir: binding.scratch_dir,
             config,
             adapter: binding.adapter,
+            secret_resolver: binding.secret_resolver,
             namespace: None,
             progress: None,
             trust_posture: crate::policy::TrustPosture::Governed,
         }
+    }
+
+    /// Attach a Host-owned secret resolver hook for confined packaged Tool execution.
+    pub fn with_secret_resolver(mut self, resolver: Arc<dyn ToolSecretResolver>) -> Self {
+        self.secret_resolver = Some(resolver);
+        self
+    }
+
+    /// Return the Host-owned secret resolver hook, if bound.
+    pub fn secret_resolver(&self) -> Option<&Arc<dyn ToolSecretResolver>> {
+        self.secret_resolver.as_ref()
     }
 
     /// Attach the invocation's active trust posture to this Tool context.
@@ -230,6 +281,7 @@ impl ToolContext {
             cwd_grant_id: self.cwd_grant_id.clone(),
             scratch_dir: self.scratch_dir.clone(),
             adapter: self.adapter.clone(),
+            secret_resolver: self.secret_resolver.clone(),
         }
     }
 
