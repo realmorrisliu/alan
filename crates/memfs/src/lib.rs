@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, VersionTable};
 use alan_knowledge::recall::{IndexedDoc, Ranker, SearchHit, format_hits_json};
@@ -75,6 +76,16 @@ impl Default for MemFs {
     }
 }
 
+/// A read-only projection of a [`MemFs`] store for child workstreams.
+///
+/// Allows `walk`, `open(Read)`, `read`, `stat`, `clunk`, and `recall/<query>` /
+/// `search/<query>` BM25 + CJK queries while denying all mutations (`create`,
+/// `open(Write | ReadWrite)`, `write`, `remove`) with [`ErrorCode::NoAccess`].
+pub struct ReadOnlyMemFs {
+    inner: Arc<MemFs>,
+    fids: Mutex<HashMap<Fid, MemFid>>,
+}
+
 impl MemFs {
     /// Create an empty memory file server.
     pub fn new() -> Self {
@@ -89,6 +100,107 @@ impl MemFs {
                 next_revision_seq: 1,
             }),
         }
+    }
+
+    /// Create an independent read-only [`FileServer`] view backed by this [`MemFs`].
+    pub fn read_only(self: &Arc<Self>) -> ReadOnlyMemFs {
+        ReadOnlyMemFs {
+            inner: Arc::clone(self),
+            fids: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// List all committed file names in deterministic sorted order.
+    pub async fn list_files(&self) -> Vec<String> {
+        let state = self.state.lock().await;
+        state.files.keys().cloned().collect()
+    }
+
+    /// Atomically commit one named file and return its new checkpoint revision.
+    pub async fn commit_file(
+        &self,
+        name: impl Into<String>,
+        bytes: &[u8],
+    ) -> Result<MemoryCheckpointRevision, ErrorCode> {
+        let name = name.into();
+        let mut results = self
+            .commit_files_atomic(vec![(name, bytes.to_vec())])
+            .await?;
+        results.pop().map(|(_, rev)| rev).ok_or(ErrorCode::Io)
+    }
+
+    /// Atomically validate and commit a batch of named files under a single lock.
+    ///
+    /// Either every file in `updates` validates and commits, or no state is mutated.
+    pub async fn commit_files_atomic(
+        &self,
+        updates: Vec<(String, Vec<u8>)>,
+    ) -> Result<Vec<(String, MemoryCheckpointRevision)>, ErrorCode> {
+        if updates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for (name, bytes) in &updates {
+            if !valid_name(name) || bytes.len() > MAX_DOC_BYTES || !seen.insert(name.as_str()) {
+                return Err(ErrorCode::BadRequest);
+            }
+        }
+        let mut state = self.state.lock().await;
+        let mut staged = Vec::with_capacity(updates.len());
+        for (name, bytes) in &updates {
+            let root = state
+                .store
+                .checkpoint_from_bytes([bytes.as_slice()])
+                .map_err(map_knowledge_error)?;
+            staged.push((name.clone(), root));
+        }
+        let mut committed = Vec::with_capacity(staged.len());
+        for (name, root) in staged {
+            let generation = match state.files.get(&name) {
+                Some(file) => file.generation,
+                None => state.next_generation(),
+            };
+            state.bind_file_root(name.clone(), root, generation)?;
+            let rev = state
+                .history
+                .get(&name)
+                .and_then(|revs| revs.last())
+                .cloned()
+                .ok_or(ErrorCode::Io)?;
+            committed.push((name, rev));
+        }
+        Ok(committed)
+    }
+
+    /// Delete a named memory file and unbind its root.
+    pub async fn delete_file(&self, name: &str) -> Result<(), ErrorCode> {
+        let mut state = self.state.lock().await;
+        state.remove_named_file(name)
+    }
+
+    /// Revert a named file to a specific recorded [`MemoryCheckpointRevision::revision`].
+    pub async fn revert_to_revision(
+        &self,
+        name: &str,
+        revision: u64,
+    ) -> Result<ContentHash, ErrorCode> {
+        let mut state = self.state.lock().await;
+        if !state.files.contains_key(name) {
+            return Err(ErrorCode::NotFound);
+        }
+        let target_root = state
+            .history
+            .get(name)
+            .and_then(|revs| revs.iter().find(|rev| rev.revision == revision))
+            .map(|rev| rev.root.clone())
+            .ok_or(ErrorCode::NotFound)?;
+        state
+            .store
+            .verify_root_hash(&target_root)
+            .map_err(map_knowledge_error)?;
+        let generation = state.next_generation();
+        state.bind_file_root(name.to_string(), target_root.clone(), generation)?;
+        Ok(target_root)
     }
 
     /// Return the current checkpoint root for a named file.
@@ -354,6 +466,59 @@ impl State {
             Node::File(_) | Node::RecallQuery { .. } => Err(ErrorCode::NotDirectory),
         }
     }
+
+    fn remove_named_file(&mut self, name: &str) -> Result<(), ErrorCode> {
+        self.files.remove(name).ok_or(ErrorCode::NotFound)?;
+        if let Some(revisions) = self.history.remove(name) {
+            for rev in revisions {
+                self.store.unpin_root(&rev.root);
+            }
+        }
+        self.store
+            .unbind_root(&root_name(name))
+            .map_err(map_knowledge_error)?;
+        self.versions.bump(node_identity(&Node::Root).1);
+        self.versions
+            .bump(node_identity(&Node::File(name.to_string())).1);
+        Ok(())
+    }
+
+    fn read_node_bytes(&self, node: Node) -> Result<Vec<u8>, ErrorCode> {
+        match node {
+            Node::Root => Ok(self
+                .files
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
+                .into_bytes()),
+            Node::File(name) => self.materialize(&name),
+            Node::RecallDir(_) => Ok(RECALL_HELP.as_bytes().to_vec()),
+            Node::RecallQuery { query, .. } => self.render_query_json(&query),
+        }
+    }
+
+    fn stat_node(&self, node: &Node, read_only: bool) -> Result<Stat, ErrorCode> {
+        let length = match node {
+            Node::Root => self
+                .files
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
+                .len() as u64,
+            Node::File(name) => self.materialize(name)?.len() as u64,
+            Node::RecallDir(_) => RECALL_HELP.len() as u64,
+            Node::RecallQuery { query, .. } => self.render_query_json(query)?.len() as u64,
+        };
+        Ok(Stat {
+            name: String::new(),
+            qid: self.qid(node),
+            length,
+            executable: false,
+            writable: !read_only && is_writable_node(node),
+        })
+    }
 }
 
 #[async_trait]
@@ -537,18 +702,7 @@ impl FileServer for MemFs {
         let Node::File(name) = node else {
             return Err(ErrorCode::Unsupported);
         };
-        state.files.remove(&name).ok_or(ErrorCode::NotFound)?;
-        if let Some(revisions) = state.history.remove(&name) {
-            for rev in revisions {
-                state.store.unpin_root(&rev.root);
-            }
-        }
-        state
-            .store
-            .unbind_root(&root_name(&name))
-            .map_err(map_knowledge_error)?;
-        state.versions.bump(node_identity(&Node::Root).1);
-        state.versions.bump(node_identity(&Node::File(name)).1);
+        state.remove_named_file(&name)?;
         state.fids.remove(&fid);
         Ok(())
     }
@@ -566,6 +720,125 @@ impl FileServer for MemFs {
             let generation = f.file_generation.ok_or(ErrorCode::NotFound)?;
             state.put_existing_file(name, generation, &f.write_buf)?;
         }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl FileServer for ReadOnlyMemFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        let state = self.inner.state.lock().await;
+        let mut ro_fids = self.fids.lock().await;
+        if newfid == Fid::ROOT || ro_fids.contains_key(&newfid) {
+            return Err(ErrorCode::BadRequest);
+        }
+        let mut node = if fid == Fid::ROOT {
+            Node::Root
+        } else {
+            ro_fids
+                .get(&fid)
+                .map(|f| f.node.clone())
+                .ok_or(ErrorCode::NotFound)?
+        };
+        for name in names {
+            node = state.step_node(&node, name)?;
+        }
+        let qid = state.qid(&node);
+        ro_fids.insert(
+            newfid,
+            MemFid {
+                node,
+                mode: None,
+                write_buf: Vec::new(),
+                wrote: false,
+                write_failed: false,
+                file_generation: None,
+            },
+        );
+        Ok(qid)
+    }
+
+    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+            return Err(ErrorCode::NoAccess);
+        }
+        let state = self.inner.state.lock().await;
+        let mut ro_fids = self.fids.lock().await;
+        let node = if fid == Fid::ROOT {
+            Node::Root
+        } else {
+            let f = ro_fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            if f.mode.is_some() {
+                return Err(ErrorCode::BadRequest);
+            }
+            f.node.clone()
+        };
+        if let Node::File(name) = &node
+            && !state.files.contains_key(name)
+        {
+            return Err(ErrorCode::NotFound);
+        }
+        if fid != Fid::ROOT {
+            let f = ro_fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
+            f.mode = Some(mode);
+        }
+        Ok(state.qid(&node))
+    }
+
+    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        let state = self.inner.state.lock().await;
+        let ro_fids = self.fids.lock().await;
+        let node = if fid == Fid::ROOT {
+            Node::Root
+        } else {
+            let f = ro_fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            if !matches!(f.mode, Some(OpenMode::Read)) {
+                return Err(ErrorCode::NoAccess);
+            }
+            f.node.clone()
+        };
+        let bytes = state.read_node_bytes(node)?;
+        Ok(slice(bytes, offset, count))
+    }
+
+    async fn write(&self, _fid: Fid, _offset: Offset, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::NoAccess)
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        let state = self.inner.state.lock().await;
+        let ro_fids = self.fids.lock().await;
+        let node = if fid == Fid::ROOT {
+            Node::Root
+        } else {
+            ro_fids
+                .get(&fid)
+                .map(|f| f.node.clone())
+                .ok_or(ErrorCode::NotFound)?
+        };
+        state.stat_node(&node, true)
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::NoAccess)
+    }
+
+    async fn remove(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::NoAccess)
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        if fid == Fid::ROOT {
+            return Ok(());
+        }
+        let mut ro_fids = self.fids.lock().await;
+        ro_fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
         Ok(())
     }
 }

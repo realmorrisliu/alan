@@ -7,7 +7,7 @@ use std::{
 
 use alan_agent_engine::{
     AgentRuntimeStoreBindings, ProjectSummaryEdit, delete_project_summary, edit_project_summary,
-    inspect_project_summary,
+    inspect_project_summary, rollback_project_summary,
 };
 use alan_ap::ErrorCode;
 use anyhow::Result;
@@ -247,6 +247,12 @@ enum SummaryCtlCommand {
         #[serde(default)]
         expected_revision: Option<u64>,
     },
+    Rollback {
+        #[serde(default)]
+        target_revision: Option<u64>,
+        #[serde(default)]
+        expected_revision: Option<u64>,
+    },
 }
 
 pub(super) fn read_project_summary_bytes(
@@ -297,6 +303,20 @@ pub(super) fn commit_project_summary_ctl(
         SummaryCtlCommand::Delete {
             expected_revision: None,
         }
+    } else if trimmed == "rollback" {
+        SummaryCtlCommand::Rollback {
+            target_revision: None,
+            expected_revision: None,
+        }
+    } else if let Some(rest) = trimmed.strip_prefix("rollback ") {
+        let rev = rest
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| ErrorCode::BadRequest)?;
+        SummaryCtlCommand::Rollback {
+            target_revision: Some(rev),
+            expected_revision: None,
+        }
     } else if let Some(rest) = trimmed.strip_prefix("edit ") {
         SummaryCtlCommand::Edit {
             text: Some(rest.trim().to_string()),
@@ -334,12 +354,23 @@ pub(super) fn commit_project_summary_ctl(
                 .map(|_| ())
                 .map_err(map_summary_err)
         }
+        SummaryCtlCommand::Rollback {
+            target_revision,
+            expected_revision,
+        } => rollback_project_summary(memory_dir, project_cwd, target_revision, expected_revision)
+            .map(|_| ())
+            .map_err(map_summary_err),
     }
 }
 
 fn map_summary_err(err: anyhow::Error) -> ErrorCode {
     let msg = err.to_string();
-    if msg.contains("revision conflict") || msg.contains("requires non-empty content") {
+    if msg.contains("revision conflict")
+        || msg.contains("requires non-empty content")
+        || msg.contains("no previous summary revision")
+        || msg.contains("no continuity summary exists")
+        || msg.contains("not found in retained history")
+    {
         ErrorCode::BadRequest
     } else if msg.contains("symlink") || msg.contains("escapes") {
         ErrorCode::NoAccess

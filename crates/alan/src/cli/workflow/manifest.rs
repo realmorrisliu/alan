@@ -188,8 +188,32 @@ pub struct WorkflowFileserverSpec {
     pub allow_network: bool,
 }
 
+/// Guardrails and workstream binding for Stateful Cron Streams (`cron_stream` manifest table).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowCronStreamSpec {
+    /// Persistent workstream identifier (`streams/<stream_name>.json` + `.lock`).
+    pub stream_name: String,
+    /// Optional workstream scope description recorded when initializing the stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Consecutive run failure threshold before transitioning the stream to `paused_error`.
+    #[serde(default = "default_max_consecutive_failures")]
+    pub max_consecutive_failures: u32,
+    /// Optional estimated prompt-token threshold above which checkpoint compaction runs first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_threshold_tokens: Option<u64>,
+    /// Optional strict per-run USD spend budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_run_budget_usd: Option<f64>,
+}
+
+const fn default_max_consecutive_failures() -> u32 {
+    3
+}
+
 /// Declarative TOML workflow manifest stored in System Store (`services/workflows/manifests/<id>.toml`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowManifest {
     /// Schema version (`1`).
@@ -231,6 +255,9 @@ pub struct WorkflowManifest {
     /// Optional fail-closed human release gate policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_gate: Option<ReleaseGatePolicy>,
+    /// Optional Stateful Cron Stream binding and guardrail policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cron_stream: Option<WorkflowCronStreamSpec>,
 }
 
 const fn default_schema_version() -> u16 {
@@ -333,7 +360,51 @@ impl WorkflowManifest {
             );
         }
 
+        if let Some(cron_stream) = &self.cron_stream {
+            ensure!(
+                self.project_key.is_some(),
+                "stateful `cron_stream` workflows require an explicit `project_key`"
+            );
+            validate_workflow_id(&cron_stream.stream_name).with_context(|| {
+                format!(
+                    "invalid cron_stream.stream_name `{}`",
+                    cron_stream.stream_name
+                )
+            })?;
+            ensure!(
+                cron_stream.max_consecutive_failures >= 1,
+                "cron_stream.max_consecutive_failures must be >= 1"
+            );
+            if let Some(threshold) = cron_stream.compaction_threshold_tokens {
+                ensure!(
+                    threshold >= 1,
+                    "cron_stream.compaction_threshold_tokens must be >= 1"
+                );
+            }
+            if let Some(budget) = cron_stream.per_run_budget_usd {
+                ensure!(
+                    budget.is_finite() && budget > 0.0,
+                    "cron_stream.per_run_budget_usd must be a finite positive number"
+                );
+            }
+        }
+
         Ok(())
+    }
+
+    /// Convert `cron_stream` + `project_key` into an engine `CronStreamExecutionSpec` if enabled.
+    pub fn to_cron_stream_spec(&self) -> Option<alan_agent_engine::CronStreamExecutionSpec> {
+        let cron_stream = self.cron_stream.as_ref()?;
+        let project_key = self.project_key.as_ref()?;
+        Some(alan_agent_engine::CronStreamExecutionSpec {
+            workflow_id: self.id.clone(),
+            project_key: project_key.clone(),
+            stream_name: cron_stream.stream_name.clone(),
+            scope: cron_stream.scope.clone(),
+            max_consecutive_failures: cron_stream.max_consecutive_failures,
+            compaction_threshold_tokens: cron_stream.compaction_threshold_tokens,
+            per_run_budget_usd: cron_stream.per_run_budget_usd,
+        })
     }
 }
 
@@ -481,6 +552,7 @@ pub fn validate_mount_grant_id(grant_id: &str) -> Result<()> {
 pub struct WorkflowStore {
     root: PathBuf,
     projects_root: Option<PathBuf>,
+    host_mount_grants_path: Option<PathBuf>,
 }
 
 impl WorkflowStore {
@@ -489,6 +561,7 @@ impl WorkflowStore {
         Ok(Self {
             root: system.service("workflows")?,
             projects_root: Some(system.projects()?),
+            host_mount_grants_path: Some(system.host_mount_grants()?),
         })
     }
 
@@ -507,7 +580,21 @@ impl WorkflowStore {
         Ok(Self {
             root,
             projects_root: None,
+            host_mount_grants_path: None,
         })
+    }
+
+    /// Override the saved Host Mount grants store path used for cron grant revalidation.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "used by workflow cron-stream unit tests and library callers"
+        )
+    )]
+    pub fn with_host_mount_grants_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.host_mount_grants_path = Some(path.into());
+        self
     }
 
     /// Resolve the System Store `services/projects` directory if explicitly set or co-located.
@@ -515,6 +602,15 @@ impl WorkflowStore {
         self.projects_root
             .clone()
             .or_else(|| self.root.parent().map(|parent| parent.join("projects")))
+    }
+
+    /// Resolve the System Store `services/host-mount/grants.json` path if set or co-located.
+    pub fn host_mount_grants_path(&self) -> Option<PathBuf> {
+        self.host_mount_grants_path.clone().or_else(|| {
+            self.root
+                .parent()
+                .map(|parent| parent.join("host-mount").join("grants.json"))
+        })
     }
 
     /// Directory holding workflow TOML manifests (`manifests/`).

@@ -6,8 +6,9 @@ mod async_workstreams;
 mod child_agents;
 mod child_run_termination_tool;
 mod child_runs;
-mod compaction;
+pub mod compaction;
 mod controller;
+pub mod cron_streams;
 mod delegated_child_run;
 mod delegated_skill_evidence;
 mod delegated_skill_tool;
@@ -22,6 +23,7 @@ pub mod mcp;
 mod memory_domains;
 mod memory_flush;
 mod memory_promotion;
+pub mod memory_proposals;
 mod memory_recall;
 mod memory_surfaces;
 pub mod model_binding;
@@ -61,6 +63,7 @@ mod ui_surfaces;
 mod virtual_tool;
 mod virtual_tools;
 pub mod workstream_handoff;
+pub mod write_isolation;
 
 pub use async_workstreams::{AsyncWorkstreamInfo, AsyncWorkstreamRegistry, AsyncWorkstreamStatus};
 pub use child_runs::{
@@ -69,6 +72,11 @@ pub use child_runs::{
 };
 pub use controller::{
     AgentMachineDurabilityState, RuntimeController, RuntimeHandle, RuntimeStartupMetadata,
+};
+pub use cron_streams::{
+    CronStreamExecutionSpec, CronStreamFinalizeOutcome, CronStreamPrepareResult,
+    check_per_run_budget, finalize_stateful_cron_stream_run, maybe_compact_rollout_checkpoint,
+    prepare_stateful_cron_stream_run,
 };
 pub use engine::spawn_with_namespace_environment;
 pub use executable_arena::{
@@ -86,14 +94,20 @@ pub use memory_domains::{
     DomainRecallScope, MemoryDomain, list_existing_memory_domains, resolve_domain_store_dir,
     validate_domain_slug,
 };
+pub use memory_proposals::{
+    CommittedMemoryProposal, MEMORY_PROPOSALS_JSON_FILE, MEMORY_PROPOSALS_MARKDOWN_FILE,
+    MemoryProposal, MemoryProposalCommitOutcome, MemoryProposalKind, apply_memory_proposals,
+    commit_memory_proposals_over_ap, extract_memory_proposals, render_proposals_markdown,
+};
 pub use memory_recall::{
     MemorySearchHit, build_turn_recall_bundle_for_domains, search_memory_domains,
     search_memory_store,
 };
 pub use memory_surfaces::project_summary::{
     ProjectContinuitySummary, ProjectContinuitySummaryView, ProjectSummaryDeleteOutcome,
-    ProjectSummaryEdit, ProjectSummaryOrigin, delete_project_summary, derive_project_key,
-    edit_project_summary, inspect_project_summary,
+    ProjectSummaryEdit, ProjectSummaryOrigin, ProjectSummaryRevisionSnapshot,
+    delete_project_summary, derive_project_key, edit_project_summary, inspect_project_summary,
+    rollback_project_summary,
 };
 pub use project_startup::{
     ProjectStartupContext, ProjectWorkstreamStoreRef, format_project_ledger_and_inbox_summary,
@@ -102,7 +116,8 @@ pub use project_startup::{
 pub use project_workstreams::{
     CronStreamPolicy, INBOX_DIGEST_VERSION, InboxDigestEntry, InboxDigestStatus,
     MAX_INBOX_SUMMARY_CHARS, PROJECT_BINDING_VERSION, PROJECT_LEDGER_VERSION, ProjectBinding,
-    ProjectLedger, WORKSTREAM_RECORD_VERSION, WorkstreamCounts, WorkstreamPersistence,
+    ProjectLedger, StreamLeaseAcquireResult, StreamLeaseGuard, StreamLeaseHolderKind,
+    StreamLeaseMetadata, WORKSTREAM_RECORD_VERSION, WorkstreamCounts, WorkstreamPersistence,
     WorkstreamRecord, WorkstreamState, WorkstreamWriteMode, archive_workstream, bind_project_dir,
     binding_path, complete_workstream, idle_workstream, inbox_dir, inbox_entry_path, ledger_path,
     list_inbox_digests, list_project_bindings, list_unread_inbox_digests, load_inbox_digest,
@@ -125,6 +140,11 @@ pub use workstream_handoff::{
     WorkstreamRouteRuleSpec, default_workstream_route_rules, ensure_workstream_route_rules,
     ensure_workstream_route_rules_at, read_route_audit_log, read_route_audit_log_at,
     send_handoff_message, send_handoff_message_at, validate_isolated_handoff_mounts,
+};
+pub use write_isolation::{
+    GitWorktreeIsolationPort, IsolatedWorkspaceAllocation, IsolatedWorkspaceBacking,
+    IsolatedWorkspaceRequest, SharedWriteGuard, SharedWriteQueueRegistry, WorkspaceIsolationPort,
+    WorkspaceMergeHandoff, WorkspaceSyncConflict, WorkspaceSyncStatus,
 };
 
 // Re-export the memory-promotion job for internal runtime modules.

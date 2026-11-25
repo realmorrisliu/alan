@@ -17,10 +17,14 @@ use super::super::delegated_skill_evidence::{
     build_subagent_action_metadata, resolve_action_output_reference,
 };
 use super::super::delegated_skill_tool::{DelegatedSkillInvocationRequest, DelegatedSkillRuntime};
-use super::super::project_workstreams::{WorkstreamPersistence, WorkstreamRecord, WorkstreamState};
+use super::super::memory_proposals::{commit_memory_proposals_over_ap, extract_memory_proposals};
+use super::super::project_workstreams::{
+    WorkstreamPersistence, WorkstreamRecord, WorkstreamState, WorkstreamWriteMode,
+};
 use super::super::transition::{NamespaceActionRecord, NamespaceAgentFiles};
 use super::super::turn_support::tool_result_preview;
 use super::super::virtual_tool::VirtualToolOutcome;
+use super::super::write_isolation::WorkspaceMergeHandoff;
 use super::SubagentSpawnRequest;
 use super::batch::PreparedChildKind;
 
@@ -109,7 +113,7 @@ pub(in crate::runtime) async fn finalize_action_record(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "Batch slot completion threads borrowed runtime, call metadata, child reference, workstream record, and emitter explicitly"
+    reason = "Batch slot completion threads borrowed runtime, call metadata, child reference, workstream record, merge handoff, and emitter explicitly"
 )]
 pub(super) async fn record_slot_completion<E, F>(
     runtime: &mut DelegatedSkillRuntime<'_>,
@@ -118,6 +122,7 @@ pub(super) async fn record_slot_completion<E, F>(
     result: DelegatedSkillResult,
     child_run_ref: Option<DelegatedChildRunReference>,
     workstream_record: Option<&WorkstreamRecord>,
+    merge_handoff: Option<&WorkspaceMergeHandoff>,
     prelaunch_rejected: bool,
     status_override: Option<&str>,
     emit: &mut E,
@@ -170,6 +175,7 @@ where
         PreparedChildKind::AdHocSubagent {
             request,
             persisted_arguments,
+            write_isolation,
             ..
         } => {
             let synthetic_req = DelegatedSkillInvocationRequest {
@@ -225,6 +231,47 @@ where
             }
             if let Some(ws) = workstream_record {
                 attach_workstream_fields(&mut tape_payload, ws);
+            } else if let Some(wi) = write_isolation {
+                tape_payload["write_mode"] = json!(match wi.write_mode {
+                    WorkstreamWriteMode::ReadOnly => "read_only",
+                    WorkstreamWriteMode::SharedQueue => "shared_queue",
+                    WorkstreamWriteMode::Worktree => "worktree",
+                });
+            }
+            if let Some(handoff) = merge_handoff {
+                tape_payload["merge_handoff"] = json!(handoff);
+                if let Some(ref wt_ref) = Some(&handoff.workspace_ref) {
+                    tape_payload["worktree_ref"] = json!(wt_ref);
+                }
+            }
+            let fallback_rollout = workstream_record
+                .and_then(|ws| ws.rollout_ref.as_deref())
+                .or_else(|| {
+                    child_run_ref
+                        .as_ref()
+                        .and_then(|r| r.rollout_debug_path.as_deref())
+                })
+                .or_else(|| child_run_ref.as_ref().map(|r| r.process_path.as_str()));
+            let proposals =
+                extract_memory_proposals(tape_payload.get("structured_output"), fallback_rollout);
+            if !proposals.is_empty() {
+                let cwd_str = runtime.child_namespace_cwd().to_string_lossy().to_string();
+                match commit_memory_proposals_over_ap(
+                    runtime.agent_files.root_transport(),
+                    "/mnt/mem",
+                    &proposals,
+                    runtime.memory_store_backing(),
+                    Some(&cwd_str),
+                )
+                .await
+                {
+                    Ok(outcome) => {
+                        tape_payload["memory_proposals_commit"] = json!(outcome);
+                    }
+                    Err(err) => {
+                        tracing::warn!(%err, "Failed to commit child memory_proposals to /mnt/mem");
+                    }
+                }
             }
             let rollout_payload = if let Some(child_run_ref) = child_run_ref {
                 let mut payload = tape_payload.clone();
@@ -300,6 +347,19 @@ pub(super) fn subagent_arguments_json(request: &SubagentSpawnRequest) -> Value {
     }
     if request.background {
         arguments["background"] = json!(true);
+    }
+    if let Some(write_mode) = request.write_mode {
+        arguments["write_mode"] = json!(match write_mode {
+            WorkstreamWriteMode::ReadOnly => "read_only",
+            WorkstreamWriteMode::SharedQueue => "shared_queue",
+            WorkstreamWriteMode::Worktree => "worktree",
+        });
+    }
+    if request.long_running {
+        arguments["long_running"] = json!(true);
+    }
+    if request.read_memory {
+        arguments["read_memory"] = json!(true);
     }
     arguments
 }
@@ -395,5 +455,13 @@ fn attach_workstream_fields(payload: &mut Value, ws: &WorkstreamRecord) {
     }
     if let Some(rollout) = ws.rollout_ref.as_deref() {
         payload["rollout_ref"] = json!(rollout);
+    }
+    payload["write_mode"] = json!(match ws.write_mode {
+        WorkstreamWriteMode::ReadOnly => "read_only",
+        WorkstreamWriteMode::SharedQueue => "shared_queue",
+        WorkstreamWriteMode::Worktree => "worktree",
+    });
+    if let Some(wt) = ws.worktree_ref.as_deref() {
+        payload["worktree_ref"] = json!(wt);
     }
 }

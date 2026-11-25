@@ -522,7 +522,10 @@ fn build_child_namespace_plan(
         let memory = parent_descriptors
             .get(&alan_agent_protocol::MEMORY_STORE_DESCRIPTOR)
             .context("parent Process has no Memory Store descriptor")?;
-        retain_resolving_mount(parent_mounts, &mut selected, memory)?;
+        retain_resolving_mount_read_only(parent_mounts, &mut selected, memory)?;
+        if parent_mounts.iter().any(|mount| mount.path == "/mnt/mem") {
+            retain_exact_mount_read_only(parent_mounts, &mut selected, "/mnt/mem")?;
+        }
     }
     let mut effective = selected.clone();
     for host_mount in &spec.host_mounts {
@@ -613,6 +616,39 @@ fn retain_resolving_mount(
             )
         })?;
     selected.insert(mount.path.clone(), mount.access);
+    Ok(())
+}
+
+fn retain_exact_mount_read_only(
+    parent_mounts: &[ProcessNamespaceMount],
+    selected: &mut BTreeMap<String, ProcessNamespaceAccess>,
+    path: &str,
+) -> Result<()> {
+    let mount = parent_mounts
+        .iter()
+        .find(|mount| mount.path == path)
+        .with_context(|| format!("parent Process namespace has no `{path}` mount"))?;
+    selected.insert(mount.path.clone(), ProcessNamespaceAccess::ReadOnly);
+    Ok(())
+}
+
+fn retain_resolving_mount_read_only(
+    parent_mounts: &[ProcessNamespaceMount],
+    selected: &mut BTreeMap<String, ProcessNamespaceAccess>,
+    path: &str,
+) -> Result<()> {
+    let path = Path::new(path);
+    let mount = parent_mounts
+        .iter()
+        .filter(|mount| path.starts_with(Path::new(&mount.path)))
+        .max_by_key(|mount| mount.path.len())
+        .with_context(|| {
+            format!(
+                "parent Process namespace cannot resolve `{}`",
+                path.display()
+            )
+        })?;
+    selected.insert(mount.path.clone(), ProcessNamespaceAccess::ReadOnly);
     Ok(())
 }
 
@@ -800,13 +836,10 @@ mod tests {
         );
 
         spec.handles.push(SpawnHandle::Memory);
-        assert!(
-            plan(&spec)
-                .unwrap()
-                .effective_mounts
-                .iter()
-                .any(|mount| mount.path == "/memory")
-        );
+        let with_mem = plan(&spec).unwrap();
+        assert!(with_mem.effective_mounts.iter().any(|mount| {
+            mount.path == "/memory" && mount.access == ProcessNamespaceAccess::ReadOnly
+        }));
     }
 
     #[test]

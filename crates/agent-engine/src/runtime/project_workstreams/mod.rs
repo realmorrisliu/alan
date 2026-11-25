@@ -8,6 +8,7 @@
 
 pub mod binding;
 pub mod inbox;
+pub mod lease;
 pub mod ledger;
 #[cfg(test)]
 mod tests;
@@ -29,6 +30,9 @@ pub use inbox::{
     mark_all_inbox_digests_digested, mark_inbox_digest_digested, scrub_inbox_summary,
     write_inbox_digest,
 };
+pub use lease::{
+    StreamLeaseAcquireResult, StreamLeaseGuard, StreamLeaseHolderKind, StreamLeaseMetadata,
+};
 pub use ledger::{
     CronStreamPolicy, PROJECT_LEDGER_VERSION, ProjectLedger, WORKSTREAM_RECORD_VERSION,
     WorkstreamCounts, WorkstreamPersistence, WorkstreamRecord, WorkstreamState,
@@ -38,6 +42,7 @@ pub use ledger::{
 };
 
 const MAX_IDENTIFIER_LEN: usize = 128;
+const STREAMS_DIR_NAME: &str = "streams";
 
 pub(super) fn validate_identifier(kind: &str, value: &str) -> Result<()> {
     ensure!(

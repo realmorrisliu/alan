@@ -11,7 +11,8 @@ const MAX_LAUNCHD_CALENDAR_INTERVALS: usize = 128;
 const MAX_INTERVAL_SECS: u64 = 365 * 86_400;
 
 /// Supported native scheduler targets for `alan workflow render-schedule`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
 pub enum ScheduleTarget {
     /// macOS `launchd` LaunchAgent property list (`.plist`).
     Launchd,

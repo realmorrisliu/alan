@@ -379,6 +379,26 @@ async fn history_summary_files_enforce_redaction_revision_and_delete() {
     assert!(after_delete.deleted);
     assert!(!after_delete.markdown_recall_active);
 
+    // Rollback restores previous revision (rev 1) from revision history.
+    let rollback_payload = serde_json::json!({
+        "action": "rollback",
+        "target_revision": 1,
+        "expected_revision": 2
+    });
+    shell
+        .write("/summary_ctl", rollback_payload.to_string().as_bytes())
+        .await
+        .unwrap();
+
+    let after_rollback: alan_agent_engine::ProjectContinuitySummaryView =
+        serde_json::from_slice(&shell.cat("/summary").await.unwrap()).unwrap();
+    assert!(after_rollback.exists);
+    assert!(!after_rollback.deleted);
+    assert!(after_rollback.markdown_recall_active);
+    let restored = after_rollback.summary.unwrap();
+    assert_eq!(restored.revision, 3);
+    assert!(restored.goal.contains("Harden sandbox"));
+
     ephemeral_flag.store(true, std::sync::atomic::Ordering::SeqCst);
     assert!(shell.write("/summary_ctl", b"delete").await.is_err());
 }
