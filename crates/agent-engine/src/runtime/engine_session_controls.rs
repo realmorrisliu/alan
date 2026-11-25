@@ -126,6 +126,9 @@ impl RuntimeSubmissionQueues {
         self.reset_queue_after_session_reset(&files, old_recorder.as_ref())
             .await;
         state.prompt_cache.reset_memory_bootstrap();
+        state.runtime_config.ephemeral_context = true;
+        state.runtime_config.project_startup_context = None;
+        state.prompt_cache.set_project_ledger_section(None);
 
         match state
             .machine

@@ -470,6 +470,13 @@ fn spawn_with_prepared_runtime_environment(
         state
             .prompt_cache
             .set_project_knowledge_section(initial_knowledge);
+        let initial_ledger = (!state.runtime_config.ephemeral_context)
+            .then_some(state.runtime_config.project_startup_context.as_ref())
+            .flatten()
+            .and_then(super::project_startup::render_project_startup_context);
+        state
+            .prompt_cache
+            .set_project_ledger_section(initial_ledger);
         let queue_paused = state
             .machine
             .input_queue()

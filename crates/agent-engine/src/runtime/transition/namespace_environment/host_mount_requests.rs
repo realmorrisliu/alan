@@ -138,6 +138,66 @@ impl NamespaceHostMountRequests {
             .await?
             .context("cancelled Host Mount Service request did not reach terminal status")
     }
+
+    /// Revalidate requested child Host Mount grants against `/mnt/host-mount/grants` when present.
+    pub(crate) async fn validate_live_grants(
+        &self,
+        mounts: &[alan_agent_protocol::SpawnHostMount],
+    ) -> Result<Option<String>> {
+        if mounts.is_empty() {
+            return Ok(None);
+        }
+        let client = NamespaceClient::new(self.root.clone());
+        let Some(grant_ids) = client
+            .try_read_directory_names("/mnt/host-mount/grants")
+            .await?
+        else {
+            return Ok(None);
+        };
+        for mount in mounts {
+            if !grant_ids.iter().any(|id| id == &mount.grant) {
+                return Ok(Some(format!(
+                    "Host Mount grant '{}' is missing or revoked on the parent Process.",
+                    mount.grant
+                )));
+            }
+            let record_path = format!("/mnt/host-mount/grants/{}/record", mount.grant);
+            let Some(bytes) = client.try_read_file(&record_path).await? else {
+                return Ok(Some(format!(
+                    "Host Mount grant '{}' record is unavailable.",
+                    mount.grant
+                )));
+            };
+            let record: serde_json::Value = serde_json::from_slice(&bytes)
+                .with_context(|| format!("parse Host Mount grant record {record_path}"))?;
+            if !record["active"].as_bool().unwrap_or(false) {
+                return Ok(Some(format!(
+                    "Host Mount grant '{}' has been revoked.",
+                    mount.grant
+                )));
+            }
+            if mount.access == alan_agent_protocol::SpawnMountAccess::ReadWrite
+                && record["access"].as_str() != Some("read_write")
+            {
+                return Ok(Some(format!(
+                    "Host Mount grant '{}' cannot widen read_only grant to read_write.",
+                    mount.grant
+                )));
+            }
+            if let Some(ns_path) = record["namespace_path"].as_str() {
+                let root = std::path::Path::new(ns_path);
+                if root != std::path::Path::new("/") && !mount.target.starts_with(root) {
+                    return Ok(Some(format!(
+                        "Host Mount target '{}' is outside grant '{}' scope '{}'.",
+                        mount.target.display(),
+                        mount.grant,
+                        ns_path
+                    )));
+                }
+            }
+        }
+        Ok(None)
+    }
 }
 
 async fn read_optional_text(client: &NamespaceClient, path: &str) -> Result<Option<String>> {

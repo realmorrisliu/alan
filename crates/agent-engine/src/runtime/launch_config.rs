@@ -263,6 +263,11 @@ pub struct AgentProcessConfig {
     pub response_schema: Option<serde_json::Value>,
     /// Optional host-supplied synchronous Tool policy hook.
     pub tool_policy_hook: Option<std::sync::Arc<dyn super::ToolPolicyHook>>,
+    /// Optional explicitly-bound project ledger & unread inbox context for Root Agent startup.
+    /// Always ignored when `ephemeral_context` is true, and never inherited by child processes.
+    pub project_startup_context: Option<super::ProjectStartupContext>,
+    /// When true, bypass Project Ledger prompt injection and workstream ledger persistence.
+    pub ephemeral_context: bool,
 }
 
 impl std::fmt::Debug for AgentProcessConfig {
@@ -274,6 +279,11 @@ impl std::fmt::Debug for AgentProcessConfig {
             .field("system_prompt_mode", &self.system_prompt_mode)
             .field("has_response_schema", &self.response_schema.is_some())
             .field("has_tool_policy_hook", &self.tool_policy_hook.is_some())
+            .field(
+                "has_project_startup_context",
+                &self.project_startup_context.is_some(),
+            )
+            .field("ephemeral_context", &self.ephemeral_context)
             .finish_non_exhaustive()
     }
 }
@@ -299,6 +309,8 @@ impl Default for AgentProcessConfig {
             system_prompt_mode: crate::SystemPromptMode::Append,
             response_schema: None,
             tool_policy_hook: None,
+            project_startup_context: None,
+            ephemeral_context: false,
         }
     }
 }
@@ -324,6 +336,8 @@ impl From<crate::config::Config> for AgentProcessConfig {
             system_prompt_mode: crate::SystemPromptMode::Append,
             response_schema: None,
             tool_policy_hook: None,
+            project_startup_context: None,
+            ephemeral_context: false,
         }
     }
 }
@@ -349,6 +363,8 @@ impl From<crate::LoadedConfig> for AgentProcessConfig {
             system_prompt_mode: crate::SystemPromptMode::Append,
             response_schema: None,
             tool_policy_hook: None,
+            project_startup_context: None,
+            ephemeral_context: false,
         }
     }
 }
@@ -360,6 +376,23 @@ pub(super) struct ResolvedRuntimeLaunchConfig {
 }
 
 impl AgentProcessConfig {
+    /// Attach an explicitly bound project's read-only startup ledger & inbox context.
+    pub fn set_project_startup_context(&mut self, context: Option<super::ProjectStartupContext>) {
+        self.project_startup_context = if self.ephemeral_context {
+            None
+        } else {
+            context
+        };
+    }
+
+    /// Enable or disable ephemeral context bypass for Project Ledger & workstreams.
+    pub fn set_ephemeral_context(&mut self, ephemeral: bool) {
+        self.ephemeral_context = ephemeral;
+        if ephemeral {
+            self.project_startup_context = None;
+        }
+    }
+
     /// Derive execution configuration for a child launch. Agent Runtime Service
     /// remains responsible for descriptors, namespace, connection, and the
     /// resolved Agent Definition.
@@ -404,6 +437,8 @@ impl AgentProcessConfig {
         // Children can only inherit equal or narrower invocation trust posture.
         child.trust_posture = crate::policy::TrustPosture::resolve_child(self.trust_posture, None)
             .unwrap_or(crate::policy::TrustPosture::Governed);
+        child.project_startup_context = None;
+        child.ephemeral_context = false;
         child
     }
 
@@ -428,12 +463,40 @@ impl AgentProcessConfig {
         runtime_config.system_prompt_mode = self.system_prompt_mode.clone();
         runtime_config.response_schema = self.response_schema.clone();
         runtime_config.tool_policy_hook = self.tool_policy_hook.clone();
+        runtime_config.ephemeral_context = self.ephemeral_context;
+        runtime_config.project_startup_context = if self.ephemeral_context {
+            None
+        } else {
+            self.project_startup_context.clone()
+        };
 
         Ok(ResolvedRuntimeLaunchConfig {
             agent_definition,
             core_config,
             runtime_config,
         })
+    }
+}
+
+impl RuntimeConfig {
+    pub(crate) fn delegated_workstream_refs(
+        &self,
+    ) -> (
+        Option<super::project_startup::ProjectWorkstreamStoreRef>,
+        Option<PathBuf>,
+    ) {
+        let workstream_store = (!self.ephemeral_context)
+            .then(|| {
+                self.project_startup_context
+                    .as_ref()
+                    .map(|ctx| ctx.store.clone())
+            })
+            .flatten();
+        let rollouts_dir = self
+            .store_bindings
+            .as_ref()
+            .map(|stores| stores.rollouts.clone());
+        (workstream_store, rollouts_dir)
     }
 }
 

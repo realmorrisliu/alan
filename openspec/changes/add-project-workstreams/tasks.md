@@ -2,9 +2,9 @@
 
 ## 1. Slice 1 — Project Binding, Read-Only Ledger, Named Workstreams, and Inbox (M8.1)
 
-- [ ] 1.1 Add System Store project binding (`binding.json`), opaque project key resolution without Git-remote inference, and read-only `ledger.json` auto-load on `alan` startup; test `--ephemeral`, `/new`, unbound directories, and live grant/budget revalidation.
-- [ ] 1.2 Extend workstream dispatch (`persistent` vs `one_off`) with named checkpoint persistence (`idle`) and automatic `one_off` archival (`archived`) while keeping durable rollout evidence inspectable.
-- [ ] 1.3 Add project `inbox/` digest persistence for `alan workflow` runs and surface unread digests on Root startup with explicit mark-digested state transitions; test redaction and bounded digest rendering.
+- [x] 1.1 Add System Store project binding (`binding.json`), opaque project key resolution without Git-remote inference, and read-only `ledger.json` auto-load on `alan` startup; test `--ephemeral`, `/new`, unbound directories, and live grant/budget revalidation.
+- [x] 1.2 Extend workstream dispatch (`persistent` vs `one_off`) with named checkpoint persistence (`idle`) and automatic `one_off` archival (`archived`) while keeping durable rollout evidence inspectable.
+- [x] 1.3 Add project `inbox/` digest persistence for `alan workflow` runs and surface unread digests on Root startup with explicit mark-digested state transitions; test redaction and bounded digest rendering.
 
 ## 2. Slice 2 — In-Instance Async Concurrency, `routefs` Handoff, and TUI Focus (M8.2)
 

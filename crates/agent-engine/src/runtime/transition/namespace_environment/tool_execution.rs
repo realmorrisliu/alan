@@ -38,6 +38,33 @@ impl NamespaceToolExecution {
             .map(|binding| binding.namespace_cwd)
     }
 
+    /// Revalidate requested child Host Mount targets against live `ToolExecutionAuthority`
+    /// projections when an authoritative HostMountService is attached.
+    pub(crate) fn validate_live_host_mounts(
+        &self,
+        mounts: &[alan_agent_protocol::SpawnHostMount],
+    ) -> Option<String> {
+        if mounts.is_empty() {
+            return None;
+        }
+        let context = self.tool_process_context.as_ref()?;
+        context.tool_runner.authority_revision(context.pid)?;
+        let active_roots = context.tool_runner.project_knowledge_roots(context.pid);
+        for mount in mounts {
+            if !active_roots
+                .iter()
+                .any(|root| mount.target.starts_with(root))
+            {
+                return Some(format!(
+                    "Host Mount grant '{}' for '{}' is no longer active on the parent Process.",
+                    mount.grant,
+                    mount.target.display()
+                ));
+            }
+        }
+        None
+    }
+
     fn read_only_context(
         &self,
         name: &str,

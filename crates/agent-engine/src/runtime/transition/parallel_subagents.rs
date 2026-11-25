@@ -16,7 +16,7 @@ use crate::agent_machine::NormalizedToolCall;
 use crate::runtime::subagent_tool::{
     ExecutedChildSlot, SlotExecutionError, SubagentSpawnFn, commit_executed_slot,
     default_subagent_spawn_fn, execute_prepared_slot, finalize_action_record,
-    prepare_delegated_skill_slot, prepare_subagent_slot,
+    finalize_uncommitted_slot, prepare_delegated_skill_slot, prepare_subagent_slot,
 };
 use crate::runtime::virtual_tool::VirtualToolOutcome;
 
@@ -271,9 +271,15 @@ where
         }
     }
     if early_end_turn {
+        let rollouts_dir = state
+            .runtime_config
+            .store_bindings
+            .as_ref()
+            .map(|stores| stores.rollouts.clone());
         let cancelled =
             crate::runtime::delegated_child_run::ChildRuntimeResult::cancelled_before_launch();
         for remaining in completed_iter {
+            finalize_uncommitted_slot(&remaining, rollouts_dir.as_deref(), &cancelled).await;
             if let Ok(result) = &remaining.outcome {
                 let _ = finalize_action_record(
                     &agent_files,

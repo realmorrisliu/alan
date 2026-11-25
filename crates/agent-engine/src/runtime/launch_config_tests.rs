@@ -213,3 +213,47 @@ fn test_agent_runtime_config_recovery_rollout_path() {
 
     assert_eq!(config.recovery_rollout_path, Some(rollout_path));
 }
+
+#[test]
+fn test_child_for_spawn_never_inherits_project_startup_context() {
+    let temp = TempDir::new().unwrap();
+    let projects_root = temp.path().join("projects");
+    let repo = temp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let binding =
+        crate::runtime::project_workstreams::bind_project_dir(&projects_root, &repo, None).unwrap();
+    let ctx =
+        crate::runtime::ProjectStartupContext::load_read_only(&projects_root, &binding).unwrap();
+
+    let mut parent = AgentProcessConfig::default();
+    parent.set_project_startup_context(Some(ctx.clone()));
+    assert!(parent.project_startup_context.is_some());
+
+    let request = alan_agent_protocol::AgentExecutableRequest {
+        spawn: alan_agent_protocol::SpawnSpec {
+            target: alan_agent_protocol::SpawnTarget::AdHocSubagent {
+                role: "worker".to_string(),
+            },
+            launch: alan_agent_protocol::SpawnLaunchInputs {
+                task: "work".to_string(),
+                ..Default::default()
+            },
+            handles: Vec::new(),
+            host_mounts: Vec::new(),
+            runtime_overrides: Default::default(),
+            delegated: None,
+        },
+        initial_task: "work".to_string(),
+        resume: None,
+        recovery_rollout: None,
+        inherited_resume: false,
+    };
+    let child = parent.child_for_spawn(&request);
+    assert!(child.project_startup_context.is_none());
+    assert!(!child.ephemeral_context);
+
+    parent.set_ephemeral_context(true);
+    assert!(parent.project_startup_context.is_none());
+    parent.set_project_startup_context(Some(ctx));
+    assert!(parent.project_startup_context.is_none());
+}

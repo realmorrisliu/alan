@@ -37,6 +37,8 @@ pub struct WorkflowDryRunPlan {
     pub fileservers: Vec<WorkflowFileserverSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_key: Option<String>,
     pub timeout_secs: u64,
     pub ephemeral: bool,
     pub json_stream: bool,
@@ -125,6 +127,7 @@ pub fn build_dry_run_plan(
         packages: manifest.packages.clone(),
         fileservers: manifest.fileservers.clone(),
         model_profile: manifest.model_profile.clone(),
+        project_key: manifest.project_key.clone(),
         timeout_secs: manifest.effective_timeout_secs(),
         ephemeral: true,
         json_stream: manifest.json,
@@ -328,10 +331,60 @@ fn persist_outcome(
 ) -> Result<WorkflowRunOutcome> {
     let log_path = append_run_log(store, &entry)?;
     let persisted_entry = super::logs::latest_run_log(store, &manifest.id)?.unwrap_or(entry);
+    if let Some(project_key) = manifest.project_key.as_deref()
+        && let Some(projects_root) = store.projects_root()
+    {
+        let digest = build_inbox_digest(&persisted_entry, &log_path);
+        alan_agent_engine::write_inbox_digest(&projects_root, project_key, digest)
+            .with_context(|| format!("write workflow inbox digest for project `{project_key}`"))?;
+    }
     Ok(WorkflowRunOutcome {
         entry: persisted_entry,
         log_path,
     })
+}
+
+fn build_inbox_digest(
+    entry: &WorkflowRunLogEntry,
+    log_path: &Path,
+) -> alan_agent_engine::InboxDigestEntry {
+    let status = if entry.exit_code == 0 {
+        if entry.status.eq_ignore_ascii_case("warning") {
+            alan_agent_engine::InboxDigestStatus::Warning
+        } else {
+            alan_agent_engine::InboxDigestStatus::Ok
+        }
+    } else if entry.status.eq_ignore_ascii_case("paused_error") {
+        alan_agent_engine::InboxDigestStatus::PausedError
+    } else {
+        alan_agent_engine::InboxDigestStatus::Warning
+    };
+
+    let raw_summary = if entry.exit_code == 0 {
+        entry.summary.clone()
+    } else if entry.stderr_excerpt.trim().is_empty() {
+        format!("[{}] {}", entry.status, entry.summary)
+    } else {
+        format!(
+            "[{}] {} ({})",
+            entry.status, entry.summary, entry.stderr_excerpt
+        )
+    };
+    let scrubbed_summary = scrub_and_bound_text(
+        &raw_summary,
+        alan_agent_engine::runtime::MAX_INBOX_SUMMARY_CHARS,
+    );
+
+    let mut digest = alan_agent_engine::InboxDigestEntry::new(
+        entry.run_id.clone(),
+        entry.workflow_id.clone(),
+        None,
+        status,
+        scrubbed_summary,
+        log_path.display().to_string(),
+    );
+    digest.created_at = entry.finished_at.clone();
+    digest
 }
 
 async fn wait_for_cancel(cancel: &mut Option<&mut tokio::sync::watch::Receiver<bool>>) {

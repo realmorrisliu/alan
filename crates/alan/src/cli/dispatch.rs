@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use super::{
-    about, connection, doctor, fileserver_github, host, login, man, memory, q, reset,
+    about, connection, doctor, fileserver_github, host, login, man, memory, project, q, reset,
     skill_authoring, skills, skills_list, trust, update, workflow,
 };
 
@@ -99,6 +99,8 @@ pub enum Commands {
     Q(q::QArgs),
     /// Inspect, search, edit, and revert domain-scoped Memory Stores
     Memory(memory::MemoryArgs),
+    /// Manage explicit project bindings, workstream ledger status, and workflow inbox
+    Project(project::ProjectArgs),
     /// Manage and run scheduled personal workflows
     Workflow(workflow::WorkflowArgs),
     /// Check for or install standalone `alan` CLI updates
@@ -540,6 +542,7 @@ pub fn uses_product_stores(command: Option<&Commands>) -> bool {
             | Some(Commands::Reset(_))
             | Some(Commands::Q(_))
             | Some(Commands::Memory(_))
+            | Some(Commands::Project(_))
             | Some(Commands::Workflow(_))
             | Some(Commands::LegacyState {
                 action: LegacyStateAction::Cleanup { .. } | LegacyStateAction::Import { .. }
@@ -577,6 +580,7 @@ pub async fn dispatch_subcommand(command: Commands) -> Result<Option<LegacyState
         Commands::Man { topic } => man::run(topic.as_deref())?,
         Commands::Q(args) => q::run(args).await?,
         Commands::Memory(args) => memory::run(args).await?,
+        Commands::Project(args) => project::run(args)?,
         Commands::Workflow(args) => workflow::run(args).await?,
         Commands::Update(args) => update::run(args).await?,
         Commands::Reset(args) => reset::run(args)?,
