@@ -178,7 +178,9 @@ pub(super) async fn wait_for_stdio_answer_after_submit(
                     bail!("Agent input cancellation requested");
                 }
                 if snapshot.completion.is_none() && snapshot.waiting_for_response {
-                    bail!("Agent task needs interactive input; attach with the TTY renderer");
+                    bail!(
+                        "Agent task needs interactive input; attach with the TTY renderer (or for workspace access in one-shot mode, save a grant with `alan host grant save <id> <path>` and pass `--grant <id>`)"
+                    );
                 }
                 let refresh_result = {
                     let refresh = stdio_completion::refresh_answer_after_completion(

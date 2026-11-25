@@ -44,7 +44,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command in the Process cwd inside the active OS sandbox and trust posture (falls back to bash). Shell features such as variables, pipes, subshells, globs, and inline interpreters work inside the sandboxed cwd. Prefer dedicated tools (`read_file`, `edit_file`, `write_file`, `grep`, `glob`, `list_dir`) for inspecting, searching, or editing files; use `bash` for builds, tests, git, package managers, and commands without a dedicated tool. Use cwd-relative paths for mounted project files; absolute alan9 paths such as /mnt/project/... inside command strings are not automatically translated."
+        "Execute a shell command in the Process cwd (or an explicit `cwd` within mounted grants) inside the active OS sandbox and trust posture (falls back to bash). Shell features such as variables, pipes, subshells, globs, and inline interpreters work inside the sandboxed cwd. Prefer dedicated tools (`read_file`, `edit_file`, `write_file`, `grep`, `glob`, `list_dir`) for inspecting, searching, or editing files; use `bash` for builds, tests, git, package managers, and commands without a dedicated tool. Use cwd-relative paths for mounted project files; absolute alan9 paths such as /mnt/project/... inside command strings are not automatically translated."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -54,7 +54,11 @@ impl Tool for BashTool {
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "Shell command string to execute from the Process cwd."
+                    "description": "Shell command string to execute from the working directory."
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Optional alan9 working directory (e.g. `/mnt/grants/<id>` or a path relative to Process cwd). Defaults to Process cwd."
                 },
                 "timeout": {
                     "type": "integer",
@@ -68,13 +72,33 @@ impl Tool for BashTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = match ctx.shell_sandbox() {
-            Ok(sandbox) => sandbox,
-            Err(err) => return Box::pin(async move { Err(err) }),
-        };
-        let cwd = match ctx.cwd() {
-            Ok(cwd) => cwd,
-            Err(err) => return Box::pin(async move { Err(err) }),
+        if let Some(raw_cwd) = args.get("cwd")
+            && !raw_cwd.is_null()
+            && !raw_cwd.is_string()
+        {
+            return Box::pin(async { Err(anyhow::anyhow!("bash `cwd` must be a string")) });
+        }
+        let requested_cwd = args
+            .get("cwd")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let (cwd, sandbox) = match requested_cwd {
+            Some(cwd_arg) => match ctx.shell_execution_at(cwd_arg) {
+                Ok(resolved) => resolved,
+                Err(err) => return Box::pin(async move { Err(err) }),
+            },
+            None => {
+                let sandbox = match ctx.shell_sandbox() {
+                    Ok(sandbox) => sandbox,
+                    Err(err) => return Box::pin(async move { Err(err) }),
+                };
+                let cwd = match ctx.cwd() {
+                    Ok(cwd) => cwd,
+                    Err(err) => return Box::pin(async move { Err(err) }),
+                };
+                (cwd, sandbox)
+            }
         };
         let adapter = match ctx.execution_adapter() {
             Ok(adapter) => adapter,
@@ -350,12 +374,41 @@ mod tests {
             std::path::PathBuf::from("/mnt/source/subdir"),
             mount_root.join("tmp"),
         );
-        let ctx = ToolContext::from_binding(binding, config);
+        let ctx = ToolContext::from_binding(binding, config.clone());
 
         let args = json!({"command": "pwd"});
         let result = tool.execute(args, &ctx).await.unwrap();
 
         assert!(result["stdout"].as_str().unwrap().contains("subdir"));
+
+        // Explicit relative and absolute alan9 `cwd` inside the mount overrides Process cwd.
+        let root_ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
+        let rel_result = tool
+            .execute(json!({"command": "pwd", "cwd": "subdir"}), &root_ctx)
+            .await
+            .unwrap();
+        assert!(rel_result["stdout"].as_str().unwrap().contains("subdir"));
+
+        let abs_result = tool
+            .execute(
+                json!({"command": "pwd", "cwd": "/mnt/source/subdir"}),
+                &root_ctx,
+            )
+            .await
+            .unwrap();
+        assert!(abs_result["stdout"].as_str().unwrap().contains("subdir"));
+
+        // Invalid or escaping `cwd` fails closed.
+        assert!(
+            tool.execute(json!({"command": "pwd", "cwd": 123}), &root_ctx)
+                .await
+                .is_err()
+        );
+        assert!(
+            tool.execute(json!({"command": "pwd", "cwd": "../outside"}), &root_ctx)
+                .await
+                .is_err()
+        );
     }
 
     // Tool trait method tests

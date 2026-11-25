@@ -45,10 +45,30 @@ impl ToolExecutionAdapter for StandaloneToolAdapter {
 
     fn resolve_path(&self, namespace_cwd: &Path, path: &Path) -> Result<PathBuf> {
         let visible = self.visible(namespace_cwd, path);
-        let suffix = visible
+        let mut normalized = PathBuf::new();
+        for component in visible.components() {
+            match component {
+                std::path::Component::RootDir => normalized.push("/"),
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    if !normalized.pop() {
+                        anyhow::bail!("path {} escapes the Tool namespace", visible.display());
+                    }
+                }
+                std::path::Component::Normal(part) => normalized.push(part),
+                std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            }
+        }
+        let suffix = normalized
             .strip_prefix(STANDALONE_NAMESPACE_ROOT)
             .with_context(|| format!("path {} is outside the Tool namespace", visible.display()))?;
         Ok(self.host_root.join(suffix))
+    }
+
+    fn resolve_directory(&self, namespace_cwd: &Path, path: &Path) -> Result<PathBuf> {
+        let host_dir = self.resolve_path(namespace_cwd, path)?;
+        anyhow::ensure!(host_dir.is_dir(), "{} is not a directory", path.display());
+        Ok(self.visible_path(&host_dir))
     }
 
     fn visible_path(&self, host_path: &Path) -> PathBuf {

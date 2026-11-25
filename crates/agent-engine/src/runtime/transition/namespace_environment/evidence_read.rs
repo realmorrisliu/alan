@@ -57,7 +57,11 @@ pub(crate) async fn read_action_evidence(
         Err(error) if error.error_len().is_none() => {
             std::str::from_utf8(&bytes[..error.valid_up_to()])?
         }
-        Err(error) => return Err(error).context("Evidence range must start at a UTF-8 boundary"),
+        Err(error) => {
+            return Err(error).context(
+                "Evidence range must start at a UTF-8 boundary (start at byte_offset: 0 and advance using next_byte_offset)",
+            );
+        }
     };
     let end = offset + content.len() as u64;
     ensure!(

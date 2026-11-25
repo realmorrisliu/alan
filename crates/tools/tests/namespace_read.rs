@@ -135,6 +135,23 @@ async fn namespace_read_ranges_preserve_utf8_and_fail_closed() {
     ] {
         assert!(tool.execute(args, &ctx).await.is_err());
     }
+    let offset_err = tool
+        .execute(json!({"path":OWN,"offset":1}), &ctx)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        offset_err.contains("byte_offset") && offset_err.contains("byte_limit"),
+        "error should guide caller to byte_offset/byte_limit: {offset_err}"
+    );
+    let with_nulls = tool
+        .execute(
+            json!({"path":OWN,"offset":null,"limit":null,"byte_offset":0,"byte_limit":null}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(with_nulls["content"], "字abc");
     let empty = tool
         .execute(json!({"path":OWN,"byte_offset":6}), &ctx)
         .await

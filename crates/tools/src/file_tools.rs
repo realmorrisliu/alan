@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 const MAX_INLINE_IMAGE_BYTES: usize = 512 * 1024;
+const MAX_TEXT_READ_BYTES: usize = 20_000;
 const EDIT_DIFF_CONTEXT_LINES: usize = 2;
 const EDIT_DIFF_MAX_LINES: usize = 400;
 
@@ -70,25 +71,31 @@ impl Tool for ReadFileTool {
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
         let requested = args["path"].as_str().unwrap_or("");
+        let has_non_null = |key: &str| args.get(key).is_some_and(|v| !v.is_null());
         let byte_offset = args["byte_offset"].as_u64().unwrap_or(0);
         let byte_limit = args["byte_limit"]
             .as_u64()
             .unwrap_or(ToolContext::MAX_EVIDENCE_READ_BYTES);
         if let Some(read) = ctx.read_namespace_evidence(requested, byte_offset, byte_limit) {
-            if args.get("offset").is_some()
-                || args.get("limit").is_some()
-                || args.get("byte_offset").is_some_and(|v| !v.is_u64())
-                || args.get("byte_limit").is_some_and(|v| !v.is_u64())
+            if has_non_null("offset")
+                || has_non_null("limit")
+                || args
+                    .get("byte_offset")
+                    .is_some_and(|v| !v.is_null() && !v.is_u64())
+                || args
+                    .get("byte_limit")
+                    .is_some_and(|v| !v.is_null() && !v.is_u64())
             {
                 return Box::pin(async {
                     Err(anyhow!(
-                        "Retained evidence requires valid byte ranges, not line offset/limit"
+                        "Retained evidence requires valid byte ranges (`byte_offset` >= 0, `byte_limit` in 1..={}), not line `offset`/`limit`. Omit `offset`/`limit` and start with `byte_offset: 0` (then pass `next_byte_offset` to continue); for regular files under `/mnt/...`, use `offset`/`limit` on the original file path.",
+                        ToolContext::MAX_EVIDENCE_READ_BYTES
                     ))
                 });
             }
             return read;
         }
-        if args.get("byte_offset").is_some() || args.get("byte_limit").is_some() {
+        if has_non_null("byte_offset") || has_non_null("byte_limit") {
             return Box::pin(async {
                 Err(anyhow!(
                     "Byte ranges are supported only for retained Action output"
@@ -387,17 +394,22 @@ fn format_image_read(path: &Path, content: &[u8], visible_path: &str) -> Result<
 fn format_text_read(content: &str, visible_path: &str, offset: usize, limit: usize) -> Value {
     let lines: Vec<&str> = content.lines().collect();
     let start = offset.saturating_sub(1);
-    let end = (start + limit).min(lines.len());
+    let max_end = (start + limit).min(lines.len());
 
-    let formatted: Vec<String> = if start < lines.len() {
-        lines[start..end]
-            .iter()
-            .enumerate()
-            .map(|(idx, line)| format!("{}| {}", start + idx + 1, line))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let mut formatted = Vec::new();
+    let mut accumulated_bytes = 0usize;
+    if start < lines.len() {
+        for (idx, line) in lines[start..max_end].iter().enumerate() {
+            let entry = format!("{}| {}", start + idx + 1, line);
+            let next_bytes = accumulated_bytes + entry.len() + usize::from(!formatted.is_empty());
+            if !formatted.is_empty() && next_bytes > MAX_TEXT_READ_BYTES {
+                break;
+            }
+            accumulated_bytes = next_bytes;
+            formatted.push(entry);
+        }
+    }
+    let end = start + formatted.len();
 
     json!({
         "type": "text",

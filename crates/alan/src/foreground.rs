@@ -2,6 +2,7 @@ use super::*;
 
 mod issue_submit;
 mod login;
+mod oneshot_cwd;
 
 #[cfg_attr(
     not(test),
@@ -111,7 +112,39 @@ pub(super) async fn run_bare_in_foreground_instance(
         }
         BareRunMode::OneShot { .. } => alan_agent_engine::runtime::EvaluationSurface::Redirected,
     };
-    let candidate_cwd = cwd.or_else(|| std::env::current_dir().ok());
+    let is_json_mode = matches!(&mode, BareRunMode::OneShot { json: true, .. });
+    let explicit_cwd = cwd;
+    let ambient_cwd = std::env::current_dir().ok();
+    let oneshot_grant_cwd = if matches!(mode, BareRunMode::OneShot { .. }) {
+        let store = alan_os_host::SavedProjectGrantStore::system().ok();
+        match oneshot_cwd::resolve_oneshot_grant_cwd(
+            store.as_ref(),
+            &trust_options.grants,
+            explicit_cwd.as_deref(),
+            ambient_cwd.as_deref(),
+        ) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                if is_json_mode {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "type": "error",
+                            "message": format!("{error:#}"),
+                        })
+                    );
+                }
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+    let candidate_cwd = oneshot_grant_cwd
+        .as_ref()
+        .map(|resolved| resolved.host_path.clone())
+        .or(explicit_cwd)
+        .or(ambient_cwd);
     let base_config = cli::trust::apply_boot_trust_options(
         HostBootConfig::product_with_root_resume(resume_root)?,
         trust_options,
@@ -133,7 +166,6 @@ pub(super) async fn run_bare_in_foreground_instance(
             ephemeral,
         )?
     };
-    let is_json_mode = matches!(&mode, BareRunMode::OneShot { json: true, .. });
     let host = match AlanOsHost::boot(config, paths.clone()).await {
         Ok(host) => host,
         Err(error) => {
@@ -305,6 +337,19 @@ pub(super) async fn run_bare_in_foreground_instance(
                     }
                 }
                 BareRunMode::OneShot { prompt, json, images } => {
+                    if let Some(resolved) = &oneshot_grant_cwd {
+                        let command = format!(
+                            "project-cwd-v1 {}",
+                            serde_json::json!({
+                                "id": uuid::Uuid::new_v4().to_string(),
+                                "path": resolved.namespace_path,
+                            })
+                        );
+                        alan_shell::Shell::new(attachment.root.clone())
+                            .write("/agent/root/machine/ctl", command.as_bytes())
+                            .await
+                            .context("set initial OneShot project directory")?;
+                    }
                     let input = if let Some(prompt) = prompt {
                         prompt
                     } else {

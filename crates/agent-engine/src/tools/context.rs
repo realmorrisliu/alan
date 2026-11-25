@@ -39,6 +39,19 @@ pub trait ToolExecutionAdapter: std::fmt::Debug + Send + Sync {
     fn shell_sandbox(&self) -> Result<Sandbox> {
         self.sandbox()
     }
+
+    /// Resolve a shell working directory (`namespace_cwd`-relative or `/mnt/...`) and return its
+    /// native cwd alongside a Host-derived sandbox confined to that mount.
+    fn shell_execution_at(&self, namespace_cwd: &Path, path: &Path) -> Result<(PathBuf, Sandbox)> {
+        let resolved_ns = self.resolve_directory(namespace_cwd, path)?;
+        let host_dir = self.resolve_path(namespace_cwd, &resolved_ns)?;
+        anyhow::ensure!(
+            host_dir.is_dir(),
+            "{} is not a directory",
+            resolved_ns.display()
+        );
+        Ok((host_dir, self.shell_sandbox()?))
+    }
 }
 
 /// Host-owned secret resolver hook supplied only by platform Hosts for confined Tool execution.
@@ -304,6 +317,15 @@ impl ToolContext {
     /// Return the Host-selected native cwd without retaining it in engine state.
     pub fn cwd(&self) -> Result<PathBuf> {
         self.execution_adapter()?.cwd()
+    }
+
+    /// Resolve an explicit shell working directory within live Host Mounts and return
+    /// `(host_cwd, shell_sandbox)` with the Process trust posture applied.
+    pub fn shell_execution_at(&self, path: impl AsRef<Path>) -> Result<(PathBuf, Sandbox)> {
+        let (cwd, sandbox) = self
+            .execution_adapter()?
+            .shell_execution_at(&self.namespace_cwd, path.as_ref())?;
+        Ok((cwd, sandbox.with_trust_posture(self.trust_posture)))
     }
 
     pub fn execution_adapter(&self) -> Result<Arc<dyn ToolExecutionAdapter>> {

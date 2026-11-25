@@ -41,6 +41,7 @@ pub struct DoctorReport {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct VersionDiagnostics {
     pub version: String,
+    pub long_version: String,
     pub executable_path: Option<String>,
     pub install_ownership: String,
     pub manifest_path: Option<String>,
@@ -188,7 +189,8 @@ fn inspect_version(exe_path: Option<&Path>) -> VersionDiagnostics {
     };
 
     VersionDiagnostics {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: env!("ALAN_VERSION").to_string(),
+        long_version: env!("ALAN_LONG_VERSION").to_string(),
         executable_path: resolved_exe.map(|p| p.display().to_string()),
         install_ownership,
         manifest_path,
@@ -556,7 +558,10 @@ pub fn format_human_report(report: &DoctorReport) -> String {
     out.push_str("Alan Doctor\n\n");
 
     out.push_str("Version & Binary\n");
-    out.push_str(&format!("  version:      {}\n", report.version.version));
+    out.push_str(&format!(
+        "  version:      {}\n",
+        report.version.long_version
+    ));
     out.push_str(&format!(
         "  executable:   {}\n",
         report

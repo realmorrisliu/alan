@@ -42,10 +42,10 @@ pub(super) fn project_request_input(
                     pending_tool_responses.push(projected);
                 }
             }
-            MessageRole::User | MessageRole::Context => {
+            MessageRole::User => {
                 let parts = project_user_parts(&message.content, &message.content_parts)?;
                 if !expected_calls.is_empty() {
-                    // Defer user/context messages that arrive while a tool-call batch
+                    // Defer user messages that arrive while a tool-call batch
                     // is still open (for example mid-batch steering) so all
                     // functionResponses stay immediately paired with their model turn.
                     deferred_user_parts.extend(parts);
@@ -90,13 +90,15 @@ pub(super) fn project_request_input(
                     &mut last_user_turn_is_function_response,
                 );
             }
-            MessageRole::System => {
+            MessageRole::System | MessageRole::Context => {
                 let text = project_plain_text(
                     &message.content,
                     &message.content_parts,
                     "Google Gemini GenerateContent system instructions",
                 )?;
-                system_parts.push(Part::text(text));
+                if !text.is_empty() {
+                    system_parts.push(Part::text(text));
+                }
             }
         }
     }
@@ -892,6 +894,47 @@ mod tests {
                 .unwrap()
                 .response["error"],
             "tool call did not complete before next turn"
+        );
+    }
+
+    #[test]
+    fn projects_trailing_context_into_system_instruction_without_interrupted_bridge_after_tools() {
+        let assistant = Message::assistant_with_tools(
+            "",
+            vec![ToolCall::new("bash", json!({"command": "pwd"})).with_id("call_1")],
+        );
+        let tool = Message::tool("call_1", r#"{"exit_code":0,"stdout":"/mnt/grants/repo\n"}"#);
+        let runtime_ctx = Message::context(
+            "Current selected Process directory: \"/mnt/grants/repo\"\nResolve relative Tool paths here.",
+        );
+
+        let projected = project_request_input(
+            "gemini-2.5-pro",
+            Some("Static base prompt"),
+            &[Message::user("check cwd"), assistant, tool, runtime_ctx],
+        )
+        .unwrap();
+
+        let roles: Vec<&str> = projected
+            .contents
+            .iter()
+            .map(|c| c.role.as_deref().unwrap())
+            .collect();
+        assert_eq!(roles, vec!["user", "model", "user"]);
+        let serialized = serde_json::to_string(&projected.contents).unwrap();
+        assert!(
+            !serialized.contains(INTERRUPTED_TURN_BRIDGE_TEXT),
+            "runtime context must not inject interrupted-turn bridge text: {serialized}"
+        );
+        let sys_parts = &projected.system_instruction.unwrap().parts;
+        assert_eq!(sys_parts.len(), 2);
+        assert_eq!(sys_parts[0].text.as_deref(), Some("Static base prompt"));
+        assert!(
+            sys_parts[1]
+                .text
+                .as_deref()
+                .unwrap()
+                .contains("/mnt/grants/repo")
         );
     }
 
