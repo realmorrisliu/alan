@@ -6,6 +6,8 @@
 //! and appends the routing decision to `log`. The sender emits a result type; it
 //! does not name the receiving actor.
 
+mod handoff;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
@@ -16,12 +18,20 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use handoff::parse_optional_hop_count;
+pub use handoff::{
+    LOOP_GUARD_RULE_NAME, MAX_HANDOFF_HOPS, ROUTE_HANDOFF_VERSION, RouteHandoffKind,
+    RouteHandoffMessage, RoutedRecord, workstream_handoff_rules,
+};
+
 /// Canonical `/srv` handle name for the routefs server.
 pub const SRV_HANDLE: &str = "route";
 /// Canonical mount path for routefs.
 pub const MOUNT_PATH: &str = "/mnt/route";
-/// Default port for unrouted messages.
+/// Default port for unrouted or loop-bounded messages.
 pub const DEAD_LETTER_PORT: &str = "dead-letter";
+/// Default coordinator port receiving cross-workstream handoffs for Root.
+pub const ROOT_PORT: &str = "root";
 
 const MAX_DOC_BYTES: usize = 1 << 20; // 1 MiB
 
@@ -95,6 +105,7 @@ impl RuleSpec {
 struct MessageDocument {
     message_type: String,
     content: String,
+    hop_count: Option<u8>,
     raw: serde_json::Value,
 }
 
@@ -103,6 +114,22 @@ impl MessageDocument {
         let raw: serde_json::Value =
             serde_json::from_slice(bytes).map_err(|_| ErrorCode::BadRequest)?;
         let object = raw.as_object().ok_or(ErrorCode::BadRequest)?;
+        if object.contains_key("kind") {
+            let handoff: RouteHandoffMessage =
+                serde_json::from_value(raw.clone()).map_err(|_| ErrorCode::BadRequest)?;
+            handoff.validate()?;
+            if let Some(explicit_type) = object.get("type")
+                && explicit_type.as_str() != Some(handoff.kind.as_str())
+            {
+                return Err(ErrorCode::BadRequest);
+            }
+            return Ok(Self {
+                message_type: handoff.kind.as_str().to_string(),
+                content: handoff.payload,
+                hop_count: Some(handoff.hop_count),
+                raw,
+            });
+        }
         let version = object
             .get("version")
             .and_then(serde_json::Value::as_u64)
@@ -118,19 +145,21 @@ impl MessageDocument {
             .and_then(serde_json::Value::as_str)
             .ok_or(ErrorCode::BadRequest)?
             .to_string();
+        let hop_count = parse_optional_hop_count(object)?;
         if version != 1 || message_type.is_empty() {
             return Err(ErrorCode::BadRequest);
         }
         Ok(Self {
             message_type,
             content,
+            hop_count,
             raw,
         })
     }
 }
 
 #[derive(Serialize)]
-struct RoutedRecord<'a> {
+struct RoutedRecordRef<'a> {
     version: u16,
     port: &'a str,
     rule: &'a str,
@@ -186,10 +215,11 @@ impl Default for RouteFs {
 }
 
 impl RouteFs {
-    /// Create an empty routefs with only the dead-letter port.
+    /// Create an empty routefs with the default `dead-letter` and `root` ports.
     pub fn new() -> Self {
         let mut ports = BTreeMap::new();
         ports.insert(DEAD_LETTER_PORT.to_string(), Stream::new());
+        ports.insert(ROOT_PORT.to_string(), Stream::new());
         Self {
             state: Mutex::new(State {
                 rules: BTreeMap::new(),
@@ -200,6 +230,29 @@ impl RouteFs {
                 fids: HashMap::new(),
             }),
         }
+    }
+
+    /// Create a `RouteFs` pre-populated with default workstream handoff rules
+    /// routing `reroute_request`, `cross_stream_dependency`, and `handoff_result`
+    /// to `/mnt/route/ports/root`.
+    pub fn new_with_workstream_handoff_rules() -> Self {
+        let fs = Self::new();
+        if let Ok(mut state) = fs.state.try_lock() {
+            for (name, spec) in workstream_handoff_rules() {
+                let _ = state.install_rule(name.to_string(), spec);
+            }
+        }
+        fs
+    }
+
+    /// Install the default inspectable workstream handoff rules routing typed
+    /// cross-stream messages to `/mnt/route/ports/root`.
+    pub async fn install_workstream_handoff_rules(&self) -> Result<(), ErrorCode> {
+        let mut state = self.state.lock().await;
+        for (name, spec) in workstream_handoff_rules() {
+            state.install_rule(name.to_string(), spec)?;
+        }
+        Ok(())
     }
 
     /// Install or replace a rule without going through the aP file surface.
@@ -334,27 +387,38 @@ impl State {
     async fn route_message(&mut self, bytes: &[u8]) -> Result<(), ErrorCode> {
         let message = MessageDocument::parse(bytes)?;
 
-        let decision = self
-            .rules
-            .iter()
-            .find(|(_, rule)| rule.spec.matches(&message))
-            .map(|(name, rule)| {
-                (
-                    rule.spec.port.clone(),
-                    name.clone(),
-                    rule.spec.reason.clone(),
-                )
-            })
-            .unwrap_or_else(|| {
-                (
-                    DEAD_LETTER_PORT.to_string(),
-                    "dead-letter".to_string(),
-                    Some("no matching rule".to_string()),
-                )
-            });
+        let decision = if let Some(hop_count) =
+            message.hop_count.filter(|&hops| hops > MAX_HANDOFF_HOPS)
+        {
+            (
+                DEAD_LETTER_PORT.to_string(),
+                LOOP_GUARD_RULE_NAME.to_string(),
+                Some(format!(
+                    "handoff hop_count {hop_count} exceeds max_handoff_hops={MAX_HANDOFF_HOPS}; escalated to {DEAD_LETTER_PORT}"
+                )),
+            )
+        } else {
+            self.rules
+                .iter()
+                .find(|(_, rule)| rule.spec.matches(&message))
+                .map(|(name, rule)| {
+                    (
+                        rule.spec.port.clone(),
+                        name.clone(),
+                        rule.spec.reason.clone(),
+                    )
+                })
+                .unwrap_or_else(|| {
+                    (
+                        DEAD_LETTER_PORT.to_string(),
+                        "dead-letter".to_string(),
+                        Some("no matching rule".to_string()),
+                    )
+                })
+        };
         let (port, rule_name, reason) = decision;
         self.ensure_port(&port);
-        let record = RoutedRecord {
+        let record = RoutedRecordRef {
             version: 1,
             port: &port,
             rule: &rule_name,
@@ -608,7 +672,7 @@ fn rule_source(spec: &RuleSpec) -> Result<Vec<u8>, ErrorCode> {
     Ok(bytes)
 }
 
-fn routed_record_bytes(record: &RoutedRecord<'_>) -> Result<Vec<u8>, ErrorCode> {
+fn routed_record_bytes(record: &RoutedRecordRef<'_>) -> Result<Vec<u8>, ErrorCode> {
     let mut bytes = serde_json::to_vec(record).map_err(|_| ErrorCode::BadRequest)?;
     bytes.push(b'\n');
     Ok(bytes)
