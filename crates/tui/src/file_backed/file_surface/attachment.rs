@@ -18,6 +18,23 @@ pub(in crate::file_backed) async fn hydrate_and_open_tails(
     agent_path: &str,
     app: &mut FileBackedApp,
 ) -> Result<WatchTails> {
+    hydrate_with_retry(shell, agent_path, app, false).await
+}
+
+pub(in crate::file_backed) async fn hydrate_focus_target(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+    app: &mut FileBackedApp,
+) -> Result<WatchTails> {
+    hydrate_with_retry(shell, agent_path, app, true).await
+}
+
+async fn hydrate_with_retry(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+    app: &mut FileBackedApp,
+    preserve_transcript: bool,
+) -> Result<WatchTails> {
     // Failed attachment must never leave an acceptable detached Skill owner.
     app.invalidate_skill_owner();
     let follows_root_agent = agent_path == "/agent/root";
@@ -39,7 +56,15 @@ pub(in crate::file_backed) async fn hydrate_and_open_tails(
             .and_then(|pid| root_agent_path_for_pid(agent_path, pid))
             .unwrap_or_else(|| agent_path.to_string());
         let mut hydrated = app.clone();
-        match hydrate_pinned_agent(shell, &pinned_agent_path, &mut hydrated).await {
+        match hydrate_pinned_agent(
+            shell,
+            agent_path,
+            &pinned_agent_path,
+            &mut hydrated,
+            preserve_transcript,
+        )
+        .await
+        {
             Ok(mut tails) => {
                 let pid_changed = match root_agent_pid {
                     Some(pid) => match current_root_agent_pid(shell).await {
@@ -80,8 +105,10 @@ pub(in crate::file_backed) async fn hydrate_and_open_tails(
 
 async fn hydrate_pinned_agent(
     shell: &alan_shell::Shell,
+    target_path: &str,
     agent_path: &str,
     app: &mut FileBackedApp,
+    preserve_transcript: bool,
 ) -> Result<WatchTails> {
     let mut opened = Vec::with_capacity(7);
     let histories = async {
@@ -146,26 +173,82 @@ async fn hydrate_pinned_agent(
         );
         let tape_history =
             std::str::from_utf8(&tape_history).context("machine/tape is not utf8")?;
-        let receipt_history = projected_receipt_history(app, tape_history);
-        app.transcript = parse_tape_history(&receipt_history);
-        app.tape_consumed_offset = tape_history.len();
-        app.seed_reconciler_from_tape_history(&receipt_history);
-        app.restore_receipts_after_hydration(&receipt_history);
+        let target_key = super::super::streams::StreamsState::target_key(target_path);
+        if preserve_transcript {
+            let saved_offset = app
+                .streams
+                .tape_offsets_by_target
+                .get(&target_key)
+                .copied()
+                .filter(|offset| {
+                    *offset <= tape_history.len() && tape_history.is_char_boundary(*offset)
+                })
+                .unwrap_or(0);
+            let new_tape = &tape_history[saved_offset..];
+            let receipt_history = projected_receipt_history(app, new_tape);
+            let new_cells = parse_tape_history(&receipt_history);
+            app.transcript.extend(new_cells);
+            app.tape_consumed_offset = tape_history.len();
+            app.seed_reconciler_from_tape_history(tape_history);
+            for line in receipt_history.lines() {
+                if let Ok(record) = serde_json::from_str::<super::TapeRecordV1>(line)
+                    && record.kind == "message"
+                    && record.role == "user"
+                {
+                    for (id, input) in &mut app.local_inputs {
+                        if input.owner == app.queue.owner && record.belongs_to(id) {
+                            input.tape_seen = true;
+                        }
+                    }
+                }
+            }
+        } else {
+            let receipt_history = projected_receipt_history(app, tape_history);
+            app.transcript = parse_tape_history(&receipt_history);
+            app.tape_consumed_offset = tape_history.len();
+            app.seed_reconciler_from_tape_history(&receipt_history);
+            app.restore_receipts_after_hydration(&receipt_history);
+        }
+        app.streams
+            .tape_offsets_by_target
+            .insert(target_key, tape_history.len());
 
-        let ui_history_text = std::str::from_utf8(&ui_history).context("ui events are not utf8")?;
+        let saved_ui_bytes = if preserve_transcript {
+            app.streams
+                .ui_events_seen_by_owner
+                .get(agent_path)
+                .copied()
+                .filter(|offset| *offset <= ui_history.len())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let ui_slice = &ui_history[saved_ui_bytes..];
+        let ui_history_text = std::str::from_utf8(ui_slice).context("ui events are not utf8")?;
         let ui_events = ui_history_text
             .lines()
             .filter(|line| !line.trim().is_empty())
             .map(|line| serde_json::from_str::<UiEvent>(line).context("parse ui event"))
             .collect::<Result<Vec<_>>>()?;
-        if ui_events.is_empty() {
+        if saved_ui_bytes > 0 || ui_events.is_empty() {
             app.apply_ui_activity_snapshot(read_activity_snapshot(shell, agent_path).await?);
-            app.apply_ui_plan_snapshot(read_json_file(shell, &ui_plan_path(agent_path)).await?);
-            app.apply_ui_thinking_snapshot(
-                read_json_file(shell, &ui_thinking_path(agent_path)).await?,
-            );
+            let plan_snap: alan_agent_protocol::UiPlanSnapshot =
+                read_json_file(shell, &ui_plan_path(agent_path)).await?;
+            if saved_ui_bytes > 0 {
+                app.plan = plan_snap;
+            } else {
+                app.apply_ui_plan_snapshot(plan_snap);
+            }
+            let thinking_snap: alan_agent_protocol::UiThinkingSnapshot =
+                read_json_file(shell, &ui_thinking_path(agent_path)).await?;
+            if saved_ui_bytes > 0 {
+                app.thinking = thinking_snap;
+            } else {
+                app.apply_ui_thinking_snapshot(thinking_snap);
+            }
             app.apply_ui_notice_snapshot(read_json_file(shell, &ui_notice_path(agent_path)).await?);
-        } else {
+        }
+        if !ui_events.is_empty() && (saved_ui_bytes == 0 || !preserve_transcript) {
             // ponytail: UI and tape lack shared event IDs, so replay only the latest-turn error;
             // add cross-log correlation metadata if exact older-error placement becomes required.
             let latest_running = ui_events.iter().rposition(|event| {
@@ -183,7 +266,14 @@ async fn hydrate_pinned_agent(
                 }
                 app.apply_ui_event(event);
             }
+        } else if saved_ui_bytes > 0 {
+            for event in ui_events {
+                app.apply_ui_event(event);
+            }
         }
+        app.streams
+            .ui_events_seen_by_owner
+            .insert(agent_path.to_string(), ui_history.len());
 
         hydrate_actions_from_files(shell, agent_path, app).await?;
         sync_requests_from_files(shell, agent_path, app).await

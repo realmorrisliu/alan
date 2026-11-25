@@ -104,6 +104,7 @@ pub(super) struct FileBackedApp {
     pub(super) project_host_pending: bool,
     pub(super) uncertain_project_mount: Option<(String, ProjectControl)>,
     ready_project_revoke: Option<String>,
+    pub(super) streams: super::streams::StreamsState,
     pub(super) last_input_failed: bool,
     pub(super) auto_continue_on_empty_cancel: bool,
     pub(super) expand_thinking: bool,
@@ -209,6 +210,7 @@ impl FileBackedApp {
             project_host_pending: false,
             uncertain_project_mount: None,
             ready_project_revoke: None,
+            streams: super::streams::StreamsState::default(),
             last_input_failed: false,
             auto_continue_on_empty_cancel: false,
             expand_thinking: false,
@@ -289,6 +291,24 @@ impl FileBackedApp {
                 result,
             } => {
                 self.apply_summary_result(action_label, result);
+                None
+            }
+            FileBackedEvent::WorkstreamControlCompleted {
+                show_overview,
+                result,
+            } => {
+                self.apply_workstream_control_result(show_overview, result);
+                None
+            }
+            FileBackedEvent::RouteLogLine(line) => {
+                self.apply_route_log_line(&line);
+                None
+            }
+            FileBackedEvent::FocusTargetResolved {
+                requested_name,
+                result,
+            } => {
+                self.apply_focus_target_resolved(requested_name, result);
                 None
             }
             FileBackedEvent::LoginProvidersLoaded { generation, result } => {

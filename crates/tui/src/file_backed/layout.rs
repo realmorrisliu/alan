@@ -494,35 +494,8 @@ fn live_region_lines_in(
                 ));
             }
         }
-        if app.completion.is_none()
-            && app.project_selection.is_none()
-            && app.pending_yield.is_none()
-            && !app.login.is_entering_input()
-        {
-            // Reuse the stable row below the composer; completion keeps priority.
-            if matches!(app.activity.state, super::UiActivityState::Running) {
-                let hint = if width >= 52 {
-                    "Enter queue next · Ctrl+S steer now · Esc interrupt"
-                } else if width >= 38 {
-                    "Enter queue · Ctrl+S steer · Esc stop"
-                } else {
-                    "Ctrl+S steer · Esc stop"
-                };
-                lines.push(Line::styled(
-                    crate::history::clamp_text_width(hint, width),
-                    app.theme.muted_style(),
-                ));
-            } else if !app.projected_actions.is_empty() || !app.plan_owners.is_empty() {
-                let hint = if width >= 40 {
-                    "Ctrl+O details (p: plans, t: tape)"
-                } else {
-                    "Ctrl+O details (p: plans)"
-                };
-                lines.push(Line::styled(
-                    crate::history::clamp_text_width(hint, width),
-                    app.theme.muted_style(),
-                ));
-            }
+        if let Some(footer_line) = super::streams::footer_status_line(app, width) {
+            lines.push(footer_line);
         }
         (lines, Some(prompt_start))
     }

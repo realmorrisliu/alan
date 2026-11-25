@@ -2,6 +2,7 @@ mod action_summary;
 mod highlight;
 mod literal;
 mod markdown;
+mod routing;
 mod table;
 mod yield_validation;
 #[cfg(test)]
@@ -107,6 +108,13 @@ pub enum HistoryCell {
         choice: String,
         summary: String,
         note: Option<String>,
+    },
+    /// Calm inline receipt emitted when Root routes, hands off, or focuses a workstream.
+    RoutingReceipt {
+        source: String,
+        target: String,
+        kind: String,
+        summary: Option<String>,
     },
     /// A fatal (non-recoverable) error.
     Error(String),
@@ -241,6 +249,7 @@ impl HistoryCell {
                 | Self::Thinking { .. }
                 | Self::Welcome(_)
                 | Self::ConfirmationReceipt { .. }
+                | Self::RoutingReceipt { .. }
         ) {
             return self
                 .render_styled_lines(opts)
@@ -296,6 +305,7 @@ impl HistoryCell {
             | Self::Thinking { .. }
             | Self::Welcome(_)
             | Self::ConfirmationReceipt { .. }
+            | Self::RoutingReceipt { .. }
             | Self::User(_)
             | Self::Command(_)
             | Self::Assistant(_) => {
@@ -469,6 +479,19 @@ impl HistoryCell {
                 width,
                 theme,
             )],
+            Self::RoutingReceipt {
+                source,
+                target,
+                kind,
+                summary,
+            } => routing::render_routing_receipt_lines(
+                source,
+                target,
+                kind,
+                summary.as_deref(),
+                width,
+                theme,
+            ),
             _ => {
                 let style = match self {
                     Self::Tool { status, .. } => status.style(theme),

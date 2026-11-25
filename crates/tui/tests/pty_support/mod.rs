@@ -25,14 +25,23 @@ pub(super) struct PtyScreen {
 }
 
 impl PtyScreen {
+    #[allow(dead_code, reason = "used by pty_e2e suites that omit scrollback")]
     pub(super) fn new(rows: u16, cols: u16) -> Self {
+        Self::new_with_scrollback(rows, cols, 0)
+    }
+
+    #[allow(
+        dead_code,
+        reason = "scrollback constructor used by multi-stream PTY scrollback tests"
+    )]
+    pub(super) fn new_with_scrollback(rows: u16, cols: u16, scrollback: usize) -> Self {
         Self {
             shared: Arc::new((
                 Mutex::new(PtyState {
                     parser: vt100::Parser::new(
                         NonZeroU16::new(rows).expect("nonzero rows"),
                         NonZeroU16::new(cols).expect("nonzero cols"),
-                        0,
+                        scrollback,
                     ),
                     raw: Vec::new(),
                     eof: false,
@@ -70,9 +79,38 @@ impl PtyScreen {
         (r.saturating_add(1), c.saturating_add(1))
     }
 
+    #[allow(dead_code, reason = "used by pty_e2e suites inspecting active screen")]
     pub(super) fn contents(&self) -> String {
         let guard = self.shared.0.lock().expect("pty state lock");
         guard.parser.screen().contents()
+    }
+
+    #[allow(
+        dead_code,
+        reason = "scrollback+screen helper used by multi-stream PTY scrollback tests"
+    )]
+    pub(super) fn full_contents(&self) -> String {
+        let mut guard = self.shared.0.lock().expect("pty state lock");
+        let (rows, cols) = guard.parser.screen().size();
+        let rows = rows.get() as usize;
+        let cols = cols.get();
+        let prev = guard.parser.screen().scrollback();
+        guard.parser.screen_mut().set_scrollback(usize::MAX);
+        let mut pos = guard.parser.screen().scrollback();
+        let mut all_lines = Vec::new();
+        while pos > 0 && rows > 0 {
+            guard.parser.screen_mut().set_scrollback(pos);
+            let actual = guard.parser.screen().scrollback();
+            let take = actual.min(rows);
+            all_lines.extend(guard.parser.screen().rows(0, cols).take(take));
+            pos = actual.saturating_sub(take);
+        }
+        guard.parser.screen_mut().set_scrollback(0);
+        all_lines.extend(guard.parser.screen().rows(0, cols));
+        if prev != 0 {
+            guard.parser.screen_mut().set_scrollback(prev);
+        }
+        all_lines.join("\n")
     }
 
     pub(super) fn wait_for<F>(
@@ -143,6 +181,7 @@ impl ChildGuard {
         Self(Some(child))
     }
 
+    #[allow(dead_code, reason = "used by pty_e2e suites checking child liveness")]
     pub(super) fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
         Ok(self.0.as_mut().expect("child").try_wait()?)
     }

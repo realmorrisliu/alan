@@ -69,6 +69,14 @@ pub(in crate::file_backed) enum FileBackedAction {
         labels: Vec<String>,
     },
     CancelIssue,
+    StreamsControl {
+        control: super::super::streams::WorkstreamControl,
+        show_overview: bool,
+    },
+    FocusStream {
+        name: String,
+    },
+    FocusRoot,
     Suspend,
     Interrupt,
     Quit,
@@ -221,6 +229,15 @@ pub(in crate::file_backed) enum FileBackedEvent {
         agent_path: String,
         action_id: String,
     },
+    WorkstreamControlCompleted {
+        show_overview: bool,
+        result: Result<super::super::streams::WorkstreamControlResult, String>,
+    },
+    FocusTargetResolved {
+        requested_name: String,
+        result: Result<super::super::streams::WorkstreamFocusTarget, String>,
+    },
+    RouteLogLine(String),
     Ui(UiEvent),
     Tape(TapeRecordV1),
     Error(String),

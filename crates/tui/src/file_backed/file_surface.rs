@@ -18,7 +18,9 @@ pub(in crate::file_backed) use action_projection::{
     ActionSnapshot, RequestSnapshot, TapeRecordV1, action_snapshot_to_history_cell, action_title,
 };
 
-pub(super) use attachment::{hydrate_and_open_tails, reattach_to_current_agent};
+pub(super) use attachment::{
+    hydrate_and_open_tails, hydrate_focus_target, reattach_to_current_agent,
+};
 
 pub(super) async fn sync_requests_from_files(
     shell: &alan_shell::Shell,
@@ -813,6 +815,7 @@ pub(super) fn hydrate_actions_from_snapshots(
 
 pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnapshot) {
     app.observe_action_cwd(&snapshot);
+    app.observe_workstream_action(&snapshot);
     app.running_tools.retain(|tool| tool.id != snapshot.id);
     if let Some(tool) = running_tool(&snapshot) {
         app.running_tools.push(tool);

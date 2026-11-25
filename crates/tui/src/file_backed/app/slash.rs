@@ -21,6 +21,9 @@ impl FileBackedApp {
                 self.permissions_command(command.strip_prefix("permissions").unwrap_or(""))
             }
             "summary" => self.summary_command(command.strip_prefix("summary").unwrap_or("")),
+            "streams" => self.streams_command(command.strip_prefix("streams").unwrap_or("")),
+            "focus" => self.focus_command(command.strip_prefix("focus").unwrap_or("")),
+            "root" => self.root_command(command.strip_prefix("root").unwrap_or("")),
             "new" => self.new_session_command(),
             "tape" if command.trim() == "tape" => {
                 self.modal.active = true;

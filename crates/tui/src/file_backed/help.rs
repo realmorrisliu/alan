@@ -13,8 +13,10 @@ const COMMAND_ROWS: &[(&str, &str)] = &[
         "/login /model /settings",
         "connect, pick model, or settings & reset",
     ),
-    ("/new /resume [query]", "fresh session or pick rollout"),
-    ("/fork [query]", "roll back to earlier prompt & edit"),
+    (
+        "/new /resume /fork [query]",
+        "fresh session, pick rollout, or fork",
+    ),
     (
         "/permissions /project",
         "cycle trust or mount dir (Tab rw/ro)",
@@ -23,6 +25,10 @@ const COMMAND_ROWS: &[(&str, &str)] = &[
     (
         "/status /summary /doctor",
         "inspect status, summary, or diagnostics",
+    ),
+    (
+        "/streams /focus /root",
+        "list streams or switch agent focus",
     ),
     ("/compact /rollback", "summarize context or undo last turn"),
     ("/continue /discard", "resume or clear a paused queue"),

@@ -64,7 +64,7 @@ impl FileBackedApp {
     }
 
     pub(in crate::file_backed) fn context_line(&self, width: usize) -> Line<'static> {
-        let location = self.project.as_ref().map_or_else(
+        let base_location = self.project.as_ref().map_or_else(
             || {
                 if self.namespace_cwd == std::path::Path::new("/") {
                     "Select project".to_string()
@@ -81,6 +81,12 @@ impl FileBackedApp {
                 }
             },
         );
+        let location = if let Some(stream_name) = self.streams.focused_stream.as_deref() {
+            let safe_stream = super::super::model::safe(stream_name);
+            format!("{base_location} · focus:{safe_stream}")
+        } else {
+            base_location
+        };
         let git_chip = self.git_status.as_ref().map(|git| {
             (
                 git.label(),
