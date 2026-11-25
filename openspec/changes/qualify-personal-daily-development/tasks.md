@@ -7,8 +7,8 @@
 - [ ] 1.4 Freeze numeric budgets, task mix, comparison subset and counting rules before formal qualification; verify pilot outcomes cannot be substituted for formal results.
 
 ## 2. Capability prerequisites and observed fixes
-- [ ] 2.1 Verify merged project-delegation and continuity deliveries and actual installed binary; keep full-trust evidence in its own cohort.
-- [ ] 2.2 Reproduce top task blockers and UI issues, fix their shared owners through bounded changes, and rerun implicated source/native controls without erasing failures.
+- [x] 2.1 Verify merged project-delegation and continuity deliveries and actual installed binary; keep full-trust evidence in its own cohort. Verified `alan 0.1.11-beta.20261125.27` (`seatbelt`, default `Governed` mode; 0 full-trust runs) across CLI discovery, `--grant` + `--no-resume-update`, `alan project bind`/`status`, `alan workflow draft`, and live interactive PTY (`/help`, `/streams`, `/summary`); see [the 2026-11-25 live beta dogfooding pilot](pilot-results.md#live-beta-dogfooding-pilot--2026-11-25-alan-0111-beta2026112527).
+- [x] 2.2 Reproduce top task blockers and UI issues, fix their shared owners through bounded changes, and rerun implicated source/native controls without erasing failures. Reproduced and fixed grant-root trailing `/` rejection in `oneshot_cwd.rs` and Gemini `partialArgs` `"{}": null` container-marker injection in `google_gemini_generate_content/streaming.rs`, preserving original failure records in [pilot-results.md](pilot-results.md#live-beta-dogfooding-pilot--2026-11-25-alan-0111-beta2026112527).
 - [ ] 2.3 Verify actual pnpm/Node tasks on macOS and retain existing Linux regression; qualify additional Linux tools only when demanded by a selected task.
 
 ## 3. Personal daily-use qualification
