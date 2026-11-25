@@ -90,7 +90,7 @@ fn resolve_against_grants(
             .strip_prefix(&grant.canonical_path)
             .expect("verified host containment");
         return Ok(Some(ResolvedOneShotCwd {
-            namespace_path: Path::new(&grant.namespace_path).join(verified_suffix),
+            namespace_path: join_namespace_suffix(&grant.namespace_path, verified_suffix),
             host_path: canonical_host,
         }));
     }
@@ -114,9 +114,17 @@ fn resolve_host_against_grants(
         .strip_prefix(&matched.canonical_path)
         .expect("matched canonical prefix");
     Some(ResolvedOneShotCwd {
-        namespace_path: Path::new(&matched.namespace_path).join(suffix),
+        namespace_path: join_namespace_suffix(&matched.namespace_path, suffix),
         host_path: canonical,
     })
+}
+
+fn join_namespace_suffix(namespace_root: &str, suffix: &Path) -> PathBuf {
+    if suffix.as_os_str().is_empty() {
+        PathBuf::from(namespace_root)
+    } else {
+        Path::new(namespace_root).join(suffix)
+    }
 }
 
 fn normalize_absolute_namespace_path(path: &Path) -> Option<PathBuf> {

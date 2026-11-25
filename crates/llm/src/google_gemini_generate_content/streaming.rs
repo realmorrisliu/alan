@@ -436,6 +436,19 @@ async fn flush_partial_call(
 enum PathSegment {
     Key(String),
     Index(usize),
+    ObjectMarker,
+    ArrayMarker,
+}
+
+fn push_unquoted_key_or_marker(segments: &mut Vec<PathSegment>, raw: &str) {
+    if raw.is_empty() {
+        return;
+    }
+    if raw == "{}" {
+        segments.push(PathSegment::ObjectMarker);
+    } else {
+        segments.push(PathSegment::Key(raw.to_string()));
+    }
 }
 
 fn parse_json_path(path: &str) -> Vec<PathSegment> {
@@ -452,9 +465,7 @@ fn parse_json_path(path: &str) -> Vec<PathSegment> {
                 while i < bytes.len() && bytes[i] != b'.' && bytes[i] != b'[' {
                     i += 1;
                 }
-                if i > start {
-                    segments.push(PathSegment::Key(rest[start..i].to_string()));
-                }
+                push_unquoted_key_or_marker(&mut segments, &rest[start..i]);
             }
             b'[' => {
                 i += 1;
@@ -477,7 +488,10 @@ fn parse_json_path(path: &str) -> Vec<PathSegment> {
                     while i < bytes.len() && bytes[i] != b']' {
                         i += 1;
                     }
-                    if let Ok(index) = rest[start..i].trim().parse::<usize>() {
+                    let index_text = rest[start..i].trim();
+                    if index_text.is_empty() {
+                        segments.push(PathSegment::ArrayMarker);
+                    } else if let Ok(index) = index_text.parse::<usize>() {
                         segments.push(PathSegment::Index(index));
                     }
                     if i < bytes.len() {
@@ -490,7 +504,7 @@ fn parse_json_path(path: &str) -> Vec<PathSegment> {
                 while i < bytes.len() && bytes[i] != b'.' && bytes[i] != b'[' {
                     i += 1;
                 }
-                segments.push(PathSegment::Key(rest[start..i].to_string()));
+                push_unquoted_key_or_marker(&mut segments, &rest[start..i]);
             }
         }
     }
@@ -504,18 +518,40 @@ fn apply_partial_arg(root: &mut Value, arg: &PartialArg) {
         return;
     }
 
+    let has_value = arg.string_value.is_some()
+        || arg.number_value.is_some()
+        || arg.bool_value.is_some()
+        || arg.null_value.is_some();
+
     let mut cursor = root;
     for (pos, segment) in segments.iter().enumerate() {
         let next = segments.get(pos + 1);
         match segment {
+            PathSegment::ObjectMarker => {
+                if !cursor.is_object() {
+                    *cursor = Value::Object(Map::new());
+                }
+            }
+            PathSegment::ArrayMarker => {
+                if !cursor.is_array() {
+                    *cursor = Value::Array(Vec::new());
+                }
+            }
             PathSegment::Key(key) => {
                 if !cursor.is_object() {
                     *cursor = Value::Object(Map::new());
                 }
+                if next.is_none() && !has_value {
+                    return;
+                }
                 let map = cursor.as_object_mut().expect("object");
                 cursor = map.entry(key.clone()).or_insert_with(|| match next {
-                    Some(PathSegment::Index(_)) => Value::Array(Vec::new()),
-                    Some(PathSegment::Key(_)) => Value::Object(Map::new()),
+                    Some(PathSegment::Index(_) | PathSegment::ArrayMarker) => {
+                        Value::Array(Vec::new())
+                    }
+                    Some(PathSegment::Key(_) | PathSegment::ObjectMarker) => {
+                        Value::Object(Map::new())
+                    }
                     None => Value::Null,
                 });
             }
@@ -529,11 +565,18 @@ fn apply_partial_arg(root: &mut Value, arg: &PartialArg) {
                 }
                 cursor = &mut arr[*index];
                 if cursor.is_null() {
-                    if let Some(PathSegment::Key(_)) = next {
-                        *cursor = Value::Object(Map::new());
-                    } else if let Some(PathSegment::Index(_)) = next {
-                        *cursor = Value::Array(Vec::new());
+                    match next {
+                        Some(PathSegment::Key(_) | PathSegment::ObjectMarker) => {
+                            *cursor = Value::Object(Map::new());
+                        }
+                        Some(PathSegment::Index(_) | PathSegment::ArrayMarker) => {
+                            *cursor = Value::Array(Vec::new());
+                        }
+                        None => {}
                     }
+                }
+                if next.is_none() && !has_value {
+                    return;
                 }
             }
         }
@@ -728,6 +771,70 @@ mod tests {
                 "content": "pub fn hi() {}",
                 "flags": { "overwrite": true },
                 "lines": [42.0]
+            })
+        );
+    }
+
+    #[test]
+    fn partial_args_ignore_empty_object_and_valueless_markers() {
+        let mut active = ActivePartialCall::new(0, Some("call_mounts".into()), Value::Null);
+        active.apply_partial_args(&[
+            PartialArg {
+                json_path: "$.host_mounts[0]{}".into(),
+                ..Default::default()
+            },
+            PartialArg {
+                json_path: "$.host_mounts[0].grant".into(),
+                string_value: Some("repo-wt".into()),
+                ..Default::default()
+            },
+            PartialArg {
+                json_path: "$.host_mounts[0].target".into(),
+                string_value: Some("/mnt/grants/repo-wt".into()),
+                ..Default::default()
+            },
+            PartialArg {
+                json_path: "$.host_mounts[0].access".into(),
+                string_value: Some("read_only".into()),
+                ..Default::default()
+            },
+            PartialArg {
+                json_path: "$.host_mounts[0].{}".into(),
+                ..Default::default()
+            },
+            PartialArg {
+                json_path: "$.empty_obj.{}".into(),
+                ..Default::default()
+            },
+            PartialArg {
+                json_path: "$.empty_arr[]".into(),
+                ..Default::default()
+            },
+            PartialArg {
+                json_path: "$.unused_termination_marker".into(),
+                will_continue: Some(false),
+                ..Default::default()
+            },
+            PartialArg {
+                json_path: "$.explicit_null".into(),
+                null_value: Some(Value::String("NULL_VALUE".into())),
+                ..Default::default()
+            },
+        ]);
+
+        let finalized = active.finalize_delta();
+        let parsed: Value = serde_json::from_str(finalized.arguments.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            parsed,
+            json!({
+                "host_mounts": [{
+                    "grant": "repo-wt",
+                    "target": "/mnt/grants/repo-wt",
+                    "access": "read_only"
+                }],
+                "empty_obj": {},
+                "empty_arr": [],
+                "explicit_null": null
             })
         );
     }

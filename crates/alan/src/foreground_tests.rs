@@ -389,6 +389,21 @@ fn oneshot_grant_cwd_resolves_grants_subdirs_and_fails_closed_on_ungranted_cwd()
     );
     assert_eq!(resolved_rw.host_path, canonical_repo);
 
+    // --grant with ambient cwd equal to the grant root emits no trailing slash.
+    let resolved_root = oneshot_cwd::resolve_oneshot_grant_cwd(
+        Some(&store),
+        &["repo".to_string()],
+        None,
+        Some(&repo),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        resolved_root.namespace_path.to_str().unwrap(),
+        "/mnt/grants/repo"
+    );
+    assert_eq!(resolved_root.host_path, canonical_repo);
+
     // --grant with ambient cwd inside grant maps to subdirectory.
     let resolved_ambient = oneshot_cwd::resolve_oneshot_grant_cwd(
         Some(&store),
@@ -399,25 +414,40 @@ fn oneshot_grant_cwd_resolves_grants_subdirs_and_fails_closed_on_ungranted_cwd()
     .unwrap()
     .unwrap();
     assert_eq!(
-        resolved_ambient.namespace_path,
-        PathBuf::from("/mnt/grants/repo/crates/foo")
+        resolved_ambient.namespace_path.to_str().unwrap(),
+        "/mnt/grants/repo/crates/foo"
     );
     assert_eq!(resolved_ambient.host_path, canonical_sub);
 
-    // --grant with explicit --cwd inside ReadOnly grant maps to that grant.
+    // --grant with explicit --cwd inside ReadOnly grant maps to that grant without trailing slash.
     let resolved_docs = oneshot_cwd::resolve_oneshot_grant_cwd(
         Some(&store),
         &["docs".to_string(), "repo".to_string()],
-        Some(Path::new("/mnt/grants/docs")),
+        Some(Path::new("/mnt/grants/docs/")),
         None,
     )
     .unwrap()
     .unwrap();
     assert_eq!(
-        resolved_docs.namespace_path,
-        PathBuf::from("/mnt/grants/docs")
+        resolved_docs.namespace_path.to_str().unwrap(),
+        "/mnt/grants/docs"
     );
     assert_eq!(resolved_docs.host_path, canonical_docs);
+
+    // --grant with explicit host --cwd equal to grant root emits no trailing slash.
+    let resolved_host_root = oneshot_cwd::resolve_oneshot_grant_cwd(
+        Some(&store),
+        &["repo".to_string()],
+        Some(&repo),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        resolved_host_root.namespace_path.to_str().unwrap(),
+        "/mnt/grants/repo"
+    );
+    assert_eq!(resolved_host_root.host_path, canonical_repo);
 
     // --grant with explicit --cwd outside activated grants fails closed.
     assert!(

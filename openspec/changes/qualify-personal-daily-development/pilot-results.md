@@ -108,3 +108,34 @@ regression required `rg`, absent in the test/coverage jobs, and exited 127. A
 restricted-PATH local run reproduced it. The corrected regression uses portable
 `find` to exercise the same real quoted-filter and unquoted-expansion boundary;
 it does not install another tool or relax the sandbox. Fresh CI remains required.
+
+## Live beta dogfooding pilot — 2026-11-25 (`alan 0.1.11-beta.20261125.27`)
+
+This is preflight live-binary dogfooding on the installed beta release (`alan 0.1.11-beta.20261125.27`, commit `9519ac4`), **not** the formal two-week daily-use cohort. Formal qualification progress remains **0 / 50 tasks** across **0 / 14 days**.
+
+### Environment & conditions
+
+- Installed binary: `/Users/morris/.local/bin/alan` (`0.1.11-beta.20261125.27 (beta, 9519ac4)`), `managed` install ownership, `seatbelt` sandbox backend.
+- Configured profiles: `vertex-main` (`google_gemini_generate_content`, `gemini-4-neon`, default, ADC present) and `magpie-main` (`magpie`, `auto/deepseek-v4.1-flash`).
+- Posture: default `Governed` mode (zero `--trust` or `--unsafe-host-account` runs).
+- Isolation & cleanliness: operated against a temporary detached worktree (`wt-dogfood-qualify`), temporary saved grant (`dogfood-qualify-wt`), temporary `alan project bind` (`proj-170ba7eca820416ea65f4d3f3fbeab7a`), and `--no-resume-update` / `ALAN_NO_RESUME=1`; all temporary grants, bindings, and `alan-arena` package installation were cleaned up after testing so the operator's stores stayed pristine.
+
+### Pilot battery outcomes
+
+| Probe | Outcome | Observed details & telemetry |
+| --- | --- | --- |
+| CLI discovery (`--version`, `doctor --json`, `--help`, `q list`, `skills list`, `project --help`, `workflow draft --help`) | Passed | `doctor` reported `healthy: true`, `seatbelt`, writable stores, `2` profiles (`0` missing auth), `2024` rollouts; `6` preinstalled packages listed (`alan-arena` confirmed as installable package under `crates/service-manager/packages/alan-arena`). |
+| Explicit grant & project bind (`host grant save`, `project bind --grant`, `project status`) | Passed | Bound temporary worktree to `proj-170ba7eca820416ea65f4d3f3fbeab7a` (`active_non_archived: 0`, `unread_inbox_count: 0`). |
+| OneShot (`--grant dogfood-qualify-wt --no-resume-update -p ... --json`) | Passed with reproduced bug | `bash` executed `ls` inside `/mnt/grants/dogfood-qualify-wt` (`exit 0`, `30585` input / `644` output / `385` reasoning tokens, `1` tool call), and `metadata/root-rollout` stayed untouched. **Bug reproduced:** initial `SelectProjectDirectory` (`cd`) failed with `invalid absolute namespace directory` because `resolve_host_against_grants` joined an empty suffix onto `/mnt/grants/dogfood-qualify-wt`, producing a trailing `/`. |
+| Interactive PTY (`openpty` 32x110, `\x1b[6n` DSR -> `\x1b[20;1R`, `--grant`, `--no-resume-update`) | Passed | Booted TUI in `0.42s`; exercised `/help`, `/streams` (workstream view), `/summary` (derived continuity summary), and a live `read_file` turn on `tasks.md`; exited cleanly via `/quit` (`exit_code=0`, `has_panic=False`, `\x1b[?2004l` bracketed paste disabled, `metadata/root-rollout` untouched). |
+| Workflow drafting dry-run (`alan workflow draft --target launchd` & `--target cron`, without `--confirm`) | Passed | Rendered valid `launchd` `.plist` (with `--project-key`, `--mount`, `--stream`) and POSIX `crontab` previews plus SHA-256 confirmation digests; `alan workflow list` remained empty and zero persistent scheduler jobs were created. |
+| Package lifecycle & `$alan-arena` (`q install`, `q inspect`, `q enable`, OneShot bakeoff) | Partial / exposed live bugs | `q install` + `q inspect` + `q enable` succeeded (`f5890f95`). During the live `$alan-arena` OneShot run on `gemini-4-neon`, Root hit `Invalid spawn_subagent payload.` whenever passing `host_mounts` because Gemini's `partialArgs` stream emitted `"{}": null` inside `host_mounts[0]`. Root fell back to omitting `host_mounts`; one contender (`arena-contender-consumer-contract`) completed cleanly, while `arena-contender-producer-boundary` hit a transient `alan-agent: bad request` and its retry remained stalled on Vertex past 15m before cancellation. |
+
+### Shared-owner fixes landed from this pilot
+
+1. **OneShot grant-root trailing slash (`crates/alan/src/foreground/oneshot_cwd.rs`)**:
+   - **Root cause:** `Path::new(&grant.namespace_path).join(suffix)` appends a trailing `/` when `suffix` is empty (running from or targeting the grant root itself). Existing unit tests masked this because Rust's `PathBuf::eq` normalizes trailing slashes, while `serde_json` serialized the raw trailing `/` into `project-cwd-v1` and `valid_project_directory` rejected it.
+   - **Fix & verification:** Added `join_namespace_suffix` to return `PathBuf::from(namespace_root)` unchanged when `suffix` is empty, strengthened `foreground_tests.rs` to assert exact string equality (`to_str()`), and added grant-root `current_dir` coverage in `crates/alan/tests/oneshot_grant_cwd_integration_test.rs` asserting no `cd` failure occurs.
+2. **Gemini `partialArgs` empty-object / valueless markers (`crates/llm/src/google_gemini_generate_content/streaming.rs`)**:
+   - **Root cause:** When Vertex AI streams `streamFunctionCallArguments` (`partialArgs`), object-container markers such as `$.host_mounts[0]{}` or `$.host_mounts[0].{}` and value-less termination markers were parsed by `parse_json_path` as `PathSegment::Key("{}")` and materialized as `"{}": null`, which `SpawnHostMount` (`#[serde(deny_unknown_fields)]`) rejected with `Invalid spawn_subagent payload.`.
+   - **Fix & verification:** Updated `parse_json_path` and `apply_partial_arg` to treat unquoted `{}` / `[]` as `ObjectMarker` / `ArrayMarker` and avoid inserting spurious `null` entries for value-less `PartialArg` markers, preserving strict `deny_unknown_fields` on `SpawnHostMount`. Added unit regression `partial_args_ignore_empty_object_and_valueless_markers` in `streaming.rs`.

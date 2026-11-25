@@ -376,4 +376,45 @@ fn oneshot_grant_sets_namespace_cwd_for_bash_and_fails_closed_for_ungranted_cwd(
         "expected subdirectory namespace_cwd in context: {}",
         turn_requests[3]
     );
+    drop(recorded);
+
+    // 5. --grant repo-wt when current_dir is the grant root itself must not emit a trailing slash
+    //    or fail `SelectProjectDirectory` (`cd`).
+    let root_ambient_out = isolated_alan(&home, &xdg_data, &runtime)
+        .current_dir(&repo)
+        .args([
+            "--grant",
+            "repo-wt",
+            "--ephemeral",
+            "--trust",
+            "--json",
+            "-p",
+            "check grant root cwd",
+        ])
+        .output()
+        .expect("run oneshot from grant root");
+    assert!(
+        root_ambient_out.status.success(),
+        "oneshot --grant from grant root failed: stderr={}",
+        String::from_utf8_lossy(&root_ambient_out.stderr)
+    );
+    let root_ambient_stdout = String::from_utf8_lossy(&root_ambient_out.stdout);
+    assert!(
+        !root_ambient_stdout.contains("invalid absolute namespace directory")
+            && !root_ambient_stdout
+                .contains("\"name\":\"cd\",\"title\":\"cd\",\"status\":\"failed\""),
+        "SelectProjectDirectory failed from grant root: {root_ambient_stdout}"
+    );
+    let recorded = server.requests.lock().unwrap();
+    let turn_requests: Vec<&String> = recorded
+        .iter()
+        .filter(|body| !body.contains("TURN-END MEMORY WRITE PLAN"))
+        .collect();
+    assert_eq!(turn_requests.len(), 5);
+    assert!(
+        turn_requests[4].contains("/mnt/grants/repo-wt")
+            && !turn_requests[4].contains("/mnt/grants/repo-wt/\""),
+        "expected canonical grant root namespace_cwd without trailing slash: {}",
+        turn_requests[4]
+    );
 }
