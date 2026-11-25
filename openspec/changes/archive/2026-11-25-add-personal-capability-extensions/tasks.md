@@ -28,4 +28,4 @@
 
 - [x] 5.1 Run `just test`, `just quality`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `bash scripts/check-openspec-current-surfaces.sh && openspec validate add-personal-capability-extensions --strict`.
 - [x] 5.2 Complete independent security and architecture review against `ADR-0051`, `ADR-0052`, `ADR-0061`, and `file-server-plugin-contract`.
-- [ ] 5.3 After implementation PRs merge on `main` and CI passes, sync the four delta specs into `openspec/specs/` and archive the change under `openspec/changes/archive/YYYY-MM-DD-add-personal-capability-extensions/`.
+- [x] 5.3 After implementation PRs merge on `main` and CI passes, sync the four delta specs into `openspec/specs/` and archive the change under `openspec/changes/archive/YYYY-MM-DD-add-personal-capability-extensions/`.
