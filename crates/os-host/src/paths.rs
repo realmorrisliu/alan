@@ -88,6 +88,10 @@ impl SystemStorePaths {
         Ok(self.service("host-mount")?.join("grants.json"))
     }
 
+    pub fn projects(&self) -> Result<PathBuf> {
+        self.service("projects")
+    }
+
     pub fn connections_metadata(&self) -> Result<PathBuf> {
         Ok(self.service("connections")?.join("connections.toml"))
     }
@@ -185,6 +189,10 @@ mod tests {
         assert_eq!(
             store.packages().unwrap(),
             store.root.join("services/packages")
+        );
+        assert_eq!(
+            store.projects().unwrap(),
+            store.root.join("services/projects")
         );
     }
 

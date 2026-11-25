@@ -24,6 +24,8 @@ mod memory_recall;
 mod memory_surfaces;
 pub mod model_binding;
 mod mount_request_tool;
+mod project_startup;
+pub mod project_workstreams;
 mod prompt_cache;
 pub(crate) mod queue_publication;
 mod response_guardrails;
@@ -78,6 +80,22 @@ pub use memory_surfaces::project_summary::{
     ProjectContinuitySummary, ProjectContinuitySummaryView, ProjectSummaryDeleteOutcome,
     ProjectSummaryEdit, ProjectSummaryOrigin, delete_project_summary, derive_project_key,
     edit_project_summary, inspect_project_summary,
+};
+pub use project_startup::{
+    ProjectStartupContext, ProjectWorkstreamStoreRef, format_project_ledger_and_inbox_summary,
+    render_project_startup_context,
+};
+pub use project_workstreams::{
+    CronStreamPolicy, INBOX_DIGEST_VERSION, InboxDigestEntry, InboxDigestStatus,
+    MAX_INBOX_SUMMARY_CHARS, PROJECT_BINDING_VERSION, PROJECT_LEDGER_VERSION, ProjectBinding,
+    ProjectLedger, WORKSTREAM_RECORD_VERSION, WorkstreamCounts, WorkstreamPersistence,
+    WorkstreamRecord, WorkstreamState, WorkstreamWriteMode, archive_workstream, bind_project_dir,
+    binding_path, complete_workstream, idle_workstream, inbox_dir, inbox_entry_path, ledger_path,
+    list_inbox_digests, list_project_bindings, list_unread_inbox_digests, load_inbox_digest,
+    load_project_binding, load_project_ledger, load_workstream_record,
+    mark_all_inbox_digests_digested, mark_inbox_digest_digested, pause_workstream_error,
+    project_dir, resolve_bound_project, resume_workstream, scrub_inbox_summary, stream_path,
+    streams_dir, upsert_workstream, validate_project_key, workstream_counts, write_inbox_digest,
 };
 pub use shadow_evaluation::EvaluationSurface;
 pub use transition::{
@@ -147,6 +165,10 @@ pub struct RuntimeConfig {
     pub response_schema: Option<serde_json::Value>,
     /// Optional host-supplied synchronous Tool policy hook.
     pub tool_policy_hook: Option<std::sync::Arc<dyn ToolPolicyHook>>,
+    /// Optional explicitly-bound project startup context for Root Agent.
+    pub project_startup_context: Option<ProjectStartupContext>,
+    /// When true, bypass Project Ledger prompt injection and workstream ledger persistence.
+    pub ephemeral_context: bool,
 }
 
 impl std::fmt::Debug for RuntimeConfig {
@@ -196,6 +218,8 @@ impl Default for RuntimeConfig {
             system_prompt_mode: crate::SystemPromptMode::Append,
             response_schema: None,
             tool_policy_hook: None,
+            project_startup_context: None,
+            ephemeral_context: false,
         }
     }
 }
@@ -230,6 +254,8 @@ impl From<&crate::config::Config> for RuntimeConfig {
             system_prompt_mode: crate::SystemPromptMode::Append,
             response_schema: None,
             tool_policy_hook: None,
+            project_startup_context: None,
+            ephemeral_context: false,
         }
     }
 }

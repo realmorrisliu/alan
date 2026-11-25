@@ -1,6 +1,8 @@
 //! Scheduled personal workflows (`alan workflow init|init-self-iterate|init-release-prep|evaluate-trigger|check-release-gate|list|run|render-schedule|logs`)
 //! executed via bounded, ephemeral `alan -p --ephemeral --json` invocations.
 
+#[cfg(test)]
+mod inbox_tests;
 mod logs;
 mod manifest;
 mod release_prep;
@@ -24,6 +26,7 @@ use logs::{WorkflowRunLogEntry, read_run_logs};
     reason = "re-exported for alan library callers; main.rs includes cli privately"
 )]
 pub use manifest::WorkflowFileserverSpec;
+pub(crate) use manifest::validate_mount_grant_id;
 pub use manifest::{
     ReleaseGatePolicy, TriggerAllowlist, WorkflowManifest, WorkflowStore, WorkflowTrustPosture,
 };
@@ -80,6 +83,9 @@ pub enum WorkflowAction {
         /// Optional Connection Service profile id (`connection_profile`)
         #[arg(long = "model-profile", alias = "profile")]
         model_profile: Option<String>,
+        /// Optional bound System Store project key for writing `inbox/` run digests
+        #[arg(long = "project-key")]
+        project_key: Option<String>,
         /// Explicit saved Host Mount grant id (`alan host grant save <id> <path>`)
         #[arg(long = "mount", alias = "grant", value_name = "GRANT_ID")]
         mounts: Vec<String>,
@@ -218,6 +224,7 @@ pub async fn run_with_store(
             schedule,
             prompt,
             model_profile,
+            project_key,
             mounts,
             packages,
             fileservers,
@@ -234,6 +241,7 @@ pub async fn run_with_store(
                 schedule: schedule.trim().to_string(),
                 prompt,
                 model_profile: normalize_model_profile(model_profile),
+                project_key: project_key.map(|key| key.trim().to_string()),
                 mounts,
                 packages,
                 fileservers,

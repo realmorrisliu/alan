@@ -162,7 +162,9 @@ async fn spawn_child_runtime_inner(
             agent_files,
             process_files: child_process_files,
             process_pid: child_pid,
-            resume_target: resume.map(|target| target.request_id.clone()),
+            resume_target: resume
+                .filter(|target| !target.request_id.is_empty())
+                .map(|target| target.request_id.clone()),
         },
     ))
 }
@@ -265,17 +267,11 @@ impl ChildProcessLaunch<'_> {
                 {
                     descriptors.insert(alan_agent_protocol::MEMORY_STORE_DESCRIPTOR, path.clone());
                 }
-                let request = AgentExecutableRequest {
-                    initial_task: task_context::build_child_task_text(
-                        &self.parent.task_context,
-                        &attempt_spec,
-                    ),
-                    spawn: attempt_spec.clone(),
-                    resume: self.resume.map(|target| target.request_id.clone()),
-                    recovery_rollout: self.resume.and_then(|target| target.rollout_path.clone()),
-                    // Every reconnect the parent records is an inherited stop.
-                    inherited_resume: self.resume.is_some(),
-                };
+                let request = build_child_executable_request(
+                    &self.parent.task_context,
+                    attempt_spec.clone(),
+                    self.resume,
+                );
                 Ok((plan, decision, descriptors, request))
             })();
             let planned_namespace = self
@@ -317,6 +313,23 @@ impl ChildProcessLaunch<'_> {
         }
         Err(last_stale_error.expect("a retry requires a stale launch error"))
             .context("Failed to spawn child Agent Process after namespace changes")
+    }
+}
+
+fn build_child_executable_request(
+    task_context: &ChildTaskContext,
+    attempt_spec: SpawnSpec,
+    resume: Option<&crate::agent_machine::pending_resume::ResumeTarget>,
+) -> AgentExecutableRequest {
+    AgentExecutableRequest {
+        initial_task: task_context::build_child_task_text(task_context, &attempt_spec),
+        spawn: attempt_spec,
+        resume: resume
+            .and_then(|target| (!target.request_id.is_empty()).then(|| target.request_id.clone())),
+        recovery_rollout: resume.and_then(|target| target.rollout_path.clone()),
+        // Every reconnect with a pending request id is an inherited stop;
+        // workstream checkpoint recovery passes an empty request_id for a fresh Op::Turn.
+        inherited_resume: resume.is_some_and(|target| !target.request_id.is_empty()),
     }
 }
 
@@ -857,5 +870,35 @@ mod tests {
             build_child_namespace_plan(&ro_subagent, &mounts, None, &descriptors(), &[], "default")
                 .unwrap();
         assert!(plan.validate_cwd_scope().is_ok());
+    }
+
+    #[test]
+    fn workstream_checkpoint_recovery_uses_recovery_rollout_without_inherited_resume() {
+        let ctx = ChildTaskContext::new(None, None, None);
+        let ckpt_target = crate::agent_machine::pending_resume::ResumeTarget {
+            request_id: String::new(),
+            child_pid: None,
+            rollout_path: Some("/tmp/ws-ckpt.jsonl".to_string()),
+        };
+        let ws_req = build_child_executable_request(&ctx, spec(), Some(&ckpt_target));
+        assert_eq!(ws_req.resume, None);
+        assert!(!ws_req.inherited_resume);
+        assert_eq!(
+            ws_req.recovery_rollout.as_deref(),
+            Some("/tmp/ws-ckpt.jsonl")
+        );
+
+        let inherited_target = crate::agent_machine::pending_resume::ResumeTarget {
+            request_id: "req-1".to_string(),
+            child_pid: Some("9".to_string()),
+            rollout_path: Some("/tmp/inherited.jsonl".to_string()),
+        };
+        let inherited_req = build_child_executable_request(&ctx, spec(), Some(&inherited_target));
+        assert_eq!(inherited_req.resume.as_deref(), Some("req-1"));
+        assert!(inherited_req.inherited_resume);
+        assert_eq!(
+            inherited_req.recovery_rollout.as_deref(),
+            Some("/tmp/inherited.jsonl")
+        );
     }
 }

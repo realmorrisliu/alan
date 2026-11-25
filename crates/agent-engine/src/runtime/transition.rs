@@ -207,12 +207,15 @@ pub(super) fn delegated_skill_runtime(
     let child_launch = state.child_launch();
     let tool_execution = state.tool_execution();
     let parent_process_path = state.process_path();
+    let (workstream_store, rollouts_dir) = state.runtime_config.delegated_workstream_refs();
     let child_runtime_inputs = super::delegated_skill_tool::DelegatedChildRuntimeInputs::new(
         child_launch,
         tool_execution,
         child_run_registry,
         parent_process_path,
-    );
+    )
+    .with_workstream_store(workstream_store)
+    .with_rollouts_dir(rollouts_dir);
     super::delegated_skill_tool::DelegatedSkillRuntime::new(
         &mut state.machine,
         &mut state.prompt_cache,

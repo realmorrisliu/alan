@@ -9,6 +9,7 @@ pub mod host;
 pub mod login;
 pub mod man;
 pub mod memory;
+pub mod project;
 pub mod q;
 pub mod reset;
 pub mod skill_authoring;

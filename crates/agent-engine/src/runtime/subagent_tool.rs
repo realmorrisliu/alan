@@ -1,6 +1,7 @@
 //! Ad-hoc `spawn_subagent` virtual tool and shared child-batch helpers.
 
 mod batch;
+mod workstream;
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -28,17 +29,20 @@ use super::delegated_skill_tool::{
     MAX_DELEGATED_TIMEOUT_SECS, parse_host_mounts, parse_optional_path_argument,
     parse_optional_timeout_secs_argument, resolve_delegated_launch_path,
 };
+use super::project_workstreams::{WorkstreamPersistence, validate_project_key};
 use super::transition::NamespaceAgentFiles;
 use super::virtual_tool::VirtualToolOutcome;
 
 pub(in crate::runtime) use batch::{
     ExecutedChildSlot, PrelaunchFailure, SlotExecutionError, commit_executed_slot,
-    execute_prepared_slot, finalize_action_record, prepare_delegated_skill_slot,
-    prepare_subagent_slot,
+    execute_prepared_slot, finalize_action_record, finalize_uncommitted_slot,
+    prepare_delegated_skill_slot, prepare_subagent_slot,
 };
 
 pub(super) const MAX_SUBAGENT_ROLE_CHARS: usize = 120;
 pub(super) const MAX_SUBAGENT_MODEL_CHARS: usize = 120;
+pub(super) const MAX_WORKSTREAM_NAME_CHARS: usize = 128;
+pub(super) const MAX_WORKSTREAM_SCOPE_CHARS: usize = 512;
 
 /// Spawn closure signature shared between `spawn_subagent`, `invoke_delegated_skill`,
 /// and concurrent subagent batch execution.
@@ -106,6 +110,15 @@ pub(in crate::runtime) struct SubagentSpawnRequest {
     pub(in crate::runtime) cwd: Option<PathBuf>,
     pub(in crate::runtime) host_mounts: Vec<SpawnHostMount>,
     pub(in crate::runtime) timeout_secs: Option<u64>,
+    pub(in crate::runtime) stream_name: Option<String>,
+    pub(in crate::runtime) persistence: Option<WorkstreamPersistence>,
+    pub(in crate::runtime) scope: Option<String>,
+}
+
+impl SubagentSpawnRequest {
+    pub(in crate::runtime) fn effective_persistence(&self) -> WorkstreamPersistence {
+        self.persistence.unwrap_or(WorkstreamPersistence::OneOff)
+    }
 }
 
 /// Build the `ToolDefinition` for `spawn_subagent` exposed on Root Agent.
@@ -164,6 +177,23 @@ pub(super) fn spawn_subagent_tool_definition() -> ToolDefinition {
                     "description": "Optional bounded timeout in seconds for the subagent run.",
                     "minimum": 1,
                     "maximum": MAX_DELEGATED_TIMEOUT_SECS
+                },
+                "stream_name": {
+                    "type": "string",
+                    "description": "Optional named workstream slug for tracking or resuming a project workstream (ASCII alphanumeric, '-', or '_', starting with alphanumeric).",
+                    "minLength": 1,
+                    "maxLength": MAX_WORKSTREAM_NAME_CHARS
+                },
+                "persistence": {
+                    "type": "string",
+                    "enum": ["persistent", "one_off"],
+                    "description": "Optional workstream lifecycle policy: 'persistent' checkpoints to idle for later resumption; 'one_off' (default) automatically collapses to archived on completion."
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Optional concise responsibility summary recorded for the named workstream in the Project Ledger.",
+                    "minLength": 1,
+                    "maxLength": MAX_WORKSTREAM_SCOPE_CHARS
                 }
             },
             "required": ["role", "task"]
@@ -223,6 +253,42 @@ pub(in crate::runtime) fn parse_subagent_spawn_request(
     let cwd = parse_optional_path_argument(arguments, "cwd")?;
     let host_mounts = parse_host_mounts(arguments)?;
     let timeout_secs = parse_optional_timeout_secs_argument(arguments, "timeout_secs")?;
+    let stream_name = match arguments.get("stream_name") {
+        None | Some(Value::Null) => None,
+        Some(value) => {
+            let trimmed = value.as_str()?.trim();
+            if trimmed.is_empty()
+                || trimmed.chars().count() > MAX_WORKSTREAM_NAME_CHARS
+                || validate_project_key(trimmed).is_err()
+            {
+                return None;
+            }
+            Some(trimmed.to_string())
+        }
+    };
+    let persistence = match arguments.get("persistence") {
+        None | Some(Value::Null) => None,
+        Some(value) => match value.as_str()?.trim() {
+            "persistent" => Some(WorkstreamPersistence::Persistent),
+            "one_off" => Some(WorkstreamPersistence::OneOff),
+            _ => return None,
+        },
+    };
+    let scope = match arguments.get("scope") {
+        None | Some(Value::Null) => None,
+        Some(value) => {
+            let trimmed = value.as_str()?.trim();
+            if trimmed.is_empty() {
+                None
+            } else if trimmed.chars().count() > MAX_WORKSTREAM_SCOPE_CHARS
+                || trimmed.chars().any(char::is_control)
+            {
+                return None;
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+    };
     Some(SubagentSpawnRequest {
         role,
         task,
@@ -231,6 +297,9 @@ pub(in crate::runtime) fn parse_subagent_spawn_request(
         cwd,
         host_mounts,
         timeout_secs,
+        stream_name,
+        persistence,
+        scope,
     })
 }
 
@@ -443,6 +512,9 @@ mod tests {
                 access: SpawnMountAccess::ReadWrite,
             }],
             timeout_secs: None,
+            stream_name: None,
+            persistence: None,
+            scope: None,
         };
         let err = resolve_subagent_spawn_spec(Path::new("/mnt/project"), &req).unwrap_err();
         assert_eq!(err.error_kind, "read_only_mount_conflict");
@@ -458,6 +530,9 @@ mod tests {
             cwd: None,
             host_mounts: Vec::new(),
             timeout_secs: None,
+            stream_name: None,
+            persistence: None,
+            scope: None,
         };
         let spec = resolve_subagent_spawn_spec(Path::new("/mnt/project"), &req).unwrap();
         assert_eq!(spec.launch.cwd.as_deref(), Some(Path::new("/")));

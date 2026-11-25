@@ -110,7 +110,8 @@ pub(super) async fn run_bare_in_foreground_instance(
         }
         BareRunMode::OneShot { .. } => alan_agent_engine::runtime::EvaluationSurface::Redirected,
     };
-    let config = cli::trust::apply_boot_trust_options(
+    let candidate_cwd = cwd.or_else(|| std::env::current_dir().ok());
+    let base_config = cli::trust::apply_boot_trust_options(
         HostBootConfig::product_with_root_resume(resume_root)?,
         trust_options,
         resume_rollout_id,
@@ -118,6 +119,18 @@ pub(super) async fn run_bare_in_foreground_instance(
         shadow_evaluator,
         shadow_surface,
     )?;
+    let config = if ephemeral {
+        base_config
+    } else {
+        let store = alan_os_host::SystemStorePaths::detect()?;
+        let projects_root = store.projects()?;
+        apply_project_startup_context(
+            base_config,
+            &projects_root,
+            candidate_cwd.as_deref(),
+            ephemeral,
+        )?
+    };
     let is_json_mode = matches!(&mode, BareRunMode::OneShot { json: true, .. });
     let host = match AlanOsHost::boot(config, paths.clone()).await {
         Ok(host) => host,
@@ -150,7 +163,6 @@ pub(super) async fn run_bare_in_foreground_instance(
             match mode {
                 BareRunMode::Interactive { images } => {
                     let store = alan_os_host::SystemStorePaths::detect()?;
-                    let candidate_cwd = cwd.or_else(|| std::env::current_dir().ok());
                     let initial_attachments = cli::attachments::collect_cli_image_attachments(
                         None,
                         candidate_cwd.as_deref(),
@@ -312,10 +324,9 @@ pub(super) async fn run_bare_in_foreground_instance(
                             input = input_rx => input.context("stdin reader stopped")??,
                         }
                     };
-                    let base_dir = cwd.or_else(|| std::env::current_dir().ok());
                     let parts = cli::attachments::collect_cli_image_attachments(
                         Some(&input),
-                        base_dir.as_deref(),
+                        candidate_cwd.as_deref(),
                         &images,
                     )?;
                     let exit_code = alan_tui::run_stdio_task_with_options(
@@ -344,6 +355,28 @@ pub(super) async fn run_bare_in_foreground_instance(
     let exit_code = run_result?;
     server_result?;
     Ok(exit_code)
+}
+
+/// Resolve an explicit `ProjectBinding` for `candidate_dir` and attach its read-only
+/// `ProjectLedger` + unread `inbox/` digests onto `HostBootConfig` for Root Agent startup.
+///
+/// Skips completely when `ephemeral` is true, and returns `boot_config` unchanged when
+/// `candidate_dir` is unbound or a foreign checkout.
+pub(super) fn apply_project_startup_context(
+    boot_config: HostBootConfig,
+    projects_root: &Path,
+    candidate_dir: Option<&Path>,
+    ephemeral: bool,
+) -> Result<HostBootConfig> {
+    if ephemeral || boot_config.ephemeral_rollout() {
+        return Ok(boot_config.with_project_startup_context(None));
+    }
+    let Some(dir) = candidate_dir else {
+        return Ok(boot_config);
+    };
+    let startup_context =
+        alan_agent_engine::ProjectStartupContext::resolve_and_load_read_only(projects_root, dir)?;
+    Ok(boot_config.with_project_startup_context(startup_context))
 }
 
 /// Whether `candidate` is an ordinary project directory eligible for default `ReadWrite`

@@ -372,12 +372,46 @@ impl HostBootConfig {
     pub fn with_ephemeral_rollout(mut self, ephemeral: bool) -> Self {
         self.ephemeral_rollout = ephemeral;
         self.service_manager.ephemeral_rollout = ephemeral;
+        self.service_manager
+            .process
+            .set_ephemeral_context(ephemeral);
         self
     }
 
     /// Whether this invocation is excluded from the selected-rollout channel.
     pub fn ephemeral_rollout(&self) -> bool {
         self.ephemeral_rollout
+    }
+
+    /// Attach read-only Project Ledger and unread workflow inbox context for Root Agent startup.
+    ///
+    /// Ignored when `ephemeral_rollout` is enabled so `--ephemeral` sessions stay completely clean.
+    pub fn with_project_startup_context(
+        mut self,
+        context: Option<alan_agent_engine::ProjectStartupContext>,
+    ) -> Self {
+        let effective = if self.ephemeral_rollout {
+            None
+        } else {
+            context
+        };
+        self.service_manager
+            .process
+            .set_project_startup_context(effective);
+        self
+    }
+
+    /// Read-only Project Ledger and inbox context currently attached to Root Agent startup.
+    pub fn project_startup_context(&self) -> Option<&alan_agent_engine::ProjectStartupContext> {
+        self.service_manager
+            .process
+            .project_startup_context
+            .as_ref()
+    }
+
+    /// Whether Root Agent startup skips Project Ledger and continuity context.
+    pub fn ephemeral_context(&self) -> bool {
+        self.service_manager.process.ephemeral_context
     }
 
     /// Select an advice-only evaluator for this invocation's Root Agent input.

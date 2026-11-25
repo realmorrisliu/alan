@@ -118,6 +118,7 @@ pub fn build_self_iterate_manifest(args: &InitSelfIterateArgs) -> Result<Workflo
         schedule: args.schedule.trim().to_string(),
         prompt,
         model_profile: normalize_model_profile(args.model_profile.clone()),
+        project_key: None,
         mounts: args.mounts.clone(),
         packages,
         fileservers,

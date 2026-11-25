@@ -1,8 +1,11 @@
+use std::path::PathBuf;
+
 use crate::{
     agent_machine::AgentMachine,
     runtime::{
         child_agents::{ChildLaunchRuntime, project_child_task_context},
         child_runs::ChildRunRegistry,
+        project_startup::ProjectWorkstreamStoreRef,
         prompt_cache::PromptAssemblyCache,
         transition::{
             NamespaceAgentFiles, NamespaceChildLaunch, NamespaceHostMountRequests,
@@ -22,11 +25,14 @@ pub(crate) struct DelegatedSkillRuntime<'a> {
 }
 
 /// Owned inputs that can produce one real child-launch handle after the spawn spec is resolved.
+#[derive(Clone)]
 pub(crate) struct DelegatedChildRuntimeInputs {
     child_launch: NamespaceChildLaunch,
     tool_execution: NamespaceToolExecution,
     child_run_registry: ChildRunRegistry,
     parent_process_path: String,
+    workstream_store: Option<ProjectWorkstreamStoreRef>,
+    rollouts_dir: Option<PathBuf>,
 }
 
 impl<'a> DelegatedSkillRuntime<'a> {
@@ -77,6 +83,18 @@ impl<'a> DelegatedSkillRuntime<'a> {
         &self.child_runtime_inputs.child_run_registry
     }
 
+    pub(in crate::runtime) fn tool_execution(&self) -> &NamespaceToolExecution {
+        &self.child_runtime_inputs.tool_execution
+    }
+
+    pub(in crate::runtime) fn workstream_store(&self) -> Option<&ProjectWorkstreamStoreRef> {
+        self.child_runtime_inputs.workstream_store.as_ref()
+    }
+
+    pub(in crate::runtime) fn rollouts_dir(&self) -> Option<&std::path::Path> {
+        self.child_runtime_inputs.rollouts_dir.as_deref()
+    }
+
     pub(in crate::runtime) fn child_launch_runtime(&self, spec: &SpawnSpec) -> ChildLaunchRuntime {
         let (plan_explanation, plan_items) = match self.machine.plan_snapshot() {
             Some(snapshot) => (snapshot.explanation.as_deref(), snapshot.items.as_slice()),
@@ -112,6 +130,21 @@ impl DelegatedChildRuntimeInputs {
             tool_execution,
             child_run_registry,
             parent_process_path,
+            workstream_store: None,
+            rollouts_dir: None,
         }
+    }
+
+    pub(crate) fn with_workstream_store(
+        mut self,
+        workstream_store: Option<ProjectWorkstreamStoreRef>,
+    ) -> Self {
+        self.workstream_store = workstream_store;
+        self
+    }
+
+    pub(crate) fn with_rollouts_dir(mut self, rollouts_dir: Option<PathBuf>) -> Self {
+        self.rollouts_dir = rollouts_dir;
+        self
     }
 }

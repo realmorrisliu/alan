@@ -204,6 +204,9 @@ pub struct WorkflowManifest {
     /// Optional Connection Service profile id (`connection_profile`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_profile: Option<String>,
+    /// Optional System Store project key (`services/projects/<project_key>`) for inbox digests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_key: Option<String>,
     /// Explicit saved System Store Host Mount grant ids (`--grant <id>`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mounts: Vec<String>,
@@ -274,6 +277,11 @@ impl WorkflowManifest {
                 !trimmed.contains(['\n', '\r', '\0']),
                 "workflow `model_profile` contains invalid control characters"
             );
+        }
+
+        if let Some(project_key) = self.project_key.as_deref() {
+            alan_agent_engine::validate_project_key(project_key)
+                .with_context(|| format!("invalid workflow `project_key` `{project_key}`"))?;
         }
 
         let mut seen_mounts = std::collections::BTreeSet::new();
@@ -472,6 +480,7 @@ pub fn validate_mount_grant_id(grant_id: &str) -> Result<()> {
 #[derive(Debug, Clone)]
 pub struct WorkflowStore {
     root: PathBuf,
+    projects_root: Option<PathBuf>,
 }
 
 impl WorkflowStore {
@@ -479,6 +488,7 @@ impl WorkflowStore {
     pub fn from_system_store(system: &SystemStorePaths) -> Result<Self> {
         Ok(Self {
             root: system.service("workflows")?,
+            projects_root: Some(system.projects()?),
         })
     }
 
@@ -494,7 +504,17 @@ impl WorkflowStore {
             "workflow store root must be absolute: {}",
             root.display()
         );
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            projects_root: None,
+        })
+    }
+
+    /// Resolve the System Store `services/projects` directory if explicitly set or co-located.
+    pub fn projects_root(&self) -> Option<PathBuf> {
+        self.projects_root
+            .clone()
+            .or_else(|| self.root.parent().map(|parent| parent.join("projects")))
     }
 
     /// Directory holding workflow TOML manifests (`manifests/`).

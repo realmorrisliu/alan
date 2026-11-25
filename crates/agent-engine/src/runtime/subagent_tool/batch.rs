@@ -23,9 +23,13 @@ use super::super::delegated_skill_tool::{
     DelegatedSkillInvocationRequest, DelegatedSkillRuntime,
     parse_delegated_skill_invocation_request, resolve_delegated_skill_invocation,
 };
+use super::super::project_workstreams::{WorkstreamPersistence, WorkstreamRecord, WorkstreamState};
 use super::super::transition::{NamespaceActionRecord, NamespaceAgentFiles};
 use super::super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::super::virtual_tool::VirtualToolOutcome;
+use super::workstream::{
+    TrackedWorkstream, finalize_tracked_workstream, prepare_workstream_launch,
+};
 use super::{
     ActionProgressTracker, SubagentSpawnFn, SubagentSpawnRequest, resolve_subagent_spawn_spec,
 };
@@ -36,6 +40,7 @@ pub(in crate::runtime) enum PreparedChildKind {
     AdHocSubagent {
         request: SubagentSpawnRequest,
         persisted_arguments: Value,
+        workstream: Option<TrackedWorkstream>,
     },
     DelegatedSkill {
         request: DelegatedSkillInvocationRequest,
@@ -104,8 +109,12 @@ pub(in crate::runtime) async fn prepare_subagent_slot(
                     cwd: None,
                     host_mounts: Vec::new(),
                     timeout_secs: None,
+                    stream_name: None,
+                    persistence: None,
+                    scope: None,
                 },
                 persisted_arguments: tool_arguments.clone(),
+                workstream: None,
             },
             label: "subagent".to_string(),
             action_id: None,
@@ -127,6 +136,7 @@ pub(in crate::runtime) async fn prepare_subagent_slot(
             kind: PreparedChildKind::AdHocSubagent {
                 request,
                 persisted_arguments,
+                workstream: None,
             },
             label,
             action_id: None,
@@ -147,15 +157,24 @@ pub(in crate::runtime) async fn prepare_subagent_slot(
     )
     .await?;
 
+    let mut tracked_workstream = None;
     let launch = match resolve_subagent_spawn_spec(runtime.child_namespace_cwd(), &request) {
-        Ok(spec) => {
-            let child_runtime = runtime.child_launch_runtime(&spec);
-            let resume = crate::agent_machine::pending_resume::resume_target_for(
-                &runtime.machine.pending_delegated_resumes,
-                &tool_call.id,
-            );
-            Ok((child_runtime, spec, resume))
-        }
+        Ok(mut spec) => match prepare_workstream_launch(runtime, &request).await {
+            Ok(prepared_ws) => {
+                if let Some(model) = prepared_ws.effective_model {
+                    spec.runtime_overrides.model = Some(model);
+                }
+                let child_runtime = runtime.child_launch_runtime(&spec);
+                let resume = crate::agent_machine::pending_resume::resume_target_for(
+                    &runtime.machine.pending_delegated_resumes,
+                    &tool_call.id,
+                )
+                .or(prepared_ws.checkpoint_resume);
+                tracked_workstream = prepared_ws.tracked;
+                Ok((child_runtime, spec, resume))
+            }
+            Err(failure) => Err(*failure),
+        },
         Err(failure) => Err(*failure),
     };
 
@@ -165,6 +184,7 @@ pub(in crate::runtime) async fn prepare_subagent_slot(
         kind: PreparedChildKind::AdHocSubagent {
             request,
             persisted_arguments,
+            workstream: tracked_workstream,
         },
         label,
         action_id,
@@ -310,9 +330,17 @@ where
 {
     match slot.outcome {
         Ok(mut child_result) => {
+            let tracked = tracked_workstream(&slot.kind);
             if let Some(pause) = child_result.pause.as_ref()
                 && let Some(inherited) = pause.inherited.clone()
             {
+                let _ = finalize_tracked_workstream(
+                    tracked,
+                    runtime.rollouts_dir(),
+                    &child_result,
+                    None,
+                )
+                .await;
                 let dimension = serde_json::from_value::<Dimension>(Value::String(
                     inherited.dimension.clone(),
                 ))?;
@@ -364,6 +392,13 @@ where
                 )
                 .await?
             {
+                let _ = finalize_tracked_workstream(
+                    tracked,
+                    runtime.rollouts_dir(),
+                    &child_result,
+                    None,
+                )
+                .await;
                 finalize_action_record(
                     &runtime.agent_files,
                     slot.action_id.as_deref(),
@@ -381,6 +416,13 @@ where
                 &slot.kind,
                 &slot.label,
                 &child_result,
+            )
+            .await;
+            let updated_workstream = finalize_tracked_workstream(
+                tracked,
+                runtime.rollouts_dir(),
+                &child_result,
+                output_reference.as_ref(),
             )
             .await;
             if let (Some(child_run_id), Some(reference)) = (
@@ -401,6 +443,7 @@ where
                 &slot.kind,
                 delegated_result,
                 child_run_ref,
+                updated_workstream.as_ref(),
                 false,
                 None,
                 emit,
@@ -411,6 +454,7 @@ where
             })
         }
         Err(SlotExecutionError::SpawnOrJoin(err)) => {
+            let tracked = tracked_workstream(&slot.kind);
             if task_cancel.is_cancelled()
                 && check_turn_cancelled(
                     &mut *runtime.machine,
@@ -421,6 +465,10 @@ where
                 )
                 .await?
             {
+                let cancelled = ChildRuntimeResult::cancelled_before_launch();
+                let _ =
+                    finalize_tracked_workstream(tracked, runtime.rollouts_dir(), &cancelled, None)
+                        .await;
                 return Ok(VirtualToolOutcome::EndTurn);
             }
 
@@ -444,12 +492,19 @@ where
             let mut failed_child = ChildRuntimeResult::cancelled_before_launch();
             failed_child.status = super::super::delegated_child_run::ChildRuntimeStatus::Failed;
             failed_child.error_message = Some(summary.clone());
-            let _ = finalize_action_record(
+            let output_reference = finalize_action_record(
                 &runtime.agent_files,
                 slot.action_id.as_deref(),
                 &slot.kind,
                 &slot.label,
                 &failed_child,
+            )
+            .await;
+            let updated_workstream = finalize_tracked_workstream(
+                tracked,
+                runtime.rollouts_dir(),
+                &failed_child,
+                output_reference.as_ref(),
             )
             .await;
 
@@ -463,6 +518,7 @@ where
                 &slot.kind,
                 result,
                 None,
+                updated_workstream.as_ref(),
                 true,
                 Some(error_kind),
                 emit,
@@ -492,6 +548,7 @@ where
                     &slot.tool_call,
                     &slot.kind,
                     delegated_result,
+                    None,
                     None,
                     true,
                     Some(&prelaunch.error_kind),
@@ -618,7 +675,7 @@ pub(in crate::runtime) async fn finalize_action_record(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "Batch slot completion threads borrowed runtime, call metadata, child reference, and emitter explicitly"
+    reason = "Batch slot completion threads borrowed runtime, call metadata, child reference, workstream record, and emitter explicitly"
 )]
 async fn record_slot_completion<E, F>(
     runtime: &mut DelegatedSkillRuntime<'_>,
@@ -626,6 +683,7 @@ async fn record_slot_completion<E, F>(
     kind: &PreparedChildKind,
     result: DelegatedSkillResult,
     child_run_ref: Option<DelegatedChildRunReference>,
+    workstream_record: Option<&WorkstreamRecord>,
     prelaunch_rejected: bool,
     status_override: Option<&str>,
     emit: &mut E,
@@ -678,6 +736,7 @@ where
         PreparedChildKind::AdHocSubagent {
             request,
             persisted_arguments,
+            ..
         } => {
             let synthetic_req = DelegatedSkillInvocationRequest {
                 skill_id: request.role.clone(),
@@ -729,6 +788,9 @@ where
             }
             if let Some(error_kind) = tape_record.result.error_kind {
                 tape_payload["error_kind"] = json!(error_kind);
+            }
+            if let Some(ws) = workstream_record {
+                attach_workstream_fields(&mut tape_payload, ws);
             }
             let rollout_payload = if let Some(child_run_ref) = child_run_ref {
                 let mut payload = tape_payload.clone();
@@ -790,5 +852,54 @@ fn subagent_arguments_json(request: &SubagentSpawnRequest) -> Value {
     if let Some(timeout_secs) = request.timeout_secs {
         arguments["timeout_secs"] = json!(timeout_secs);
     }
+    if let Some(stream_name) = request.stream_name.as_deref() {
+        arguments["stream_name"] = json!(stream_name);
+    }
+    if let Some(persistence) = request.persistence {
+        arguments["persistence"] = json!(match persistence {
+            WorkstreamPersistence::Persistent => "persistent",
+            WorkstreamPersistence::OneOff => "one_off",
+        });
+    }
+    if let Some(scope) = request.scope.as_deref() {
+        arguments["scope"] = json!(scope);
+    }
     arguments
+}
+
+fn tracked_workstream(kind: &PreparedChildKind) -> Option<&TrackedWorkstream> {
+    match kind {
+        PreparedChildKind::AdHocSubagent { workstream, .. } => workstream.as_ref(),
+        PreparedChildKind::DelegatedSkill { .. } => None,
+    }
+}
+
+pub(in crate::runtime) async fn finalize_uncommitted_slot(
+    slot: &ExecutedChildSlot,
+    rollouts_dir: Option<&std::path::Path>,
+    fallback_result: &ChildRuntimeResult,
+) {
+    let tracked = tracked_workstream(&slot.kind);
+    let result = slot.outcome.as_ref().unwrap_or(fallback_result);
+    let _ = finalize_tracked_workstream(tracked, rollouts_dir, result, None).await;
+}
+
+fn attach_workstream_fields(payload: &mut Value, ws: &WorkstreamRecord) {
+    payload["stream_name"] = json!(ws.name);
+    payload["persistence"] = json!(match ws.persistence {
+        WorkstreamPersistence::Persistent => "persistent",
+        WorkstreamPersistence::OneOff => "one_off",
+    });
+    payload["workstream_state"] = json!(match ws.state {
+        WorkstreamState::Running => "running",
+        WorkstreamState::Idle => "idle",
+        WorkstreamState::Archived => "archived",
+        WorkstreamState::PausedError => "paused_error",
+    });
+    if let Some(ckpt) = ws.last_checkpoint_ref.as_deref() {
+        payload["last_checkpoint_ref"] = json!(ckpt);
+    }
+    if let Some(rollout) = ws.rollout_ref.as_deref() {
+        payload["rollout_ref"] = json!(rollout);
+    }
 }

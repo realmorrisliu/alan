@@ -284,6 +284,7 @@ pub fn build_release_prep_manifest(args: &InitReleasePrepArgs) -> Result<Workflo
         schedule: args.schedule.trim().to_string(),
         prompt,
         model_profile: normalize_model_profile(args.model_profile.clone()),
+        project_key: None,
         mounts: args.mounts.clone(),
         packages,
         fileservers,

@@ -76,6 +76,7 @@ pub(crate) struct PromptAssemblyCache {
     fixed_definition_persona_section: Option<String>,
     memory_store_dir: Option<PathBuf>,
     project_knowledge_section: Option<String>,
+    project_ledger_section: Option<String>,
     system_prompt_mode: crate::SystemPromptMode,
     host_capabilities: SkillHostCapabilities,
     pub(crate) skill_publication: alan_agent_protocol::UiSkillSnapshot,
@@ -95,6 +96,7 @@ impl PromptAssemblyCache {
             fixed_definition_persona_section: None,
             memory_store_dir: None,
             project_knowledge_section: None,
+            project_ledger_section: None,
             system_prompt_mode: crate::SystemPromptMode::Append,
             host_capabilities: SkillHostCapabilities::default(),
             skill_publication: Default::default(),
@@ -132,6 +134,7 @@ impl PromptAssemblyCache {
             fixed_definition_persona_section: None,
             memory_store_dir: None,
             project_knowledge_section: None,
+            project_ledger_section: None,
             system_prompt_mode: crate::SystemPromptMode::Append,
             host_capabilities,
             skill_publication: Default::default(),
@@ -155,6 +158,10 @@ impl PromptAssemblyCache {
 
     pub(crate) fn set_project_knowledge_section(&mut self, section: Option<String>) {
         self.project_knowledge_section = section;
+    }
+
+    pub(crate) fn set_project_ledger_section(&mut self, section: Option<String>) {
+        self.project_ledger_section = section;
     }
 
     pub(crate) fn set_system_prompt_mode(&mut self, mode: crate::SystemPromptMode) {
@@ -207,13 +214,14 @@ impl PromptAssemblyCache {
         let (domain_prompt, active_skills, skills_cache_hit) =
             self.domain_prompt_with_cache(user_input);
         let (context_sections, persona_cache_hit) = self.process_context_sections_with_cache();
-        let system_prompt = prompts::build_agent_system_prompt_with_mode(
+        let mut system_prompt = prompts::build_agent_system_prompt_with_mode(
             &self.system_prompt_mode,
             &domain_prompt,
             context_sections.definition_persona_section.as_deref(),
             context_sections.memory_store_section.as_deref(),
             self.project_knowledge_section.as_deref(),
         );
+        append_optional_section(&mut system_prompt, self.project_ledger_section.as_deref());
 
         self.metrics
             .record_build(skills_cache_hit, persona_cache_hit);
@@ -247,13 +255,14 @@ impl PromptAssemblyCache {
         let (domain_prompt, active_skills, skills_cache_hit) =
             self.domain_prompt_with_active_skills_cache(active_skills, user_input);
         let (context_sections, persona_cache_hit) = self.process_context_sections_with_cache();
-        let system_prompt = prompts::build_agent_system_prompt_with_mode(
+        let mut system_prompt = prompts::build_agent_system_prompt_with_mode(
             &self.system_prompt_mode,
             &domain_prompt,
             context_sections.definition_persona_section.as_deref(),
             context_sections.memory_store_section.as_deref(),
             self.project_knowledge_section.as_deref(),
         );
+        append_optional_section(&mut system_prompt, self.project_ledger_section.as_deref());
 
         self.metrics
             .record_build(skills_cache_hit, persona_cache_hit);
@@ -461,6 +470,16 @@ impl PromptAssemblyCache {
             .filter(|section| !section.is_empty());
         (rendered, cache_hit)
     }
+}
+
+fn append_optional_section(prompt: &mut String, section: Option<&str>) {
+    let Some(trimmed) = section.map(str::trim).filter(|s| !s.is_empty()) else {
+        return;
+    };
+    if !prompt.is_empty() {
+        prompt.push_str("\n\n");
+    }
+    prompt.push_str(trimmed);
 }
 
 #[derive(Debug, Clone, Default)]
