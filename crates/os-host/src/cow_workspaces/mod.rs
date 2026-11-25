@@ -7,6 +7,7 @@
 //! sync-back, unified `.patch` export, Git branch export, and `/mnt` Host Mount
 //! projection helpers without leaking raw Host paths above `alan-os-host` (`ADR-0050`).
 
+pub mod adapters;
 mod clone;
 mod gc;
 mod git_export;
@@ -44,6 +45,7 @@ use manifest::{TreeManifest, compute_diff_summary};
 use patch::generate_patch;
 use sync::perform_sync_back;
 
+pub use adapters::{CowArenaWorkspaceAdapter, CowBranchWorkspaceAdapter, CowHostRuntime};
 pub use types::{
     CloneFallbackPolicy, ConflictReason, CowWorkspaceConfig, CowWorkspaceError,
     CowWorkspaceSummary, CreateWorkspaceOptions, DEFAULT_COW_EXCLUDES,
@@ -197,6 +199,28 @@ impl CowWorkspaceManager {
             .workspaces
             .get(workspace_ref)
             .map(WorkspaceRecord::summary)
+    }
+
+    pub(crate) fn workspace_host_root(&self, workspace_ref: &WorkspaceRef) -> Option<PathBuf> {
+        self.state
+            .lock()
+            .unwrap()
+            .workspaces
+            .get(workspace_ref)
+            .map(|record| record.host_root.clone())
+    }
+
+    pub(crate) fn existing_flushed_patch_name(&self, workspace_ref: &str) -> Option<String> {
+        let system_store = {
+            let guard = self.state.lock().unwrap();
+            guard.config.system_store.clone()
+        };
+        let evidence_dir = system_store.cow_workspace_evidence().ok()?;
+        let patch_name = format!("{workspace_ref}.patch");
+        evidence_dir
+            .join(&patch_name)
+            .is_file()
+            .then_some(patch_name)
     }
 
     /// Fork an isolated full-tree CoW workspace from `host_root`.

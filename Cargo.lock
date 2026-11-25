@@ -278,6 +278,7 @@ dependencies = [
  "alan-agent-protocol",
  "alan-agentfs",
  "alan-ap",
+ "alan-branchfs",
  "alan-hostfs",
  "alan-kernel",
  "alan-llm",

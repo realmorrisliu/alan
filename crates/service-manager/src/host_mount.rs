@@ -782,6 +782,31 @@ impl HostMountService {
             .map(|grant| grant.public.clone())
     }
 
+    /// Return the opaque Host Mount export handle and logical grant metadata for an active grant.
+    pub fn active_grant_export(
+        &self,
+        id: &str,
+    ) -> Option<(HostMountGrantRecord, Arc<dyn HostMountExport>)> {
+        let state = self.state.lock().unwrap();
+        let grant = state.grants.get(id)?;
+        if !grant.public.active {
+            return None;
+        }
+        Some((grant.public.clone(), grant.export.clone()))
+    }
+
+    /// Return `true` when `pid` currently holds an active projection for `grant_id`.
+    pub fn process_holds_grant(&self, pid: Pid, grant_id: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state.grants.get(grant_id).is_some_and(|grant| {
+            grant.public.active
+                && grant
+                    .projections
+                    .iter()
+                    .any(|projection| projection.pid == pid)
+        })
+    }
+
     fn request_events(&self, pid: Option<u64>) -> file_server::HostMountEventStream {
         self.request_events.stream(pid)
     }

@@ -341,6 +341,13 @@ pub(crate) fn native_export(
     }))
 }
 
+pub(crate) fn native_export_host_path(export: &dyn HostMountExport) -> Option<PathBuf> {
+    export
+        .as_any()
+        .downcast_ref::<NativeHostMountExport>()
+        .map(|native| native.host_path.clone())
+}
+
 fn normalize_tool_namespace_path(path: PathBuf) -> Result<PathBuf> {
     anyhow::ensure!(path.is_absolute(), "Tool namespace path must be absolute");
     let mut normalized = PathBuf::from("/");

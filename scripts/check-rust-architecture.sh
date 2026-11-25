@@ -122,9 +122,10 @@ if "${git_command[@]}" cat-file -e "$base_ref:$BASELINE_REL" 2>/dev/null; then
                 dependency = dependencies[i]
                 # The root CLI composes the terminal renderer, and the OS Host
                 # composes existing Core Tools for the Root Agent. OS Host reads
-                # UiInputStatus from the protocol alphabet for the embed stream.
+                # UiInputStatus from the protocol alphabet for the embed stream,
+                # and binds CowWorkspaceManager to BranchWorkspacePort (/mnt/branch).
                 # Keep every other new Alan-crate edge forbidden by this ratchet.
-                if (dependency != "" && !($1 == "alan" && dependency == "alan-terminal-ui") && !($1 == "alan-os-host" && dependency == "alan-tools") && !($1 == "alan-os-host" && dependency == "alan-agent-protocol") && !(($1 SUBSEP dependency) in previous)) {
+                if (dependency != "" && !($1 == "alan" && dependency == "alan-terminal-ui") && !($1 == "alan-os-host" && dependency == "alan-tools") && !($1 == "alan-os-host" && dependency == "alan-agent-protocol") && !($1 == "alan-os-host" && dependency == "alan-branchfs") && !(($1 SUBSEP dependency) in previous)) {
                     printf "error: Rust dependency allowance expanded: %s -> %s\n", $1, dependency > "/dev/stderr"
                     failed = 1
                 }
