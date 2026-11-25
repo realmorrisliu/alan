@@ -21,4 +21,4 @@
 
 - [x] 4.1 Verify `just test`, `just quality`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `bash scripts/check-openspec-current-surfaces.sh`, and `openspec validate add-cow-workspaces-and-executable-arena --strict`.
 - [x] 4.2 Complete security and architecture review against `ADR-0050`, `ADR-0060`, `ADR-0061`, and `ADR-0062`.
-- [ ] 4.3 After implementation PRs merge on `main` and CI passes, sync the delta specs into `openspec/specs/` and archive this change under `openspec/changes/archive/YYYY-MM-DD-add-cow-workspaces-and-executable-arena/`.
+- [x] 4.3 After implementation PRs merge on `main` and CI passes, sync the delta specs into `openspec/specs/` and archive this change under `openspec/changes/archive/YYYY-MM-DD-add-cow-workspaces-and-executable-arena/`.

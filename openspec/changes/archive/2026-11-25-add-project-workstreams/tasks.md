@@ -22,4 +22,4 @@
 
 - [x] 4.1 Run workspace tests (`just test`), `just quality`, real Unix PTY E2E tests (`pty_e2e`), and `just openspec-check` (`openspec validate --all --strict`).
 - [x] 4.2 Complete independent code/architecture review against `ADR-0062` and `ADR-0061` and resolve review findings.
-- [ ] 4.3 After implementation PRs merge on `main` and CI passes, sync the five delta specs under `openspec/changes/add-project-workstreams/specs/` into `openspec/specs/` and archive the change under `openspec/changes/archive/YYYY-MM-DD-add-project-workstreams/`.
+- [x] 4.3 After implementation PRs merge on `main` and CI passes, sync the five delta specs under `openspec/changes/add-project-workstreams/specs/` into `openspec/specs/` and archive the change under `openspec/changes/archive/YYYY-MM-DD-add-project-workstreams/`.
