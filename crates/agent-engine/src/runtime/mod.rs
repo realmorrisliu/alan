@@ -13,6 +13,7 @@ mod delegated_skill_evidence;
 mod delegated_skill_tool;
 mod delegation_capabilities;
 mod engine;
+pub mod executable_arena;
 mod guardian;
 mod interaction_tools;
 mod launch_config;
@@ -70,6 +71,16 @@ pub use controller::{
     AgentMachineDurabilityState, RuntimeController, RuntimeHandle, RuntimeStartupMetadata,
 };
 pub use engine::spawn_with_namespace_environment;
+pub use executable_arena::{
+    ArenaBakeoffResult, ArenaCandidateOutcome, ArenaContenderRequest, ArenaContenderWorkspace,
+    ArenaExitFlushRegistry, ArenaExitFlushReport, ArenaMode, ArenaScoreEntry, ArenaSpawnFn,
+    ArenaSubagentOutput, ArenaVerifierRequest, ArenaVerifierScorecard, ArenaWinnerFlushOutcome,
+    ArenaWinnerFlushRequest, ArenaWorkspaceBackingKind, ArenaWorkspaceCreateRequest,
+    ArenaWorkspaceInspection, ArenaWorkspacePort, BranchFsApClient, BranchRecordView,
+    DEFAULT_ARENA_CONTENDER_MOUNT_TARGET, DEFAULT_MAX_EXECUTABLE_ARENA_CONTENDERS,
+    ExecutableArenaCoordinator, ExecutableArenaError, ExecutableArenaRequest,
+    ensure_active_executable_arena_sandbox, ensure_executable_arena_sandbox,
+};
 pub use launch_config::{AgentConfig, AgentProcessConfig, effective_core_config_for_runtime};
 pub use memory_domains::{
     DomainRecallScope, MemoryDomain, list_existing_memory_domains, resolve_domain_store_dir,
