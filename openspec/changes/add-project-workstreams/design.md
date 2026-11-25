@@ -110,7 +110,7 @@ System Store/services/projects/<opaque_project_key>/
 4. **Tiered Write Isolation**:
    - `read_only`: unlimited concurrency inside the foreground instance.
    - `shared_queue`: default for small/everyday edits targeting the same Host Mount; Root maintains an in-instance FIFO queue per grant so only one writer edits the primary working tree at a time.
-   - `worktree`: when a second long-running write task is requested while a `shared_queue` writer is active (or when requested explicitly), Alan creates an isolated `git worktree`, binds the child Process to a narrowed Host Mount for that worktree path only, and returns a diff/merge summary to Root on completion.
+   - `worktree`: when a second long-running write task is requested while a `shared_queue` writer is active (or when requested explicitly), Alan allocates a native OS CoW workspace (`openspec/changes/add-cow-workspaces-and-executable-arena/`, with `git worktree` fallback when CoW cloning is unavailable), binds the child Process to a narrowed Host Mount for that workspace path only, and returns a diff/sync-back summary to Root on completion.
 
 5. **Single-Writer `memfs` Governance**:
    - Child workstreams receive read-only `memfs` descriptors (`recall/<query>`).
@@ -145,8 +145,8 @@ While M8 targets the CLI and standard POSIX/VT terminal TUI exclusively (no back
   - In-instance async child workstream execution + clean shutdown checkpoint flush.
   - Wire `alan-routefs` between child streams and Root for `reroute_request` / `cross_stream_dependency` with `max_handoff_hops = 2` and `/mnt/route/log` auditability.
   - TUI inline routing receipts, status-bar badge, `/streams`, and `/focus <name>` / `/root`.
-- **Slice 3 (M8.3 — Tiered Worktrees, `memfs` Delta Commits, Stateful Cron Streams)**:
-  - Per-grant single-writer queue + on-demand `git worktree` narrowed Host Mount isolation + merge handoff.
+- **Slice 3 (M8.3 — Tiered Worktrees/CoW, `memfs` Delta Commits, Stateful Cron Streams)**:
+  - Per-grant single-writer queue + on-demand native OS CoW workspace (with `git worktree` fallback) narrowed Host Mount isolation + 3-way conflict-checked sync-back / merge handoff (coordinated with `openspec/changes/add-cow-workspaces-and-executable-arena/`).
   - Child read-only `memfs` + structured `memory_proposals` atomic Root commit.
   - Conversational `WorkflowManifest` drafting + explicit confirmation + Stateful Cron Streams with per-stream lease locks, compaction, budget cap, and failure auto-pause.
 

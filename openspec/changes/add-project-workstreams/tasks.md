@@ -14,7 +14,7 @@
 
 ## 3. Slice 3 — Tiered Write Isolation, `memfs` Delta Governance, and Stateful Cron Streams (M8.3)
 
-- [ ] 3.1 Implement tiered write isolation: concurrent `read_only` streams, per-grant FIFO `shared_queue` serialization, and on-demand `git worktree` allocation with narrowed Host Mount grants and explicit merge handoff.
+- [ ] 3.1 Implement tiered write isolation: concurrent `read_only` streams, per-grant FIFO `shared_queue` serialization, and on-demand native OS CoW workspace (`add-cow-workspaces-and-executable-arena`, falling back to `git worktree`) allocation with narrowed Host Mount grants and explicit conflict-checked sync-back/merge handoff.
 - [ ] 3.2 Enforce read-only child `memfs` descriptors and atomic Root deduplication/commit of structured `memory_proposals` with rollout provenance, secret scrubbing, and `/summary` revision rollback compatibility.
 - [ ] 3.3 Add conversational `WorkflowManifest` drafting with explicit user confirmation before `launchd`/`crontab` installation, plus guarded Stateful Cron Streams with per-stream lease lock (`streams/<name>.lock`) contention tests, automatic compaction, per-run `task_budget` cap, live grant revalidation, and `max_consecutive_failures` auto-pause alerts to `inbox/`.
 
