@@ -230,6 +230,8 @@ pub(super) async fn run_bare_in_foreground_instance(
                     )?;
                     config.initial_attachments = initial_attachments;
                     config.initial_project_mount = initial_project_mount;
+                    config.ephemeral = ephemeral;
+                    config.no_resume_update = no_resume_update;
                     config.initial_workstream_overview = workstreams::load_initial_workstream_overview(
                         &store,
                         candidate_cwd.as_deref(),

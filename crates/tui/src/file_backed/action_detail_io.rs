@@ -68,6 +68,10 @@ pub(super) fn start_pending_at(
             super::tape_view::start(shell, app, tx, owner_path);
             return;
         }
+        super::app::action_modal::ModalMode::Status => {
+            super::status_panel::start(shell, app, tx);
+            return;
+        }
         super::app::action_modal::ModalMode::Man => {
             return;
         }

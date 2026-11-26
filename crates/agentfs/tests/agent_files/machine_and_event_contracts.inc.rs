@@ -29,8 +29,8 @@ async fn machine_ui_subtree_exposes_default_snapshots() {
     assert_eq!(
         entries,
         vec![
-            "activity", "events", "models", "notice", "plan", "queue", "skills", "thinking",
-            "usage"
+            "activity", "budget", "events", "models", "notice", "plan", "queue", "skills",
+            "thinking", "usage"
         ]
     );
 
@@ -53,6 +53,28 @@ async fn machine_ui_subtree_exposes_default_snapshots() {
         read_text(&fs, &["machine", "ui", "usage"], Fid(6)).await,
         r#"{"version":1}"#
     );
+    assert!(
+        read_text(&fs, &["machine", "ui", "budget"], Fid(7))
+            .await
+            .contains("\"version\":1")
+    );
+}
+
+#[tokio::test]
+async fn machine_ui_budget_commits_on_clunk_and_announces_invalidation() {
+    let fs = AgentFs::new();
+    let budget = br#"{"version":1,"elapsed_secs":60,"max_secs":1800,"tool_calls":10,"max_tool_calls":256,"model_calls":4,"max_model_calls":64}"#;
+    write_doc(&fs, &["machine", "ui", "budget"], Fid(1), budget)
+        .await
+        .unwrap();
+    assert_eq!(
+        read_text(&fs, &["machine", "ui", "budget"], Fid(2))
+            .await
+            .as_bytes(),
+        budget
+    );
+    let events = read_text(&fs, &["events"], Fid(3)).await;
+    assert!(events.lines().any(|line| line == "ui:budget"), "{events}");
 }
 
 #[tokio::test]

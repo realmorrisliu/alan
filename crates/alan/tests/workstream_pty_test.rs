@@ -448,7 +448,7 @@ fn alan_os_host_real_routefs_pty_renders_routing_receipt_status_counts_and_resiz
             "host startup and real routefs receipt",
             Duration::from_secs(12),
             |s| {
-                s.contains("streams: 1 active · 1 idle · 1 inbox")
+                s.contains("1a·1i·1in")
                     && s.contains("rerouted from [alpha]")
                     && s.contains("[beta]")
             },
@@ -462,7 +462,7 @@ fn alan_os_host_real_routefs_pty_renders_routing_receipt_status_counts_and_resiz
 
         write_master(&master_write, b"/streams clear-inbox\r")?;
         screen.wait_for("clear-inbox count update", Duration::from_secs(4), |s| {
-            s.contains("streams: 1 active · 1 idle · 0 inbox")
+            s.contains("1a·1i·0in")
         })?;
 
         // Resize down to narrow 40-col pane and verify coherent rendering.

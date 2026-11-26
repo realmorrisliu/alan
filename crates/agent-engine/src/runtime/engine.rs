@@ -499,6 +499,7 @@ fn spawn_with_prepared_runtime_environment(
             }
         };
 
+        super::task_budget::publish_state(&state).await;
         if let Err(error) = super::task_budget::publish_wait(&mut state).await {
             let _ = ready_tx.send(Err(format!("restore task budget wait: {error:#}")));
             return;
@@ -761,6 +762,7 @@ fn spawn_with_prepared_runtime_environment(
                     let broker_for_submission = queues.active_turn_broker.clone();
                     let namespace_control = state.agent_files();
                     let namespace_heartbeat = state.agent_files();
+                    let mut budget_observer = super::task_budget::BudgetObserver::new(&state);
                     let submission_fut = Box::pin(advance_accepted_submission(
                         &mut state,
                         submission,
@@ -776,6 +778,7 @@ fn spawn_with_prepared_runtime_environment(
                             queues.publish_directory_actions(&namespace_control).await;
                             queues.observe_models().await;
                             super::queue_publication::observe(&queues.outer_queue).await;
+                            budget_observer.observe().await;
                             tokio::select! {
                                 _ = monitor_stop.cancelled() => break,
                                 incoming = sub_rx.recv(), if !submissions_closed => {

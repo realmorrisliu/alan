@@ -593,6 +593,12 @@ where
             )
             .await;
         }
+        crate::runtime::task_budget::publish(
+            &agent_files,
+            state.machine.task_budget.as_ref(),
+            &state.core_config.task_budget,
+        )
+        .await;
 
         for warning in &response.warnings {
             crate::runtime::ui_surfaces::warning(&state.agent_files(), warning.clone())

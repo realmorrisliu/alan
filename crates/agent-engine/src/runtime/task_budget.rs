@@ -1,12 +1,14 @@
 //! Task budget setup, visible pause and explicit allowance extension.
 
-use alan_agent_protocol::{Event, YieldKind};
+use alan_agent_protocol::{Event, UiBudgetSnapshot, YieldKind};
 use anyhow::{Context, Result};
 
-use crate::agent_machine::task_budget::{Exhausted, Extension, Phase, TaskBudget};
+use crate::agent_machine::task_budget::{
+    Exhausted, Extension, Phase, TaskBudget, TaskBudgetBinding,
+};
 use crate::approval::{PendingConfirmation, TASK_BUDGET_CHECKPOINT_TYPE};
 
-use super::transition::RuntimeLoopState;
+use super::transition::{NamespaceAgentFiles, RuntimeLoopState};
 use crate::agent_machine::PendingToolReplayBatch;
 use crate::agent_machine::task_budget::waiting::{WAIT_EVENT, Wait};
 use crate::rollout::{EventRecord, RolloutItem};
@@ -153,6 +155,12 @@ pub(crate) async fn begin(state: &mut RuntimeLoopState) -> Result<()> {
     if let Some(budget) = &mut state.machine.task_budget {
         state.environment.task_budget_binding.bind(budget).await?;
     }
+    publish(
+        &state.agent_files(),
+        state.machine.task_budget.as_ref(),
+        &state.core_config.task_budget,
+    )
+    .await;
     Ok(())
 }
 
@@ -164,7 +172,112 @@ pub(crate) async fn settle_foreground(state: &RuntimeLoopState) -> Result<()> {
             budget.finish_foreground().await?;
         }
     }
+    publish(
+        &state.agent_files(),
+        state.machine.task_budget.as_ref(),
+        &state.core_config.task_budget,
+    )
+    .await;
     Ok(())
+}
+
+pub(crate) fn to_ui_snapshot(
+    snapshot: &crate::agent_machine::task_budget::Snapshot,
+) -> UiBudgetSnapshot {
+    UiBudgetSnapshot {
+        version: alan_agent_protocol::UI_SURFACE_VERSION,
+        elapsed_secs: snapshot.elapsed_millis / 1000,
+        max_secs: snapshot.limits.execution_seconds.get(),
+        tool_calls: snapshot.tool_calls,
+        max_tool_calls: snapshot.limits.tool_calls.get(),
+        model_calls: snapshot.model_calls,
+        max_model_calls: snapshot.limits.model_calls.get(),
+        auto_extensions_used: None,
+        max_auto_extensions: None,
+    }
+}
+
+pub(crate) fn default_ui_snapshot(limits: &crate::TaskBudgetLimits) -> UiBudgetSnapshot {
+    UiBudgetSnapshot {
+        version: alan_agent_protocol::UI_SURFACE_VERSION,
+        elapsed_secs: 0,
+        max_secs: limits.execution_seconds.get(),
+        tool_calls: 0,
+        max_tool_calls: limits.tool_calls.get(),
+        model_calls: 0,
+        max_model_calls: limits.model_calls.get(),
+        auto_extensions_used: None,
+        max_auto_extensions: None,
+    }
+}
+
+/// Advisory publication of the live task budget snapshot to `machine/ui/budget`.
+pub(crate) async fn publish(
+    files: &NamespaceAgentFiles,
+    budget: Option<&TaskBudget>,
+    limits: &crate::TaskBudgetLimits,
+) {
+    let snapshot = match budget {
+        Some(budget) => to_ui_snapshot(&budget.snapshot().await),
+        None => default_ui_snapshot(limits),
+    };
+    if let Err(error) = files.write_ui_budget_snapshot(&snapshot).await {
+        tracing::warn!(error = %error, "Failed to publish budget snapshot");
+    }
+}
+
+/// Advisory publication of the live task budget snapshot when an active budget exists.
+pub(crate) async fn publish_active(files: &NamespaceAgentFiles, budget: Option<&TaskBudget>) {
+    let Some(budget) = budget else {
+        return;
+    };
+    let snapshot = to_ui_snapshot(&budget.snapshot().await);
+    if let Err(error) = files.write_ui_budget_snapshot(&snapshot).await {
+        tracing::warn!(error = %error, "Failed to publish budget snapshot");
+    }
+}
+
+pub(crate) async fn publish_state(state: &RuntimeLoopState) {
+    publish(
+        &state.agent_files(),
+        state.machine.task_budget.as_ref(),
+        &state.core_config.task_budget,
+    )
+    .await;
+}
+
+/// Change-filtered live budget publisher for the submission observer loop.
+pub(crate) struct BudgetObserver {
+    files: NamespaceAgentFiles,
+    binding: TaskBudgetBinding,
+    limits: crate::TaskBudgetLimits,
+    last: Option<UiBudgetSnapshot>,
+}
+
+impl BudgetObserver {
+    pub(crate) fn new(state: &RuntimeLoopState) -> Self {
+        Self {
+            files: state.agent_files(),
+            binding: state.environment.task_budget_binding.clone(),
+            limits: state.core_config.task_budget.clone(),
+            last: None,
+        }
+    }
+
+    pub(crate) async fn observe(&mut self) {
+        let snapshot = match self.binding.current() {
+            Some(budget) => to_ui_snapshot(&budget.snapshot().await),
+            None => default_ui_snapshot(&self.limits),
+        };
+        if self.last.as_ref() == Some(&snapshot) {
+            return;
+        }
+        if let Err(error) = self.files.write_ui_budget_snapshot(&snapshot).await {
+            tracing::warn!(error = %error, "Failed to publish budget snapshot");
+        } else {
+            self.last = Some(snapshot);
+        }
+    }
 }
 
 pub(crate) async fn pause_tool_batch<E, F>(
@@ -441,6 +554,12 @@ pub(super) async fn register_wait(
         .machine
         .set_turn_activity(crate::agent_machine::TurnActivityState::Paused);
     super::ui_surfaces::paused(&state.agent_files(), Some(&state.machine)).await?;
+    publish(
+        &state.agent_files(),
+        state.machine.task_budget.as_ref(),
+        &state.core_config.task_budget,
+    )
+    .await;
     Ok(id)
 }
 
@@ -492,4 +611,121 @@ pub(crate) async fn resolve(
     }
     machine.task_budget_wait = None;
     Ok(())
+}
+
+#[cfg(test)]
+mod ui_budget_tests {
+    use super::*;
+    use std::num::NonZeroU64;
+    use std::sync::Arc;
+
+    use alan_agentfs::{AgentFs, AgentRootFs};
+    use alan_ap::InProcessTransport;
+    use alan_kernel::{Access, MountFs, Namespace, ProcFs};
+
+    #[test]
+    fn default_and_active_ui_snapshots_project_task_budget_fields() {
+        let limits = crate::TaskBudgetLimits {
+            execution_seconds: NonZeroU64::new(1800).unwrap(),
+            tool_calls: NonZeroU64::new(256).unwrap(),
+            model_calls: NonZeroU64::new(64).unwrap(),
+        };
+        let default_snap = default_ui_snapshot(&limits);
+        assert!(default_snap.is_valid());
+        assert!(default_snap.has_limits());
+        assert_eq!(default_snap.elapsed_secs, 0);
+        assert_eq!(default_snap.max_secs, 1800);
+        assert_eq!(default_snap.max_tool_calls, 256);
+        assert_eq!(default_snap.max_model_calls, 64);
+
+        let active = crate::agent_machine::task_budget::Snapshot {
+            version: 1,
+            task_id: "task-1".into(),
+            parent_tasks: Vec::new(),
+            descendants_active: false,
+            limits,
+            elapsed_millis: 1_080_500,
+            tool_calls: 84,
+            model_calls: 43,
+            phase: Phase::Running,
+            foreground_complete: false,
+            recovered_time_upper_bound: false,
+        };
+        let ui = to_ui_snapshot(&active);
+        assert_eq!(ui.elapsed_secs, 1080);
+        assert_eq!(ui.tool_calls, 84);
+        assert_eq!(ui.model_calls, 43);
+        assert_eq!(ui.max_secs, 1800);
+        assert_eq!(ui.max_tool_calls, 256);
+        assert_eq!(ui.max_model_calls, 64);
+    }
+
+    #[tokio::test]
+    async fn publish_writes_ui_budget_document_to_agentfs() {
+        let procfs = Arc::new(ProcFs::new());
+        let agent_root = Arc::new(AgentRootFs::new_with_process_events(
+            procfs.clone(),
+            procfs.clone(),
+        ));
+        let mount_fs = Arc::new(MountFs::new(Namespace::new()));
+        let live = mount_fs.live_namespace();
+        live.mount("/proc", InProcessTransport::new(procfs), Access::ReadWrite);
+        live.mount(
+            "/agent",
+            InProcessTransport::new(agent_root.clone()),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(mount_fs);
+        let shell = alan_shell::Shell::new(root.clone());
+        let pid = shell
+            .spawn(
+                r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation":0,"mounts":[]}}"#,
+            )
+            .await
+            .unwrap();
+        agent_root
+            .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+            .await;
+        let owner = format!("/agent/{pid}");
+        let env = super::super::transition::NamespaceRuntimeEnvironment::new(
+            root.clone(),
+            owner.clone(),
+            "/mnt/llm/default",
+        );
+        let files = env.agent_files();
+        let limits = crate::TaskBudgetLimits {
+            execution_seconds: NonZeroU64::new(900).unwrap(),
+            tool_calls: NonZeroU64::new(120).unwrap(),
+            model_calls: NonZeroU64::new(30).unwrap(),
+        };
+        let snapshot = crate::agent_machine::task_budget::Snapshot {
+            version: 1,
+            task_id: "task-publish".into(),
+            parent_tasks: Vec::new(),
+            descendants_active: false,
+            limits: limits.clone(),
+            tool_calls: 3,
+            model_calls: 1,
+            elapsed_millis: 45_000,
+            phase: Phase::Paused,
+            foreground_complete: false,
+            recovered_time_upper_bound: false,
+        };
+        let budget = TaskBudget::restore(snapshot, None).unwrap();
+
+        publish(&files, Some(&budget), &limits).await;
+
+        let raw = shell
+            .cat(&format!("{owner}/machine/ui/budget"))
+            .await
+            .unwrap();
+        let parsed: UiBudgetSnapshot = serde_json::from_slice(&raw).unwrap();
+        assert!(parsed.is_valid());
+        assert_eq!(parsed.elapsed_secs, 45);
+        assert_eq!(parsed.max_secs, 900);
+        assert_eq!(parsed.tool_calls, 3);
+        assert_eq!(parsed.max_tool_calls, 120);
+        assert_eq!(parsed.model_calls, 1);
+        assert_eq!(parsed.max_model_calls, 30);
+    }
 }

@@ -91,3 +91,18 @@ fn accessibility_native_lowcolor_filters_extended_styles_in_backend_output() {
     assert_eq!(buffer.cell((0, 0)).unwrap().fg, Color::Rgb(17, 29, 43));
     assert_eq!(buffer.cell((0, 0)).unwrap().bg, Color::Indexed(200));
 }
+
+#[test]
+fn mouse_capture_helper_emits_sgr_enable_and_disable_sequences() {
+    let mut enable_buf = Vec::new();
+    super::write_mouse_capture_mode(&mut enable_buf, true).unwrap();
+    let enable_str = String::from_utf8(enable_buf).unwrap();
+    assert!(enable_str.contains("\x1b[?1000h"), "{enable_str:?}");
+    assert!(enable_str.contains("\x1b[?1006h"), "{enable_str:?}");
+
+    let mut disable_buf = Vec::new();
+    super::write_mouse_capture_mode(&mut disable_buf, false).unwrap();
+    let disable_str = String::from_utf8(disable_buf).unwrap();
+    assert!(disable_str.contains("\x1b[?1000l"), "{disable_str:?}");
+    assert!(disable_str.contains("\x1b[?1006l"), "{disable_str:?}");
+}

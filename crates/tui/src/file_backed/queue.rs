@@ -559,6 +559,7 @@ pub(super) async fn watch_queue(
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::SkillsUnavailable { owner: owner.clone() }).await;
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::ModelUnavailable { owner: owner.clone() }).await;
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::UsageUnavailable { owner: owner.clone() }).await;
+                    let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::BudgetUnavailable { owner: owner.clone() }).await;
                     if !super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::QueueUnavailable { owner: owner.clone() }).await { break; }
                     break;
                 };
@@ -566,6 +567,7 @@ pub(super) async fn watch_queue(
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::SkillsUnavailable { owner: owner.clone() }).await;
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::ModelUnavailable { owner: owner.clone() }).await;
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::UsageUnavailable { owner: owner.clone() }).await;
+                    let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::BudgetUnavailable { owner: owner.clone() }).await;
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::QueueUnavailable { owner: owner.clone() }).await;
                     break;
                 }
@@ -581,6 +583,10 @@ pub(super) async fn watch_queue(
                         return Ok(());
                     }
                     if line == b"ui:usage\n" && !super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::UsageChanged { owner: owner.clone() }).await {
+                        let _ = tail.close().await;
+                        return Ok(());
+                    }
+                    if line == b"ui:budget\n" && !super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::BudgetChanged { owner: owner.clone() }).await {
                         let _ = tail.close().await;
                         return Ok(());
                     }

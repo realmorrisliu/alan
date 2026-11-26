@@ -822,7 +822,7 @@ fn pty_e2e_confirmation_selector_reject_note_and_queued_preview() -> Result<()> 
             Duration::from_secs(5),
             |s| {
                 s.contains("✓ Allowed for session · edit_file src/main.rs")
-                    && s.contains("Ctrl+O details (p: plans, t: tape)")
+                    && s.contains("^O details · ^T status")
             },
         )?;
         assert!(!after_diff.contains("[1] approve"), "{after_diff}");
@@ -834,8 +834,7 @@ fn pty_e2e_confirmation_selector_reject_note_and_queued_preview() -> Result<()> 
         // 3. Running turn footer + queued preview above composer + no `Input active` / `· input queued`.
         write_master(&master_write, b"start-running\r")?;
         screen.wait_for("running footer", Duration::from_secs(4), |s| {
-            s.contains("Working ·")
-                && s.contains("Enter queue next · Ctrl+S steer now · Esc interrupt")
+            s.contains("Working ·") && s.contains("Enter queue · ^S steer · Esc stop · ^T status")
         })?;
         write_master(&master_write, b"follow up build check\r")?;
         let queued_screen =
@@ -905,7 +904,7 @@ fn pty_e2e_dumb_terminal_confirmation_and_queue_preview() -> Result<()> {
 
         write_master(&master_write, b"start-running\r")?;
         screen.wait_for("dumb running", Duration::from_secs(4), |s| {
-            s.contains("Enter queue next")
+            s.contains("Enter queue")
         })?;
         write_master(&master_write, b"follow up build check\r")?;
         let dumb_queued = screen.wait_for("dumb queued preview", Duration::from_secs(5), |s| {

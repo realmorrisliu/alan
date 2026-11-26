@@ -298,6 +298,11 @@ where
                             is_approved_confirmation_choice(choice_str),
                         )
                         .await?;
+                        super::task_budget::publish_active(
+                            &runtime.agent_files,
+                            runtime.machine.task_budget.as_ref(),
+                        )
+                        .await;
                     }
                     if pending.checkpoint_type == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE
                     {

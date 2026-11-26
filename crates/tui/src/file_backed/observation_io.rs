@@ -8,12 +8,115 @@ enum Kind {
     Model,
     Skills,
     Usage,
+    Budget,
 }
 
 pub(super) enum Snapshot {
     Model(Option<alan_agent_protocol::UiModelSnapshot>),
     Skills(Option<alan_agent_protocol::UiSkillSnapshot>),
     Usage(Option<alan_agent_protocol::UiUsageSnapshot>),
+    Budget(Option<alan_agent_protocol::UiBudgetSnapshot>),
+}
+
+pub(super) struct Readers {
+    pub model: Request,
+    pub skills: Request,
+    pub usage: Request,
+    pub budget: Request,
+}
+
+impl Readers {
+    pub(super) fn start(
+        shell: alan_shell::Shell,
+        tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+        jobs: &mut tokio::task::JoinSet<()>,
+    ) -> Self {
+        Self {
+            model: start(shell.clone(), true, tx.clone(), jobs),
+            skills: start(shell.clone(), false, tx.clone(), jobs),
+            usage: start_usage(shell.clone(), tx.clone(), jobs),
+            budget: start_budget(shell, tx, jobs),
+        }
+    }
+
+    pub(super) fn refresh_all(&self, app: &FileBackedApp) {
+        if !app.model.owner.is_empty() {
+            request(&self.model, app.model.owner.clone());
+        }
+        if !app.skills.owner.is_empty() {
+            request(&self.skills, app.skills.owner.clone());
+        }
+        if !app.usage.owner.is_empty() {
+            request(&self.usage, app.usage.owner.clone());
+        }
+        if !app.budget.owner.is_empty() {
+            request(&self.budget, app.budget.owner.clone());
+        }
+    }
+
+    pub(super) fn handle_event(&self, app: &mut FileBackedApp, event: FileBackedEvent) {
+        match event {
+            FileBackedEvent::ModelChanged { owner } => {
+                if owner == app.model.owner {
+                    request(&self.model, owner);
+                }
+            }
+            FileBackedEvent::ModelUnavailable { owner } => {
+                if owner == app.model.owner {
+                    request(&self.model, String::new());
+                    app.model.apply(&owner, None);
+                    app.reconcile_model_chooser();
+                }
+            }
+            FileBackedEvent::SkillsChanged { owner } => {
+                if owner == app.skills.owner {
+                    request(&self.skills, owner);
+                }
+            }
+            FileBackedEvent::SkillsUnavailable { owner } => {
+                if owner == app.skills.owner {
+                    request(&self.skills, String::new());
+                    app.apply_skills(&owner, None);
+                }
+            }
+            FileBackedEvent::UsageChanged { owner } => {
+                if owner == app.usage.owner {
+                    request(&self.usage, owner);
+                }
+            }
+            FileBackedEvent::UsageUnavailable { owner } => {
+                if owner == app.usage.owner {
+                    request(&self.usage, String::new());
+                    app.usage.apply(&owner, None);
+                }
+            }
+            FileBackedEvent::BudgetChanged { owner } => {
+                if owner == app.budget.owner {
+                    request(&self.budget, owner);
+                }
+            }
+            FileBackedEvent::BudgetUnavailable { owner } => {
+                if owner == app.budget.owner {
+                    request(&self.budget, String::new());
+                    app.budget.apply(&owner, None);
+                }
+            }
+            FileBackedEvent::ObservationRead {
+                revision,
+                owner,
+                snapshot,
+            } => {
+                let req = match &snapshot {
+                    Snapshot::Model(_) => &self.model,
+                    Snapshot::Skills(_) => &self.skills,
+                    Snapshot::Usage(_) => &self.usage,
+                    Snapshot::Budget(_) => &self.budget,
+                };
+                apply(app, req, revision, &owner, snapshot);
+            }
+            _ => {}
+        }
+    }
 }
 
 pub(super) fn start(
@@ -38,6 +141,14 @@ pub(super) fn start_usage(
     start_kind(shell, Kind::Usage, tx, jobs)
 }
 
+pub(super) fn start_budget(
+    shell: alan_shell::Shell,
+    tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+    jobs: &mut tokio::task::JoinSet<()>,
+) -> Request {
+    start_kind(shell, Kind::Budget, tx, jobs)
+}
+
 fn start_kind(
     shell: alan_shell::Shell,
     kind: Kind,
@@ -55,6 +166,7 @@ fn start_kind(
                 Kind::Model => Snapshot::Model(model::read_model(&shell, &owner).await),
                 Kind::Skills => Snapshot::Skills(skills::read_skills(&shell, &owner).await),
                 Kind::Usage => Snapshot::Usage(usage::read_usage(&shell, &owner).await),
+                Kind::Budget => Snapshot::Budget(budget::read_budget(&shell, &owner).await),
             };
             if tx
                 .send(FileBackedEvent::ObservationRead {
@@ -99,6 +211,9 @@ pub(super) fn apply(
             app.apply_skills(owner, snapshot)
         }
         Snapshot::Usage(snapshot) if app.usage.owner == owner => app.usage.apply(owner, snapshot),
+        Snapshot::Budget(snapshot) if app.budget.owner == owner => {
+            app.budget.apply(owner, snapshot)
+        }
         _ => {}
     }
 }

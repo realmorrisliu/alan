@@ -9,7 +9,6 @@ use crate::completion::CompletionKind;
 use crate::theme::DotState;
 use crate::transcript_ui::wrapped_line_count;
 
-use super::app::action_modal::ModalMode;
 use super::{FileBackedApp, MAX_COMPLETION_ROWS, MAX_COMPOSER_LINES, SPINNER};
 
 #[cfg(test)]
@@ -20,108 +19,10 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
 pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
     let area = frame.area();
     let width = area.width as usize;
+    app.last_frame_origin.set((area.x, area.y));
+    app.last_menu_origin_y.set(None);
     if app.modal.active {
-        let header_line = match app.modal.mode {
-            ModalMode::Actions => {
-                let count = app.modal.actions.len();
-                let owner = app
-                    .modal
-                    .actions
-                    .get(app.modal.selected)
-                    .map(|entry| entry.owner.as_str())
-                    .unwrap_or(&app.modal.owner_path);
-                let idx = if count == 0 {
-                    0
-                } else {
-                    app.modal.selected + 1
-                };
-                Line::styled(
-                    format!("{idx}/{count} · Action · {owner}"),
-                    app.theme.accent_bold(),
-                )
-            }
-            ModalMode::Plans => {
-                let count = app.modal.plans.len();
-                let owner = app
-                    .modal
-                    .plans
-                    .get(app.modal.selected)
-                    .map(|entry| entry.owner.as_str())
-                    .unwrap_or(&app.modal.owner_path);
-                let idx = if count == 0 {
-                    0
-                } else {
-                    app.modal.selected + 1
-                };
-                Line::styled(
-                    format!("{idx}/{count} · Plan · {owner}"),
-                    app.theme.accent_bold(),
-                )
-            }
-            ModalMode::Tape => Line::styled(
-                format!("Turing Tape · {}", app.modal.owner_path),
-                app.theme.accent_bold(),
-            ),
-            ModalMode::Man => Line::styled(
-                format!("Manual · {}", app.modal.owner_path),
-                app.theme.accent_bold(),
-            ),
-        };
-        let switch = match (app.modal.mode, width >= 56, width >= 48) {
-            (ModalMode::Actions, true, _) => " · p Plans · t Tape",
-            (ModalMode::Actions, false, true) => " · p Plans",
-            (ModalMode::Plans, true, _) => " · p Actions · t Tape",
-            (ModalMode::Plans, false, true) => " · p Actions",
-            (ModalMode::Tape, _, true) => " · t Actions · p Plans",
-            (ModalMode::Man, true, _) => " · a Actions · p Plans · t Tape",
-            (ModalMode::Man, false, true) => " · a Actions",
-            _ => "",
-        };
-        let hint_text = if width >= 56 {
-            format!("↑↓/jk · ↔ select · d · Space/b page · Esc{switch}")
-        } else if width >= 48 {
-            format!("↑↓/↔ · d · Space/b page · Esc{switch}")
-        } else if width >= 32 {
-            "↑↓/↔ · d · Space/b page · Esc".into()
-        } else {
-            "↑↓ · ↔ · d · Esc".into()
-        };
-        let mut rows = vec![
-            header_line,
-            Line::styled(hint_text, app.theme.muted_style()),
-        ];
-        if app.modal.mode == ModalMode::Actions && !app.running_tools.is_empty() {
-            let active_list: Vec<String> = app
-                .running_tools
-                .iter()
-                .map(|tool| format!("{} · running", crate::history::clean_text(&tool.title)))
-                .collect();
-            rows.push(Line::styled(
-                format!("Active · {}", active_list.join(" | ")),
-                app.theme.accent_style(),
-            ));
-        }
-        let header_rows = rows.len();
-        let display_rows = if app.modal.mode == ModalMode::Actions {
-            filter_modal_rows(&app.modal.rows, app.modal.show_raw_json, app.theme)
-        } else {
-            app.modal.rows.clone()
-        };
-        let detail = crate::history::wrap_styled_lines(display_rows, width);
-        let start = app.modal.scroll.min(detail.len().saturating_sub(1));
-        if detail.is_empty() {
-            rows.push(Line::styled(
-                "Loading retained details…",
-                app.theme.muted_style(),
-            ));
-        }
-        rows.extend(
-            detail
-                .into_iter()
-                .skip(start)
-                .take(area.height.saturating_sub(header_rows as u16) as usize),
-        );
-        frame.render_widget(Paragraph::new(rows), area);
+        super::modal_view::draw_modal(frame, app);
         return;
     }
     if app.resume_picker.active {
@@ -163,15 +64,18 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
         )
     });
     let overlay_active = app.form.is_some() || app.confirmation.is_some();
+    let status_rows: u16 = if !overlay_active && area.height >= 4 {
+        2
+    } else if !overlay_active && area.height >= 3 {
+        1
+    } else {
+        0
+    };
     // Menu growth never changes the base input viewport or its scroll offset.
     let base_height = base_region_height(app, width)
-        .saturating_sub(usize::from(!overlay_active))
+        .saturating_sub(if overlay_active { 0 } else { 2 })
         .saturating_add(history_height)
-        .min(
-            area.height
-                .saturating_sub(u16::from(!overlay_active && area.height >= 3))
-                as usize,
-        ) as u16;
+        .min(area.height.saturating_sub(status_rows) as usize) as u16;
     let conf_scroll_y =
         app.confirmation_scroll_y(&live_lines, history_height, width, base_height as usize);
     let conf_end_y = app
@@ -222,24 +126,31 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
         area.height - base_height,
     );
     if menu_area.height > 0 {
-        let selected = app.completion.as_ref().map_or(0, |state| state.selected);
-        let window_start = selected.saturating_sub(MAX_COMPLETION_ROWS - 1);
-        let selected_offset = selected - window_start;
-        let selected_row = crate::history::wrap_styled_lines(
-            menu[..selected_offset.min(menu.len())].to_vec(),
-            width,
-        )
-        .len();
-        let scroll = if selected_row >= menu_area.height as usize {
-            selected_row
-        } else {
-            0
-        };
-        frame.render_widget(
-            Paragraph::new(crate::history::wrap_styled_lines(menu, width))
-                .scroll((scroll as u16, 0)),
-            menu_area,
-        );
+        if app.completion.is_some() {
+            app.last_menu_origin_y.set(Some(menu_area.y));
+            let selected = app.completion.as_ref().map_or(0, |state| state.selected);
+            let window_start = selected.saturating_sub(MAX_COMPLETION_ROWS - 1);
+            let selected_offset = selected - window_start;
+            let selected_row = crate::history::wrap_styled_lines(
+                menu[..selected_offset.min(menu.len())].to_vec(),
+                width,
+            )
+            .len();
+            let scroll = if selected_row >= menu_area.height as usize {
+                selected_row
+            } else {
+                0
+            };
+            frame.render_widget(
+                Paragraph::new(crate::history::wrap_styled_lines(menu, width))
+                    .scroll((scroll as u16, 0)),
+                menu_area,
+            );
+        } else if !menu.is_empty() {
+            let visible_status: Vec<Line<'static>> =
+                menu.into_iter().take(menu_area.height as usize).collect();
+            frame.render_widget(Paragraph::new(visible_status), menu_area);
+        }
     }
     if let Some((x, y)) = cursor_position
         && area.height > 0
@@ -259,60 +170,6 @@ fn history_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
 #[cfg(test)]
 #[path = "history_notice_tests.rs"]
 mod history_notice_tests;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CollapsedSection {
-    None,
-    RawBytes,
-    ResultMetadata,
-}
-
-fn filter_modal_rows(
-    rows: &[Line<'static>],
-    show_raw_json: bool,
-    theme: crate::theme::Theme,
-) -> Vec<Line<'static>> {
-    if show_raw_json {
-        return rows.to_vec();
-    }
-    let mut filtered = Vec::with_capacity(rows.len());
-    let mut collapsed = CollapsedSection::None;
-
-    for row in rows {
-        let text = row.to_string();
-        if text == "Result metadata" {
-            if collapsed != CollapsedSection::ResultMetadata {
-                filtered.push(Line::styled(
-                    "  [result metadata collapsed · press d to expand]",
-                    theme.muted_style(),
-                ));
-                collapsed = CollapsedSection::ResultMetadata;
-            }
-            continue;
-        }
-        if text == "Original raw bytes" {
-            if collapsed != CollapsedSection::RawBytes {
-                filtered.push(Line::styled(
-                    "  [raw JSON/bytes collapsed · press d to expand]",
-                    theme.muted_style(),
-                ));
-                collapsed = CollapsedSection::RawBytes;
-            }
-            continue;
-        }
-        if matches!(
-            text.as_str(),
-            "Name" | "Status" | "Original output" | "Recovered reference (retained original)"
-        ) {
-            collapsed = CollapsedSection::None;
-        }
-        if collapsed != CollapsedSection::None {
-            continue;
-        }
-        filtered.push(row.clone());
-    }
-    filtered
-}
 
 fn live_region_lines(app: &FileBackedApp, width: usize) -> (Vec<Line<'static>>, Option<usize>) {
     live_region_lines_at(app, width, super::unix_time_ms())
@@ -346,7 +203,6 @@ fn live_region_lines_in(
         rule_char.repeat(width),
         app.theme.rule_style(),
     ));
-    lines.push(app.context_line(width));
     if let Some(line) = attention_line_at_width(app, now_ms, width) {
         lines.push(line);
     }
@@ -493,9 +349,8 @@ fn live_region_lines_in(
                     app.theme.muted_style(),
                 ));
             }
-        }
-        if let Some(footer_line) = super::streams::footer_status_line(app, width) {
-            lines.push(footer_line);
+        } else {
+            lines.extend(super::status_bar::status_bar_lines(app, width));
         }
         (lines, Some(prompt_start))
     }
@@ -525,7 +380,7 @@ pub(super) fn live_region_height(app: &FileBackedApp, width: usize) -> u16 {
         wrapped_line_count(&lines[start + app.composer_lines().len()..], width)
     });
     base_region_height(app, width)
-        .saturating_add(menu_height.saturating_sub(usize::from(start.is_some())))
+        .saturating_add(menu_height.saturating_sub(if start.is_some() { 2 } else { 0 }))
         .min(u16::MAX as usize) as u16
 }
 
@@ -541,13 +396,13 @@ pub(super) fn base_region_height(app: &FileBackedApp, width: usize) -> usize {
         .1
         .saturating_add(1) as usize)
         .saturating_sub(before_prompt);
-    // One ordinary blank spacing row is stable from first readiness. Menus
-    // reuse it; retention and viewport sizing share this same budget.
+    // Two stable status bar rows live directly below the composer; transient completion
+    // menus borrow those rows without moving the composer origin upward.
     (before_prompt
         + rendered_composer_height
             .max(cursor_height)
             .min(MAX_COMPOSER_LINES)
-        + 1)
+        + 2)
     .max(1)
 }
 

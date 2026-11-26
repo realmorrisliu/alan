@@ -45,6 +45,7 @@ impl ModelProjection {
             }
         })
     }
+    #[cfg(test)]
     pub fn prompt_label(&self, prefer_active: bool) -> String {
         let Some(binding) = self.prompt_binding(prefer_active) else {
             return "model unknown".into();

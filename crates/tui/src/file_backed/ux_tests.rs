@@ -375,7 +375,7 @@ fn usage_context_occupancy_uses_context_tokens_and_reports_cache_hit_rate() {
         header.contains("ctx 10% (12.8k/128.0k)"),
         "ctx must reflect single-generation context_tokens, not cumulative input_tokens: {header}"
     );
-    assert!(header.contains("cache 75%"), "{header}");
+    assert!(header.contains("75% hit"), "{header}");
     assert!(header.contains("$0.0250"), "{header}");
     assert_eq!(app.usage.short_prompt_label().as_deref(), Some("ctx 10%"));
 
@@ -412,7 +412,7 @@ fn usage_context_occupancy_uses_context_tokens_and_reports_cache_hit_rate() {
     );
     let reset_label = app.usage.prompt_label().unwrap();
     assert!(
-        reset_label.contains("ctx 10% (12.8k/128.0k)") && reset_label.contains("cache 60%"),
+        reset_label.contains("ctx 10% (12.8k/128.0k)") && reset_label.contains("60% hit"),
         "{reset_label}"
     );
     assert!(!reset_label.contains(" tok"), "{reset_label}");
@@ -434,7 +434,7 @@ fn usage_context_occupancy_uses_context_tokens_and_reports_cache_hit_rate() {
     );
     let cold_label = app.usage.prompt_label().unwrap();
     assert!(
-        cold_label.contains("ctx 8% (10.0k/128.0k)") && !cold_label.contains("cache "),
+        cold_label.contains("ctx 8% (10.0k/128.0k)") && !cold_label.contains("% hit"),
         "{cold_label}"
     );
 
@@ -450,7 +450,7 @@ fn usage_context_occupancy_uses_context_tokens_and_reports_cache_hit_rate() {
         }),
     );
     assert!(
-        app.usage.prompt_label().unwrap().contains("cache 100%"),
+        app.usage.prompt_label().unwrap().contains("100% hit"),
         "{:?}",
         app.usage.prompt_label()
     );
@@ -468,7 +468,7 @@ fn usage_context_occupancy_uses_context_tokens_and_reports_cache_hit_rate() {
     );
     let zero_input_label = app.usage.prompt_label().unwrap();
     assert!(
-        zero_input_label.contains("ctx 5%") && !zero_input_label.contains("cache "),
+        zero_input_label.contains("ctx 5%") && !zero_input_label.contains("% hit"),
         "{zero_input_label}"
     );
     let zero_input_status = app.usage.status().unwrap();

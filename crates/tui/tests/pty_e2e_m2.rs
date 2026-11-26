@@ -767,8 +767,8 @@ fn pty_e2e_m2_ergonomics_multiline_editor_modals_status_and_yield() -> Result<()
         write_master(&master_write, b"\r")?;
         screen.wait_for("git branch mounted", Duration::from_secs(4), |s, _| {
             s.contains("m2-repo")
-                && s.contains("git:feat/m2")
-                && s.contains("read-write")
+                && s.contains("feat/m2")
+                && s.contains("rw·gov")
                 && !s.contains("seatbelt")
         })?;
 
@@ -881,8 +881,8 @@ fn pty_e2e_m2_ergonomics_multiline_editor_modals_status_and_yield() -> Result<()
             s.contains("Allowed for session")
                 && s.contains("Allow file mutation?")
                 && !s.contains("[1] approve")
-                && s.contains("Ctrl+O details")
-                && s.contains("p: plans")
+                && s.contains("^O details")
+                && s.contains("^T status")
         })?;
 
         // /new clears earlier tape messages and usage cleanly.

@@ -113,6 +113,13 @@ impl TaskBudgetBinding {
         self.parent.clone()
     }
 
+    pub(crate) fn current(&self) -> Option<TaskBudget> {
+        self.current
+            .lock()
+            .expect("task budget binding poisoned")
+            .clone()
+    }
+
     pub(crate) async fn bind(&self, budget: &mut TaskBudget) -> Result<()> {
         ensure!(
             !self.process_stop.is_cancelled(),

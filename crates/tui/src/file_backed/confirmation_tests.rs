@@ -426,14 +426,14 @@ fn queued_preview_single_primary_state_and_context_footer() {
     assert!(wide.contains("  ↳ Queued: queued input"), "{wide}");
     assert!(wide.contains("  +1 more queued"), "{wide}");
     assert!(
-        wide.contains("Enter queue next · Ctrl+S steer now · Esc interrupt"),
+        wide.contains("Enter queue · ^S steer · Esc stop · ^T status"),
         "{wide}"
     );
 
     // Narrow Running footer fallback fits cleanly on 1 row.
     let narrow = render_lines(&app, 42, 14).join("\n");
     assert!(
-        narrow.contains("Enter queue · Ctrl+S steer · Esc stop"),
+        narrow.contains("queued 3") && narrow.contains("^T status"),
         "{narrow}"
     );
 
@@ -445,7 +445,7 @@ fn queued_preview_single_primary_state_and_context_footer() {
         "{dumb}"
     );
 
-    // Idle with action details falls back to Ctrl+O details footer.
+    // Idle with action details falls back to ^O details · ^T status footer.
     app.theme = crate::theme::Theme::default();
     app.activity = UiActivitySnapshot::idle();
     app.queue.apply(
@@ -459,11 +459,8 @@ fn queued_preview_single_primary_state_and_context_footer() {
     app.projected_actions
         .insert(("/agent/1".into(), "a1".into()), (1, true));
     let idle = render_lines(&app, 100, 10).join("\n");
-    assert!(
-        idle.contains("Ctrl+O details (p: plans, t: tape)"),
-        "{idle}"
-    );
-    assert!(!idle.contains("Enter queue next"), "{idle}");
+    assert!(idle.contains("^O details · ^T status"), "{idle}");
+    assert!(!idle.contains("Enter queue"), "{idle}");
 }
 
 #[test]
@@ -499,7 +496,7 @@ fn confirmation_note_footer_and_idle_details_footer_respect_narrow_widths() {
         .rfind(|line| !line.is_empty())
         .map(String::as_str)
         .unwrap_or("");
-    assert!(last_line.contains("Ctrl+O"), "{narrow_idle:?}");
+    assert!(last_line.contains("^T status"), "{narrow_idle:?}");
     assert!(UnicodeWidthStr::width(last_line) <= 20, "{last_line:?}");
 }
 

@@ -1,25 +1,25 @@
 use anyhow::{Context, Result};
 use crossterm::cursor::{MoveTo, MoveToNextLine};
 use crossterm::event::{
-    DisableBracketedPaste, EnableBracketedPaste, KeyboardEnhancementFlags,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{execute, terminal as crossterm_terminal};
-use ratatui::backend::CrosstermBackend;
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 use std::io::{IsTerminal, Stdout, Write, stdout};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::hyperlink::HyperlinkBackend;
 use crate::transcript_ui::wrapped_line_count;
 
 #[cfg(test)]
 #[path = "terminal_accessibility_tests.rs"]
 mod accessibility_tests;
 
-pub type AlanTerminal = Terminal<CrosstermBackend<Stdout>>;
+pub type AlanTerminal = Terminal<HyperlinkBackend<Stdout>>;
 
 /// Output capability policy owned by the native terminal adapter.
 #[derive(Clone, Copy)]
@@ -246,6 +246,15 @@ pub fn terminal_capability_error() -> &'static str {
 static TERMINAL_ACTIVE: AtomicBool = AtomicBool::new(false);
 static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 static OSC_TITLE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static MOUSE_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+fn write_mouse_capture_mode<W: Write>(writer: &mut W, enabled: bool) -> std::io::Result<()> {
+    if enabled {
+        execute!(writer, EnableMouseCapture)
+    } else {
+        execute!(writer, DisableMouseCapture)
+    }
+}
 
 fn should_enable_kitty_keyboard(term: &str, is_tty: bool) -> bool {
     is_tty && term != "dumb"
@@ -340,10 +349,13 @@ pub(crate) fn ring_terminal_bell() {
     let _ = out.flush();
 }
 
-/// Restore raw mode, bracketed paste, Kitty keyboard enhancement, title, and cursor visibility.
+/// Restore raw mode, bracketed paste, Kitty keyboard enhancement, mouse capture, title, and cursor visibility.
 pub fn restore_terminal_modes() {
     let _ = crossterm_terminal::disable_raw_mode();
     let mut out = stdout();
+    if MOUSE_CAPTURE_ACTIVE.swap(false, Ordering::SeqCst) {
+        let _ = write_mouse_capture_mode(&mut out, false);
+    }
     if KITTY_KEYBOARD_ACTIVE.swap(false, Ordering::SeqCst) {
         let _ = pop_kitty_keyboard_flags(&mut out);
     }
@@ -413,6 +425,9 @@ impl Drop for StdinEchoGuard {
 pub struct TerminalSession {
     terminal: AlanTerminal,
     viewport_height: u16,
+    mouse_capture_enabled: bool,
+    hyperlink_host_root: Option<std::path::PathBuf>,
+    hyperlinks_enabled: bool,
 }
 
 impl TerminalSession {
@@ -437,7 +452,28 @@ impl TerminalSession {
         Ok(Self {
             terminal,
             viewport_height: 1,
+            mouse_capture_enabled: false,
+            hyperlink_host_root: None,
+            hyperlinks_enabled: !term.eq_ignore_ascii_case("dumb"),
         })
+    }
+
+    /// Enable or disable SGR mouse capture strictly for open modals/pickers.
+    pub fn set_mouse_capture(&mut self, enabled: bool) -> Result<()> {
+        if self.mouse_capture_enabled == enabled {
+            return Ok(());
+        }
+        write_mouse_capture_mode(self.terminal.backend_mut(), enabled)
+            .context("failed to toggle terminal mouse capture")?;
+        self.mouse_capture_enabled = enabled;
+        MOUSE_CAPTURE_ACTIVE.store(enabled, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Configure the optional Host project root used to resolve relative `file://` OSC 8 links.
+    pub fn set_hyperlink_context(&mut self, enabled: bool, host_root: Option<std::path::PathBuf>) {
+        self.hyperlinks_enabled = enabled;
+        self.hyperlink_host_root = host_root;
     }
 
     /// Publish permanent scrollback and the rebuilt inline viewport as one host update.
@@ -470,8 +506,27 @@ impl TerminalSession {
         F: FnOnce(&mut Frame<'_>),
     {
         let policy = TerminalStylePolicy::installed();
+        let hyperlinks = self.hyperlinks_enabled;
+        let host_root = self.hyperlink_host_root.clone();
+        let link_sink = self.terminal.backend().link_sink();
+        if let Ok(mut guard) = link_sink.lock() {
+            *guard = crate::hyperlink::CellLinkMap::default();
+        }
         self.terminal
-            .draw(|frame| render_frame_with_policy(frame, policy, draw))
+            .draw(|frame| {
+                render_frame_with_policy(frame, policy, draw);
+                if hyperlinks {
+                    let area_height = frame.area().height;
+                    let links = crate::hyperlink::collect_buffer_links(
+                        frame.buffer_mut(),
+                        area_height,
+                        host_root.as_deref(),
+                    );
+                    if let Ok(mut guard) = link_sink.lock() {
+                        *guard = links;
+                    }
+                }
+            })
             .map(|_| ())
             .context("failed to draw terminal frame")
     }
@@ -542,9 +597,25 @@ impl TerminalSession {
 
     fn insert_scrollback_chunk(&mut self, lines: Vec<Line<'static>>, height: u16) -> Result<()> {
         let policy = TerminalStylePolicy::installed();
+        let hyperlinks = self.hyperlinks_enabled;
+        let host_root = self.hyperlink_host_root.clone();
+        let link_sink = self.terminal.backend().link_sink();
+        if let Ok(mut guard) = link_sink.lock() {
+            *guard = crate::hyperlink::CellLinkMap::default();
+        }
         self.terminal
             .insert_before(height, |buf| {
                 render_scrollback_with_policy(buf, lines, policy);
+                if hyperlinks {
+                    let links = crate::hyperlink::collect_buffer_links(
+                        buf,
+                        buf.area.height,
+                        host_root.as_deref(),
+                    );
+                    if let Ok(mut guard) = link_sink.lock() {
+                        *guard = links;
+                    }
+                }
             })
             .context("failed to append transcript to terminal scrollback")
     }
@@ -614,7 +685,7 @@ pub(crate) fn anchored_inline_height(base: u16, desired: u16, screen: u16, top: 
 }
 
 fn build_inline_terminal(out: Stdout, height: u16) -> Result<AlanTerminal> {
-    let backend = CrosstermBackend::new(out);
+    let backend = HyperlinkBackend::new(out);
     Terminal::with_options(
         backend,
         TerminalOptions {
@@ -660,6 +731,11 @@ impl Drop for TerminalSession {
     fn drop(&mut self) {
         TERMINAL_ACTIVE.store(false, Ordering::SeqCst);
         let _ = crossterm_terminal::disable_raw_mode();
+        if self.mouse_capture_enabled || MOUSE_CAPTURE_ACTIVE.swap(false, Ordering::SeqCst) {
+            self.mouse_capture_enabled = false;
+            MOUSE_CAPTURE_ACTIVE.store(false, Ordering::SeqCst);
+            let _ = write_mouse_capture_mode(self.terminal.backend_mut(), false);
+        }
         if KITTY_KEYBOARD_ACTIVE.swap(false, Ordering::SeqCst) {
             let _ = pop_kitty_keyboard_flags(self.terminal.backend_mut());
         }

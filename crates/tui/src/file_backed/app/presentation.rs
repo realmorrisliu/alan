@@ -63,6 +63,7 @@ impl FileBackedApp {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::file_backed) fn context_line(&self, width: usize) -> Line<'static> {
         let base_location = self.project.as_ref().map_or_else(
             || {
@@ -254,6 +255,7 @@ impl FileBackedApp {
         Line::from(spans)
     }
 
+    #[cfg(test)]
     fn trust_posture_chip(&self) -> Option<(String, ratatui::style::Style, bool)> {
         if let Some(raw) = self.trust_posture_label.as_deref() {
             let safe = super::super::model::safe(raw);
@@ -338,7 +340,7 @@ impl FileBackedApp {
         false
     }
 
-    fn prefers_active_model(&self) -> bool {
+    pub(in crate::file_backed) fn prefers_active_model(&self) -> bool {
         if self.active_command_only() {
             return false;
         }

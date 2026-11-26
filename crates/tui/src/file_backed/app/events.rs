@@ -97,6 +97,13 @@ pub(in crate::file_backed) enum FileBackedEvent {
         generation: u64,
         rows: Vec<Line<'static>>,
     },
+    StatusPanelLoaded {
+        generation: u64,
+        diagnostics: super::super::status_panel::StatusDiagnostics,
+    },
+    CowBranchesUpdated {
+        count: usize,
+    },
     ManDetails {
         generation: u64,
         owner: String,
@@ -226,6 +233,12 @@ pub(in crate::file_backed) enum FileBackedEvent {
         owner: String,
     },
     UsageUnavailable {
+        owner: String,
+    },
+    BudgetChanged {
+        owner: String,
+    },
+    BudgetUnavailable {
         owner: String,
     },
     RequestsChanged,

@@ -566,7 +566,7 @@ fn pty_e2e_workstreams_focus_routing_receipts_scrollback_and_narrow_resize() -> 
         let startup = screen.wait_for("workstreams startup", Duration::from_secs(6), |s, _| {
             s.contains("root-seed-q")
                 && s.contains("root-seed-a")
-                && s.contains("streams: 1 active · 1 idle · 2 inbox")
+                && s.contains("1a·1i·2in")
                 && s.contains(": ")
         })?;
         assert!(startup.contains("gpt-5.4"), "{startup}");
@@ -633,7 +633,7 @@ fn pty_e2e_workstreams_focus_routing_receipts_scrollback_and_narrow_resize() -> 
         // 6. /streams clear-inbox updates footer badge live to 0 inbox.
         write_master(&master_write, b"/streams clear-inbox\r")?;
         screen.wait_for("inbox cleared badge", Duration::from_secs(4), |s, _| {
-            s.contains("streams: 1 active · 1 idle · 0 inbox")
+            s.contains("1a·1i·0in")
         })?;
 
         // 7. Resize to narrow panes (38 cols, then 28 cols) and verify clean reflow + responsive input.

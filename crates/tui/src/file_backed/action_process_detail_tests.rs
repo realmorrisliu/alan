@@ -133,7 +133,14 @@ fn detail_owner_and_controls_remain_visible_while_paging_at_supported_widths() {
                 .collect::<String>()
         };
         assert!(row(0).contains("1/1 · Action · /agent/8"));
-        assert!(row(1).contains("Space/b page · Esc · p Plans"));
+        assert!(
+            row(1).contains("[a:Actions]")
+                && row(1).contains("p:Plans")
+                && row(1).contains("s:Status")
+                && row(1).contains("Esc"),
+            "row(1)={}",
+            row(1)
+        );
         assert!(row(2).contains("line 30"));
     }
 }

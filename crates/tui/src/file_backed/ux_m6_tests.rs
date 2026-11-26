@@ -76,8 +76,8 @@ fn help_wraps_with_hanging_indent_and_idle_esc_dismisses_notice() {
     let rendered: Vec<String> = lines.iter().map(ToString::to_string).collect();
     let ctrl_o_idx = rendered
         .iter()
-        .position(|line| line.starts_with("  Ctrl+O"))
-        .expect("Ctrl+O row present");
+        .position(|line| line.starts_with("  Ctrl+T / Ctrl+O"))
+        .expect("Ctrl+T / Ctrl+O row present");
     let wrapped = rendered
         .get(ctrl_o_idx + 1)
         .expect("Ctrl+O continuation line at 80 cols");

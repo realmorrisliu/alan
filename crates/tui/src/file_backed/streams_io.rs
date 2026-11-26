@@ -9,7 +9,7 @@ use super::FileBackedApp;
 use super::app::{FileBackedAction, FileBackedEvent, Notice};
 use super::file_surface::{ActionSnapshot, hydrate_focus_target};
 use super::interrupt::PendingRootAgentTurn;
-use super::observation_io::{self, Request as ObservationRequest};
+use super::observation_io;
 use super::streams::{
     WorkstreamControl, WorkstreamControlHandler, WorkstreamControlResult, WorkstreamCountsDto,
     WorkstreamEntryDto, WorkstreamFocusTarget, WorkstreamOverviewDto, WorkstreamPersistenceKind,
@@ -580,9 +580,7 @@ pub(in crate::file_backed) async fn switch_agent_target(
     rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
     pending_root_agent_turns: &mut VecDeque<PendingRootAgentTurn>,
     tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
-    model_reads: &ObservationRequest,
-    skill_reads: &ObservationRequest,
-    usage_reads: &ObservationRequest,
+    readers: &observation_io::Readers,
     target_name: Option<String>,
     target_agent_path: String,
     target_pid: Option<u64>,
@@ -603,15 +601,7 @@ pub(in crate::file_backed) async fn switch_agent_target(
             *app = next_app;
             *watchers = AgentWatchers::start(tails, &target_agent_path, tx.clone());
             pending_root_agent_turns.clear();
-            if !app.model.owner.is_empty() {
-                observation_io::request(model_reads, app.model.owner.clone());
-            }
-            if !app.skills.owner.is_empty() {
-                observation_io::request(skill_reads, app.skills.owner.clone());
-            }
-            if !app.usage.owner.is_empty() {
-                observation_io::request(usage_reads, app.usage.owner.clone());
-            }
+            readers.refresh_all(app);
             true
         }
         Err(err) => {
@@ -675,9 +665,7 @@ pub(in crate::file_backed) async fn handle_focus_target_resolved(
     rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
     pending_root_agent_turns: &mut VecDeque<PendingRootAgentTurn>,
     tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
-    model_reads: &ObservationRequest,
-    skill_reads: &ObservationRequest,
-    usage_reads: &ObservationRequest,
+    readers: &observation_io::Readers,
     requested_name: String,
     result: Result<WorkstreamFocusTarget, String>,
 ) {
@@ -693,9 +681,7 @@ pub(in crate::file_backed) async fn handle_focus_target_resolved(
                 rx,
                 pending_root_agent_turns,
                 tx,
-                model_reads,
-                skill_reads,
-                usage_reads,
+                readers,
                 Some(target.stream_name),
                 target.agent_path,
                 target.pid,
@@ -721,9 +707,7 @@ pub(in crate::file_backed) async fn handle_streams_action(
     rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
     pending_root_agent_turns: &mut VecDeque<PendingRootAgentTurn>,
     tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
-    model_reads: &ObservationRequest,
-    skill_reads: &ObservationRequest,
-    usage_reads: &ObservationRequest,
+    readers: &observation_io::Readers,
     root_agent_pid_retry: &tokio::sync::watch::Sender<()>,
     action: FileBackedAction,
 ) {
@@ -759,9 +743,7 @@ pub(in crate::file_backed) async fn handle_streams_action(
                 rx,
                 pending_root_agent_turns,
                 tx,
-                model_reads,
-                skill_reads,
-                usage_reads,
+                readers,
                 None,
                 "/agent/root".to_string(),
                 None,
