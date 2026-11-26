@@ -134,6 +134,9 @@ pub(in crate::file_backed) fn build_tape_lines_from_app(app: &FileBackedApp) -> 
             HistoryCell::Assistant(text) | HistoryCell::AssistantTail { text, .. } => {
                 entries.push(("[out]", format!("{:?}", single_line_summary(text))))
             }
+            HistoryCell::Image(image) => {
+                entries.push(("[image]", single_line_summary(&image.badge_text())))
+            }
             HistoryCell::Rendered(_) | HistoryCell::Styled(_) | HistoryCell::Welcome(_) => {}
         }
     }

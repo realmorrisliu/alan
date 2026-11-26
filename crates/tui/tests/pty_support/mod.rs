@@ -73,6 +73,15 @@ impl PtyScreen {
         self.shared.1.notify_all();
     }
 
+    #[allow(
+        dead_code,
+        reason = "used by pty_e2e suites verifying exact cursor restoration"
+    )]
+    pub(super) fn cursor_position(&self) -> (u16, u16) {
+        let guard = self.shared.0.lock().expect("pty state lock");
+        guard.parser.screen().cursor_position()
+    }
+
     fn cursor_one_based(&self) -> (u16, u16) {
         let guard = self.shared.0.lock().expect("pty state lock");
         let (r, c) = guard.parser.screen().cursor_position();
@@ -313,10 +322,25 @@ pub(super) fn spawn_master_reader(
     master_write: Arc<Mutex<std::fs::File>>,
     screen: PtyScreen,
 ) -> std::thread::JoinHandle<()> {
+    spawn_master_reader_with_probe(master_read, master_write, screen, None)
+}
+
+#[allow(
+    dead_code,
+    reason = "used by pty_e2e_graphics to simulate Kitty and iTerm2 probe replies"
+)]
+pub(super) fn spawn_master_reader_with_probe(
+    master_read: OwnedFd,
+    master_write: Arc<Mutex<std::fs::File>>,
+    screen: PtyScreen,
+    probe_trigger_reply: Option<(&'static [u8], &'static [u8])>,
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut reader = std::fs::File::from(master_read);
         let mut buf = [0u8; 4096];
         let mut tail = Vec::new();
+        let mut probe_buf = Vec::new();
+        let mut probe_replied = probe_trigger_reply.is_none();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
@@ -326,6 +350,20 @@ pub(super) fn spawn_master_reader(
                 Ok(n) => {
                     let chunk = &buf[..n];
                     screen.push_bytes(chunk);
+                    if !probe_replied && let Some((trigger, reply)) = probe_trigger_reply {
+                        probe_buf.extend_from_slice(chunk);
+                        if probe_buf.windows(trigger.len()).any(|w| w == trigger) {
+                            if let Ok(mut w) = master_write.lock() {
+                                let _ = w.write_all(reply);
+                                let _ = w.flush();
+                            }
+                            probe_replied = true;
+                            probe_buf.clear();
+                        } else if probe_buf.len() > 512 {
+                            let drain = probe_buf.len() - trigger.len().min(256);
+                            probe_buf.drain(..drain);
+                        }
+                    }
                     tail.extend_from_slice(chunk);
                     if tail.windows(4).any(|w| w == b"\x1b[6n") {
                         let (row, col) = screen.cursor_one_based();

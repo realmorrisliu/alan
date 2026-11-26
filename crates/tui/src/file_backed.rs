@@ -20,6 +20,7 @@ mod doctor;
 mod file_surface;
 mod fork_picker;
 mod history_merge;
+mod image_render;
 mod interrupt;
 mod issue_flow;
 pub use issue_flow::{IssueControl, IssueControlFuture, IssueControlHandler, IssueSubmitResult};
@@ -579,6 +580,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                             let owner = if follows_root_agent { watchers.root_agent_pid.map(|pid| format!("/agent/{pid}")).unwrap_or_else(|| app.agent_path.clone()) } else { app.agent_path.clone() };
                                             app.track_local_input(&record.submission_id, owner, text.clone(), record.intent);
                                             app.set_local_input_attachment_summary(&record.submission_id, attachment_io::summarize_attachments(&record.parts));
+                                            app.record_submitted_images(&record.submission_id, &record.parts);
                                             app.show_submission_sent(&record.submission_id);
                                             pending_root_agent_turns.push_back(PendingRootAgentTurn {
                                                 input: text.clone(),
@@ -904,8 +906,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         viewport_width.clamp(1, u16::MAX as usize) as u16,
                         terminal_height.clamp(1, u16::MAX as usize) as u16,
                     );
-                    let committed = app.drain_committed_scrollback(viewport_width, terminal_height);
-                    draw_result = active_terminal.draw_inline_frame(&committed, inline_viewport_height(
+                    let committed =
+                        app.drain_committed_scrollback_items(viewport_width, terminal_height);
+                    draw_result = active_terminal.draw_inline_frame_items(&committed, inline_viewport_height(
                         &app,
                         viewport_width,
                         terminal_height,

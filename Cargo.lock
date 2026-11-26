@@ -387,6 +387,7 @@ dependencies = [
  "alan-shell",
  "anyhow",
  "async-trait",
+ "base64 0.23.1",
  "crossterm",
  "libc",
  "ratatui",

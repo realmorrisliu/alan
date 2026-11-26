@@ -95,6 +95,8 @@ pub(super) struct LocalInput {
     attachment_revision: u64,
     pub acknowledged: bool,
     pub cell: Option<usize>,
+    pub pending_images: Vec<crate::history::InlineImageCell>,
+    pub image_cells: Vec<usize>,
     pub tape_seen: bool,
     pub committed: bool,
     pub source_cut: (usize, usize),
@@ -124,6 +126,7 @@ impl FileBackedApp {
                 input.committed = true;
             }
             input.cell = None;
+            input.image_cells.clear();
             input.release_terminal_source();
         }
     }
@@ -135,6 +138,7 @@ impl FileBackedApp {
             .collect();
         for input in self.local_inputs.values_mut() {
             input.cell = None;
+            input.image_cells.clear();
         }
         let mut index = 0;
         let mut previous_assistant = false;
@@ -235,6 +239,8 @@ impl FileBackedApp {
                 attachment_revision: self.attachment_revision,
                 acknowledged: false,
                 cell: None,
+                pending_images: Vec::new(),
+                image_cells: Vec::new(),
                 tape_seen: false,
                 committed: false,
                 source_cut: (0, 0),
@@ -422,6 +428,13 @@ impl FileBackedApp {
         );
         if let Some(input) = self.local_inputs.get_mut(id) {
             input.cell = Some(cell_index);
+            let images = std::mem::take(&mut input.pending_images);
+            for image in images {
+                let image_idx = self.transcript.len();
+                self.transcript
+                    .push(crate::history::HistoryCell::Image(image));
+                input.image_cells.push(image_idx);
+            }
         }
     }
 

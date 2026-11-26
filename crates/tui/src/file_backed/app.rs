@@ -76,6 +76,7 @@ pub(super) struct FileBackedApp {
     pub(super) action_cells: BTreeMap<String, usize>,
     /// Existing observation fingerprint plus whether its rows were committed.
     pub(super) projected_actions: BTreeMap<(String, String), (u64, bool)>,
+    pub(super) emitted_action_images: std::collections::BTreeSet<(String, String)>,
     pub(super) modal: action_modal::ActionModal,
     pub(super) local_inputs: BTreeMap<String, super::queue::LocalInput>,
     pub(super) skills: super::skills::SkillProjection,
@@ -187,6 +188,7 @@ impl FileBackedApp {
             transcript: Vec::new(),
             action_cells: BTreeMap::new(),
             projected_actions: BTreeMap::new(),
+            emitted_action_images: std::collections::BTreeSet::new(),
             modal: action_modal::ActionModal::default(),
             local_inputs: BTreeMap::new(),
             skills: super::skills::SkillProjection::default(),
@@ -906,24 +908,15 @@ impl FileBackedApp {
             .collect()
     }
 
+    #[cfg(test)]
     pub(super) fn drain_committed_scrollback(
         &mut self,
         viewport_width: usize,
         viewport_height: usize,
     ) -> Vec<Line<'static>> {
-        if self.modal.active || self.resume_picker.active || self.issue.is_active() {
-            return Vec::new();
-        }
         let opts = self.render_opts(viewport_width);
-        let max_lines =
-            viewport_height.saturating_sub(super::layout::base_region_height(self, viewport_width));
-        let lines = self.styled_history_lines(viewport_width);
-        let drain_count = super::history_prefix_to_drain(&lines, viewport_width, max_lines);
-        if drain_count == 0 {
-            return Vec::new();
-        }
-        let pruned_count = self.prune_rendered_prefix(opts, drain_count);
-        lines.into_iter().take(pruned_count).collect()
+        let items = self.drain_committed_scrollback_items(viewport_width, viewport_height);
+        Self::flatten_scrollback_items(items, opts)
     }
 
     /// Keep this renderer's earlier transcript while adding the current turn

@@ -43,12 +43,17 @@ impl FileBackedApp {
         self.action_cells.insert(action_id, index);
     }
 
-    pub(super) fn shift_action_cells_for_insert(&mut self, inserted_at: usize) {
+    pub(in crate::file_backed) fn shift_action_cells_for_insert(&mut self, inserted_at: usize) {
         for input in self.local_inputs.values_mut() {
             if let Some(index) = &mut input.cell
                 && *index >= inserted_at
             {
                 *index += 1;
+            }
+            for index in &mut input.image_cells {
+                if *index >= inserted_at {
+                    *index += 1;
+                }
             }
         }
         for index in self.action_cells.values_mut() {
@@ -57,17 +62,95 @@ impl FileBackedApp {
             }
         }
     }
+
+    pub(in crate::file_backed) fn remove_transcript_cell_at(
+        &mut self,
+        index: usize,
+    ) -> HistoryCell {
+        let removed = self.transcript.remove(index);
+        for input in self.local_inputs.values_mut() {
+            if let Some(cell) = &mut input.cell {
+                if *cell == index {
+                    input.cell = None;
+                } else if *cell > index {
+                    *cell -= 1;
+                }
+            }
+            input.image_cells.retain_mut(|cell| {
+                if *cell == index {
+                    return false;
+                }
+                if *cell > index {
+                    *cell -= 1;
+                }
+                true
+            });
+        }
+        self.action_cells.retain(|_, cell_index| {
+            if *cell_index == index {
+                return false;
+            }
+            if *cell_index > index {
+                *cell_index -= 1;
+            }
+            true
+        });
+        if let Some(boundary) = &mut self.pending_remote_turn_start
+            && *boundary > index
+        {
+            *boundary -= 1;
+        }
+        removed
+    }
+
+    #[cfg(test)]
     pub(in crate::file_backed) fn prune_rendered_prefix(
         &mut self,
         opts: RenderOpts,
         lines_to_prune: usize,
     ) -> usize {
+        self.prune_rendered_prefix_items(opts, &[], lines_to_prune)
+            .0
+    }
+
+    pub(in crate::file_backed) fn prune_rendered_prefix_items(
+        &mut self,
+        opts: RenderOpts,
+        rendered_lines: &[Line<'static>],
+        lines_to_prune: usize,
+    ) -> (usize, Vec<crate::graphics_scrollback::ScrollbackItem>) {
+        use crate::graphics_scrollback::ScrollbackItem;
         self.freeze_committing_actions(opts, lines_to_prune);
         let mut remaining = lines_to_prune;
         let mut index = 0;
+        let mut line_cursor = 0;
+        let mut items = Vec::new();
+        let mut pending_lines: Vec<Line<'static>> = Vec::new();
+
         while remaining > 0 && index < self.transcript.len() {
             let rows = self.single_cell_rows(index, opts);
             let cell_lines = rows.len();
+            if matches!(self.transcript[index], HistoryCell::Image(_)) {
+                if cell_lines > remaining {
+                    break;
+                }
+                if !pending_lines.is_empty() {
+                    items.push(ScrollbackItem::Lines(std::mem::take(&mut pending_lines)));
+                }
+                if let HistoryCell::Image(image) = self.remove_transcript_cell_at(index) {
+                    items.push(ScrollbackItem::Image {
+                        bytes: image.bytes,
+                        label: image.label,
+                        dimensions: image.dimensions,
+                    });
+                }
+                if index == 0 {
+                    self.scrollback_front_is_partial = false;
+                }
+                line_cursor = (line_cursor + cell_lines).min(rendered_lines.len());
+                remaining -= cell_lines;
+                continue;
+            }
             let keep_source = Some(index) == self.current_assistant_cell();
             for input in self.local_inputs.values_mut() {
                 if input.cell == Some(index) && remaining >= cell_lines {
@@ -101,6 +184,9 @@ impl FileBackedApp {
                             }
                         }
                     }
+                    let end = (line_cursor + count).min(rendered_lines.len());
+                    pending_lines.extend_from_slice(&rendered_lines[line_cursor..end]);
+                    line_cursor = end;
                     remaining -= count;
                     self.scrollback_front_is_partial = true;
                 }
@@ -111,37 +197,20 @@ impl FileBackedApp {
                 // source-aware tail. It owns no rows and cannot block later cells.
                 index += 1;
             } else {
-                self.transcript.remove(index);
-                for input in self.local_inputs.values_mut() {
-                    if let Some(cell) = &mut input.cell {
-                        if *cell == index {
-                            input.cell = None;
-                        } else if *cell > index {
-                            *cell -= 1;
-                        }
-                    }
-                }
-                self.action_cells.retain(|_, cell_index| {
-                    if *cell_index == index {
-                        return false;
-                    }
-                    if *cell_index > index {
-                        *cell_index -= 1;
-                    }
-                    true
-                });
-                if let Some(boundary) = &mut self.pending_remote_turn_start
-                    && *boundary > index
-                {
-                    *boundary -= 1;
-                }
+                let end = (line_cursor + cell_lines).min(rendered_lines.len());
+                pending_lines.extend_from_slice(&rendered_lines[line_cursor..end]);
+                line_cursor = end;
+                self.remove_transcript_cell_at(index);
                 if index == 0 {
                     self.scrollback_front_is_partial = false;
                 }
                 remaining -= cell_lines;
             }
         }
-        lines_to_prune - remaining
+        if !pending_lines.is_empty() {
+            items.push(ScrollbackItem::Lines(pending_lines));
+        }
+        (lines_to_prune - remaining, items)
     }
 
     pub(in crate::file_backed) fn push_output(&mut self, text: String) {
@@ -200,36 +269,13 @@ impl FileBackedApp {
     }
 
     pub(in crate::file_backed) fn queued_receipt_at(&self, index: usize) -> bool {
-        self.local_inputs
-            .values()
-            .any(|input| input.cell == Some(index) && !input.tape_seen)
+        self.local_inputs.values().any(|input| {
+            !input.tape_seen && (input.cell == Some(index) || input.image_cells.contains(&index))
+        })
     }
 
     pub(in crate::file_backed) fn remove_receipt_cell(&mut self, index: usize) {
-        self.transcript.remove(index);
-        for input in self.local_inputs.values_mut() {
-            if let Some(cell) = &mut input.cell {
-                if *cell == index {
-                    input.cell = None;
-                } else if *cell > index {
-                    *cell -= 1;
-                }
-            }
-        }
-        self.action_cells.retain(|_, cell| {
-            if *cell == index {
-                return false;
-            }
-            if *cell > index {
-                *cell -= 1;
-            }
-            true
-        });
-        if let Some(boundary) = &mut self.pending_remote_turn_start
-            && *boundary > index
-        {
-            *boundary -= 1;
-        }
+        self.remove_transcript_cell_at(index);
     }
 
     pub(in crate::file_backed) fn current_turn_has_user_boundary(&self) -> bool {
@@ -315,6 +361,17 @@ impl FileBackedApp {
                     .map(|input| input.source_cut)
                     .max()
                     .unwrap_or((0, 0));
+                let reclaimed_images = if !local || !duplicate {
+                    self.reclaim_local_receipt_images(&ids)
+                } else {
+                    for id in &ids {
+                        if let Some(input) = self.local_inputs.get_mut(id) {
+                            input.image_cells.clear();
+                            input.pending_images.clear();
+                        }
+                    }
+                    Vec::new()
+                };
                 let mut cells: Vec<_> = ids
                     .iter()
                     .filter_map(|id| self.local_inputs.get(id).and_then(|input| input.cell))
@@ -346,6 +403,7 @@ impl FileBackedApp {
                             input.cell = Some(index);
                         }
                     }
+                    self.emit_local_images_after(&ids, index, reclaimed_images);
                 }
                 for input in self.local_inputs.values_mut() {
                     input.release_terminal_source();
