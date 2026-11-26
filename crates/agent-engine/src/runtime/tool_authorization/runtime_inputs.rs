@@ -64,18 +64,6 @@ impl<'a> ToolAuthorizationRuntime<'a> {
         self
     }
 
-    /// Populate posture, Guardian, Smart evaluator, and hook fields from a `RuntimeConfig`.
-    pub(crate) fn with_runtime_config(
-        self,
-        runtime_config: &'a crate::runtime::RuntimeConfig,
-    ) -> Self {
-        self.with_trust_posture(runtime_config.trust_posture)
-            .with_guardian_profile(runtime_config.guardian_profile.as_deref())
-            .with_smart_evaluator_profile(runtime_config.smart_evaluator_profile.as_deref())
-            .with_guardian_config(runtime_config.guardian.clone())
-            .with_tool_policy_hook(runtime_config.tool_policy_hook.clone())
-    }
-
     pub(crate) fn with_guardian_config(mut self, guardian_config: GuardianConfig) -> Self {
         self.guardian_config = guardian_config;
         self

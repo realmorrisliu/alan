@@ -338,7 +338,11 @@ pub(super) fn tool_authorization_runtime(
         agent_files,
         llm_request_timeout_secs,
     )
-    .with_runtime_config(&state.runtime_config)
+    .with_trust_posture(state.runtime_config.trust_posture)
+    .with_guardian_profile(state.runtime_config.guardian_profile.as_deref())
+    .with_smart_evaluator_profile(state.runtime_config.smart_evaluator_profile.as_deref())
+    .with_guardian_config(state.runtime_config.guardian.clone())
+    .with_tool_policy_hook(state.runtime_config.tool_policy_hook.clone())
     .with_authority(authority)
 }
 
