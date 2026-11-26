@@ -27,6 +27,7 @@ pub struct HostBootConfig {
     saved_grants: Vec<String>,
     saved_grant_store_path: Option<std::path::PathBuf>,
     cow_runtime: Option<crate::CowHostRuntime>,
+    reified_mounts: Option<crate::ReifiedMountManager>,
 }
 
 #[derive(Clone, Debug)]
@@ -264,11 +265,12 @@ impl HostBootConfig {
         let mut process = AgentProcessConfig::from(Config::load_with_metadata()?);
         let mut launch_context =
             prepare_system_store_launch(&system_store, namespace, &mut process, None)?;
-        let (cow_manager, _gc_report) =
-            crate::CowWorkspaceManager::new(crate::CowWorkspaceConfig::new(
-                system_store.clone(),
-                format!("alan-{}", std::process::id()),
-            )?)?;
+        let instance_id = format!("alan-{}", std::process::id());
+        let (cow_manager, _gc_report) = crate::CowWorkspaceManager::new(
+            crate::CowWorkspaceConfig::new(system_store.clone(), instance_id.clone())?,
+        )?;
+        let (reified_mounts, _reified_gc_report) =
+            crate::ReifiedMountManager::new(system_store.clone(), instance_id)?;
         let cow_runtime = crate::CowHostRuntime::new(cow_manager);
         launch_context.namespace.mount(
             "/mnt/branch",
@@ -313,6 +315,7 @@ impl HostBootConfig {
             saved_grants: Vec::new(),
             saved_grant_store_path: None,
             cow_runtime: Some(cow_runtime),
+            reified_mounts: Some(reified_mounts),
         })
     }
 
@@ -338,6 +341,7 @@ impl HostBootConfig {
             saved_grants: Vec::new(),
             saved_grant_store_path: None,
             cow_runtime: None,
+            reified_mounts: None,
         }
     }
 
@@ -358,6 +362,17 @@ impl HostBootConfig {
     /// Inspect the attached CoW host runtime, if configured.
     pub fn cow_runtime(&self) -> Option<&crate::CowHostRuntime> {
         self.cow_runtime.as_ref()
+    }
+
+    /// Attach a [`crate::ReifiedMountManager`] to this host boot configuration.
+    pub fn with_reified_mount_manager(mut self, manager: crate::ReifiedMountManager) -> Self {
+        self.reified_mounts = Some(manager);
+        self
+    }
+
+    /// Inspect the attached reified NFSv3 mount manager, if configured.
+    pub fn reified_mounts(&self) -> Option<&crate::ReifiedMountManager> {
+        self.reified_mounts.as_ref()
     }
 
     /// Configure explicit invocation-only trust posture (`Governed`, `ConfinedTrusted`,
@@ -520,18 +535,23 @@ impl HostBootConfig {
     }
 
     pub(crate) async fn boot_service_manager(self) -> Result<ServiceManager> {
-        let (manager, _) = self.boot_service_manager_with_cow().await?;
+        let (manager, _, _) = self.boot_service_manager_with_cow().await?;
         Ok(manager)
     }
 
     pub(crate) async fn boot_service_manager_with_cow(
         mut self,
-    ) -> Result<(ServiceManager, Option<crate::CowHostRuntime>)> {
+    ) -> Result<(
+        ServiceManager,
+        Option<crate::CowHostRuntime>,
+        Option<crate::ReifiedMountManager>,
+    )> {
         self.service_manager.ephemeral_rollout = self.ephemeral_rollout;
         self.service_manager.no_resume_update = self.no_resume_update;
         let saved_grants = std::mem::take(&mut self.saved_grants);
         let store_path = self.saved_grant_store_path.take();
         let cow_runtime = self.cow_runtime.take();
+        let reified_mounts = self.reified_mounts.take();
         let manager = ServiceManager::boot(self.service_manager).await?;
         if let Some(runtime) = cow_runtime.as_ref() {
             runtime.attach_host_mount_and_root_pid(manager.host_mount(), manager.root_pid_atomic());
@@ -567,7 +587,7 @@ impl HostBootConfig {
                     .set_default_source_grant(Some(first_grant.clone()));
             }
         }
-        Ok((manager, cow_runtime))
+        Ok((manager, cow_runtime, reified_mounts))
     }
 }
 
