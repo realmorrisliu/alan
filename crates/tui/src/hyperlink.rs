@@ -468,9 +468,14 @@ mod tests {
         let captured = SharedVec::default();
         let backend = HyperlinkBackend::new(captured.clone());
         let sink = backend.link_sink();
-        let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, width, 1);
-        terminal.resize(area).unwrap();
+        let mut terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(area),
+            },
+        )
+        .unwrap();
         terminal
             .draw(|frame| {
                 Paragraph::new(Line::from(text)).render(frame.area(), frame.buffer_mut());
