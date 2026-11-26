@@ -38,6 +38,8 @@ fn test_manager() -> (TempDir, ChatgptAuthManager) {
 
 #[test]
 fn authorize_url_uses_siwc_dynamic_registration_and_resource_scope() {
+    let state = crate::browser::generate_state();
+    let nonce = crate::browser::generate_state();
     let url = build_authorize_url(
         "https://auth.example.com",
         "Alan",
@@ -45,8 +47,8 @@ fn authorize_url_uses_siwc_dynamic_registration_and_resource_scope() {
         "https://api.openai.com/v1",
         "http://127.0.0.1:1455/auth/callback",
         "challenge",
-        "state_xyz",
-        "nonce_xyz",
+        &state,
+        &nonce,
     );
     let parsed = url::Url::parse(&url).expect("valid authorize URL");
     assert_eq!(parsed.path(), "/api/accounts/authorize");
@@ -78,8 +80,14 @@ fn authorize_url_uses_siwc_dynamic_registration_and_resource_scope() {
         params.get("scope").map(String::as_str),
         Some(REQUIRED_SCOPE)
     );
-    assert_eq!(params.get("state").map(String::as_str), Some("state_xyz"));
-    assert_eq!(params.get("nonce").map(String::as_str), Some("nonce_xyz"));
+    assert_eq!(
+        params.get("state").map(String::as_str),
+        Some(state.as_str())
+    );
+    assert_eq!(
+        params.get("nonce").map(String::as_str),
+        Some(nonce.as_str())
+    );
     assert_eq!(
         params.get("code_challenge").map(String::as_str),
         Some("challenge")
