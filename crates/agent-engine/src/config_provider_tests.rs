@@ -45,10 +45,7 @@ fn test_to_provider_config_openai_responses() {
 
 #[test]
 fn test_to_provider_config_chatgpt() {
-    let config = Config::for_chatgpt(
-        Some("https://chatgpt.com/backend-api/codex"),
-        Some("gpt-5.3-codex"),
-    );
+    let config = Config::for_chatgpt(Some("https://api.openai.com/v1"), Some("gpt-5.4"));
     let provider_config = config.to_provider_config().unwrap();
     assert_eq!(
         provider_config.provider_type,
@@ -57,18 +54,15 @@ fn test_to_provider_config_chatgpt() {
     assert_eq!(provider_config.api_key, None);
     assert_eq!(
         provider_config.base_url,
-        Some("https://chatgpt.com/backend-api/codex".to_string())
+        Some("https://api.openai.com/v1".to_string())
     );
-    assert_eq!(provider_config.model, "gpt-5.3-codex");
+    assert_eq!(provider_config.model, "gpt-5.4");
     assert_eq!(provider_config.expected_account_id, None);
 }
 
 #[test]
 fn test_to_provider_config_chatgpt_with_account_binding() {
-    let mut config = Config::for_chatgpt(
-        Some("https://chatgpt.com/backend-api/codex"),
-        Some("gpt-5.3-codex"),
-    );
+    let mut config = Config::for_chatgpt(Some("https://api.openai.com/v1"), Some("gpt-5.4"));
     config.chatgpt_account_id = Some("acct_123".to_string());
     let provider_config = config.to_provider_config().unwrap();
     assert_eq!(

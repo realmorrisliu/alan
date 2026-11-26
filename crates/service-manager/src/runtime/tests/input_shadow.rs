@@ -62,7 +62,7 @@ async fn explicit_root_evaluator_publishes_advice_without_replacing_generation()
             ("typesafe", "jev-1.13.0", false),
             ("chatgpt", "gpt-6.1-sol", false),
             ("typesafe", "jev-1.13.0", true),
-            ("chatgpt", "gpt-5.3-codex", true),
+            ("chatgpt", "gpt-5.4", true),
         ] {
             let kind = if provider == "chatgpt" {
                 CredentialKind::ManagedOauth

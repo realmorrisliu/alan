@@ -68,8 +68,11 @@ async fn list_providers() -> Result<LoginResult> {
     Ok(LoginResult::Providers(vec![
         LoginProviderChoice {
             id: "chatgpt".to_string(),
-            label: "ChatGPT (Plus / Pro OAuth)".to_string(),
-            detail: suffix(LlmProvider::Chatgpt, "Browser OAuth".to_string()),
+            label: "ChatGPT (Sign in with ChatGPT)".to_string(),
+            detail: suffix(
+                LlmProvider::Chatgpt,
+                "Browser OAuth (use your ChatGPT plan & credits)".to_string(),
+            ),
             default_profile: "chatgpt-main".to_string(),
             method: LoginMethod::BrowserOrAuto,
         },
@@ -114,7 +117,7 @@ async fn list_providers() -> Result<LoginResult> {
 
 async fn submit_login(paths: &HostEndpointPaths, sub: LoginSubmission) -> Result<LoginResult> {
     match sub.provider_id.trim().to_ascii_lowercase().as_str() {
-        "chatgpt" | "codex" => submit_chatgpt(paths, sub).await,
+        "chatgpt" => submit_chatgpt(paths, sub).await,
         "openrouter" => submit_openrouter(paths, sub).await,
         "vertex" | "vertex_gemini" | "google_gemini_generate_content" | "gemini" => {
             submit_vertex(paths, sub).await
@@ -132,20 +135,23 @@ async fn submit_chatgpt(paths: &HostEndpointPaths, sub: LoginSubmission) -> Resu
     let manager = ChatgptAuthManager::new(ChatgptAuthConfig::with_storage_path(
         host_store.managed_auth,
     ))?;
-    sub.progress.status("Starting ChatGPT browser sign-in...");
+    sub.progress.status("Starting Sign in with ChatGPT...");
+    let server = manager.bind_browser_callback_server().await?;
     let pending = manager.begin_browser_login(BrowserLoginOptions::default())?;
     let opened = open_browser(&pending.auth_url).is_ok();
     sub.progress.browser_prompt(
         pending.auth_url.clone(),
         None,
         Some(if opened {
-            "Complete ChatGPT sign-in in your browser, then return here.".to_string()
+            "Complete Sign in with ChatGPT in your browser, then return here.".to_string()
         } else {
-            "Open this URL in your browser to sign in to ChatGPT.".to_string()
+            "Open this URL in your browser to Sign in with ChatGPT.".to_string()
         }),
     );
 
-    let mut receipt = manager.wait_for_browser_callback(&pending).await?;
+    let mut receipt = manager
+        .wait_for_browser_callback_on(&server, &pending)
+        .await?;
     let result = manager
         .complete_browser_login(&pending, receipt.completion.clone())
         .await;

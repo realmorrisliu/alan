@@ -44,7 +44,7 @@ pub(super) enum LoginProviderTarget {
 impl LoginProviderTarget {
     fn from_str(raw: &str) -> Result<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
-            "chatgpt" | "codex" => Ok(Self::Chatgpt),
+            "chatgpt" => Ok(Self::Chatgpt),
             "openrouter" => Ok(Self::OpenRouter),
             "vertex" | "vertex_gemini" | "gemini" | "google_gemini_generate_content" => {
                 Ok(Self::Vertex)
@@ -72,7 +72,6 @@ impl LoginProviderTarget {
 pub async fn run_login(
     provider: Option<String>,
     no_browser: bool,
-    device: bool,
     profile_override: Option<String>,
 ) -> Result<()> {
     let target = match provider {
@@ -80,18 +79,11 @@ pub async fn run_login(
         None => prompt_provider_menu().await?,
     };
 
-    anyhow::ensure!(
-        !device || target == LoginProviderTarget::Chatgpt,
-        "`--device` flow is supported only for `chatgpt`"
-    );
-
     let open_browser = !no_browser;
     let profile_id = suggested_profile_id(target.as_llm_provider(), profile_override)?;
 
     match target {
-        LoginProviderTarget::Chatgpt => {
-            login_chatgpt_command(&profile_id, device, open_browser).await
-        }
+        LoginProviderTarget::Chatgpt => login_chatgpt_command(&profile_id, open_browser).await,
         LoginProviderTarget::OpenRouter => {
             login_openrouter_command(&profile_id, open_browser).await
         }
@@ -127,7 +119,7 @@ async fn prompt_provider_menu() -> Result<LoginProviderTarget> {
     );
     println!("Select an LLM provider to connect:");
     println!(
-        "  1) chatgpt    - ChatGPT Plus / Pro browser or device OAuth{}",
+        "  1) chatgpt    - Sign in with ChatGPT (use your ChatGPT plan & credits){}",
         status(LlmProvider::Chatgpt)
     );
     println!(
@@ -161,7 +153,7 @@ async fn prompt_provider_menu() -> Result<LoginProviderTarget> {
     }
 }
 
-async fn login_chatgpt_command(profile_id: &str, device: bool, open_browser: bool) -> Result<()> {
+async fn login_chatgpt_command(profile_id: &str, open_browser: bool) -> Result<()> {
     let (mut stores, mut connections) = load_connections().await?;
     ensure_profile_exists(
         &mut stores,
@@ -174,7 +166,7 @@ async fn login_chatgpt_command(profile_id: &str, device: bool, open_browser: boo
     )
     .await?;
     drop(stores);
-    run_connection_login(profile_id, device, open_browser).await?;
+    run_connection_login(profile_id, open_browser).await?;
     let (_, connections) = load_connections().await?;
     let model = effective_profile_model(&connections, profile_id);
     println!(
@@ -578,10 +570,10 @@ async fn ensure_profile_exists(
             existing.provider.as_str(),
             provider.as_str()
         );
-        if !overrides.is_empty() {
-            let mut merged = existing.settings.clone();
-            merged.extend(overrides);
-            let normalized = normalize_profile_settings(provider, &merged);
+        let mut merged = existing.settings.clone();
+        merged.extend(overrides);
+        let normalized = normalize_profile_settings(provider, &merged);
+        if normalized != existing.settings {
             validate_profile_settings(provider, &normalized)?;
             existing.settings = normalized;
             existing.updated_at = Utc::now();

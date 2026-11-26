@@ -346,8 +346,8 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
     const CHATGPT_REQUIRED: &[&str] = &["base_url", "model"];
     const CHATGPT_OPTIONAL: &[&str] = &["account_id"];
     const CHATGPT_DEFAULTS: &[(&str, &str)] = &[
-        ("base_url", "https://chatgpt.com/backend-api/codex"),
-        ("model", "gpt-5.3-codex"),
+        ("base_url", "https://api.openai.com/v1"),
+        ("model", "gpt-5.4"),
         ("account_id", ""),
     ];
 
@@ -422,12 +422,12 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
                 },
                 ProviderDescriptor {
                     provider_id: LlmProvider::Chatgpt,
-                    display_name: "ChatGPT / Codex",
+                    display_name: "ChatGPT (Sign in with ChatGPT)",
                     first_party: true,
                     credential_kind: CredentialKind::ManagedOauth,
                     credential_optional: false,
                     supports_browser_login: true,
-                    supports_device_login: true,
+                    supports_device_login: false,
                     supports_secret_entry: false,
                     supports_logout: true,
                     supports_test: true,
@@ -539,6 +539,8 @@ pub fn default_profile_timestamp() -> DateTime<Utc> {
     DateTime::<Utc>::UNIX_EPOCH
 }
 
+const RETIRED_CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+
 pub fn normalize_profile_settings(
     provider: LlmProvider,
     settings: &BTreeMap<String, String>,
@@ -550,6 +552,19 @@ pub fn normalize_profile_settings(
     }
     for (key, value) in settings {
         normalized.insert(key.clone(), value.clone());
+    }
+    if provider == LlmProvider::Chatgpt
+        && normalized.get("base_url").is_some_and(|url| {
+            url.trim()
+                .trim_end_matches('/')
+                .eq_ignore_ascii_case(RETIRED_CHATGPT_CODEX_BASE_URL)
+        })
+        && let Some((_, default_base_url)) = descriptor
+            .default_settings
+            .iter()
+            .find(|(key, _)| *key == "base_url")
+    {
+        normalized.insert("base_url".to_string(), (*default_base_url).to_string());
     }
     normalized
 }

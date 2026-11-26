@@ -150,17 +150,15 @@ fn login_subcommand_and_no_auto_mount_flag_parse_cleanly() {
         Some(Commands::Login {
             provider: Some(_),
             no_browser: true,
-            device: false,
             profile: None,
         })
     ));
 
-    let chatgpt = Cli::try_parse_from(["alan", "login", "chatgpt", "--device"]).unwrap();
+    let chatgpt = Cli::try_parse_from(["alan", "login", "chatgpt", "--no-browser"]).unwrap();
     assert!(matches!(
         chatgpt.command,
         Some(Commands::Login {
-            device: true,
-            no_browser: false,
+            no_browser: true,
             ..
         })
     ));

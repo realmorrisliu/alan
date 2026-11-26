@@ -129,7 +129,7 @@ mod tests {
             ModelFamily::OpenAiGpt5
         );
         assert_eq!(
-            ModelFamily::detect("chatgpt", "gpt-5.3-codex"),
+            ModelFamily::detect("chatgpt", "gpt-5.4"),
             ModelFamily::OpenAiGpt5
         );
         assert_eq!(

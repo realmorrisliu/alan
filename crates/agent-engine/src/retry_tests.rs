@@ -18,6 +18,7 @@ fn typed_permanent_cause_wins_over_transient_context() {
         "stream_error:not_found",
         "stream_error:payload_too_large",
         "stream_error:unprocessable",
+        "stream_error:usage_limit",
         "stream_error:http",
         "stream_error:safety",
         "stream_error:recitation",
@@ -111,7 +112,14 @@ fn untyped_legacy_heuristics_are_unchanged() {
         "invalid request",
         "content filtered",
         "ordinary failure",
+        "429 subscription_sharing_usage_limit_exceeded",
+        "429 subscription_sharing_workplace_individual_usage_limit_exceeded",
     ] {
         assert!(!is_retryable(&anyhow::anyhow!(reason)));
     }
+    let limit_err = anyhow::Error::new(alan_llm::ChatgptSubscriptionLimitError {
+        kind: alan_llm::ChatgptSubscriptionLimitKind::SharedUsageLimitExceeded,
+    })
+    .context("429 Too Many Requests");
+    assert!(!is_retryable(&limit_err));
 }

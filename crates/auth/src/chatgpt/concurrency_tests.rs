@@ -13,7 +13,8 @@ async fn independent_refreshers_share_rotation_and_logout_wins_over_inflight_ref
         let config = ChatgptAuthConfig {
             storage_path: temp.path().join("auth.json"),
             issuer: format!("http://{}", listener.local_addr().unwrap()),
-            client_id: "test".into(),
+            resource: "https://api.openai.com/v1".to_string(),
+            agent_name_hint: "Alan".to_string(),
             browser_callback_port: 1455,
         };
         let make_manager = || {
@@ -29,16 +30,15 @@ async fn independent_refreshers_share_rotation_and_logout_wins_over_inflight_ref
         let first = make_manager();
         let second = make_manager();
         first
-            .import_token_bundle(
-                ImportedChatgptTokenBundle {
-                    id_token: build_jwt(
-                        json!({"https://api.openai.com/auth": {"chatgpt_account_id": "acct-test"}}),
-                    ),
-                    access_token: build_jwt(json!({"exp": 1})),
-                    refresh_token: "old-refresh".into(),
-                },
-                None,
-            )
+            .import_token_bundle(ImportedChatgptTokenBundle {
+                id_token: build_jwt(
+                    json!({"https://api.openai.com/auth": {"chatgpt_account_id": "acct-test"}}),
+                ),
+                access_token: build_jwt(json!({"exp": 1})),
+                refresh_token: "old-refresh".into(),
+                client_id: "oaiapp_test".into(),
+                scopes: vec!["chatgpt.tokens.use.direct".into()],
+            })
             .unwrap();
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
@@ -124,23 +124,23 @@ async fn stalled_refresh_times_out_and_releases_the_store_lock() {
     let mut manager = ChatgptAuthManager::new(ChatgptAuthConfig {
         storage_path: temp.path().join("auth.json"),
         issuer: format!("http://{}", listener.local_addr().unwrap()),
-        client_id: "test".into(),
+        resource: "https://api.openai.com/v1".to_string(),
+        agent_name_hint: "Alan".to_string(),
         browser_callback_port: 1455,
     })
     .unwrap();
     Arc::get_mut(&mut manager.inner).unwrap().client =
         reqwest::Client::builder().no_proxy().build().unwrap();
     manager
-        .import_token_bundle(
-            ImportedChatgptTokenBundle {
-                id_token: build_jwt(
-                    json!({"https://api.openai.com/auth": {"chatgpt_account_id": "acct-test"}}),
-                ),
-                access_token: "old-access".into(),
-                refresh_token: "old-refresh".into(),
-            },
-            None,
-        )
+        .import_token_bundle(ImportedChatgptTokenBundle {
+            id_token: build_jwt(
+                json!({"https://api.openai.com/auth": {"chatgpt_account_id": "acct-test"}}),
+            ),
+            access_token: "old-access".into(),
+            refresh_token: "old-refresh".into(),
+            client_id: "oaiapp_test".into(),
+            scopes: vec!["chatgpt.tokens.use.direct".into()],
+        })
         .unwrap();
     let refresh = tokio::spawn(async move { manager.force_refresh_auth().await });
     let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())

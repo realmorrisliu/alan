@@ -111,14 +111,14 @@ fn test_factory_config() {
     );
     assert_eq!(gemini.project_id, Some("my-project".to_string()));
 
-    let chatgpt = factory::ProviderConfig::chatgpt("gpt-5.3-codex");
+    let chatgpt = factory::ProviderConfig::chatgpt("gpt-5.4");
     assert_eq!(
         chatgpt.provider_type,
         factory::ProviderType::ChatgptResponses
     );
     assert_eq!(
         chatgpt.base_url,
-        Some("https://chatgpt.com/backend-api/codex".to_string())
+        Some("https://api.openai.com/v1".to_string())
     );
     assert_eq!(chatgpt.api_key, None);
 

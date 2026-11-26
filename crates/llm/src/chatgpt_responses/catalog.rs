@@ -5,23 +5,38 @@ use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use std::{collections::HashSet, time::Duration};
 
-// The endpoint gates model visibility by Codex protocol compatibility, not Alan's
-// release version. Qualified against the managed catalog on 2026-10-07.
-pub(super) const CODEX_MODELS_API_VERSION: &str = "0.159.0";
 const MAX_CATALOG_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Deserialize)]
 struct ModelsResponse {
-    models: Vec<Model>,
+    #[serde(default)]
+    models: Option<Vec<CatalogModel>>,
+    #[serde(default)]
+    data: Option<Vec<OpenAiModel>>,
 }
 
 #[derive(Deserialize)]
-struct Model {
+struct CatalogModel {
     slug: String,
-    visibility: String,
-    context_window: u32,
+    #[serde(default)]
+    visibility: Option<String>,
+    #[serde(default)]
+    context_window: Option<u32>,
+    #[serde(default)]
     default_reasoning_level: Option<ReasoningEffort>,
+    #[serde(default)]
     supported_reasoning_levels: Vec<ReasoningLevel>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiModel {
+    id: String,
+    #[serde(default)]
+    context_window: Option<u32>,
+    #[serde(default)]
+    default_reasoning_level: Option<ReasoningEffort>,
+    #[serde(default)]
+    supported_reasoning_levels: Option<Vec<ReasoningLevel>>,
 }
 
 #[derive(Deserialize)]
@@ -32,9 +47,7 @@ struct ReasoningLevel {
 impl ChatgptResponsesClient {
     pub(super) async fn fetch_model_catalog(&self) -> Result<Vec<ProviderModel>> {
         tokio::time::timeout(Duration::from_secs(15), async {
-            let mut url = reqwest::Url::parse(&format!("{}/models", self.base_url))?;
-            url.query_pairs_mut()
-                .append_pair("client_version", CODEX_MODELS_API_VERSION);
+            let url = reqwest::Url::parse(&format!("{}/models", self.base_url))?;
             let mut response = self
                 .send_with_auth_retry("request ChatGPT model catalog", || {
                     self.client.get(url.clone())
@@ -71,48 +84,151 @@ impl ChatgptResponsesClient {
     }
 }
 
+fn default_context_window_for_slug(slug: &str) -> u32 {
+    let lower = slug.to_ascii_lowercase();
+    if lower.starts_with("gpt-5.4") {
+        1_050_000
+    } else if lower.starts_with("gpt-5") {
+        400_000
+    } else if lower.starts_with("gpt-4.1") {
+        1_047_576
+    } else {
+        200_000
+    }
+}
+
+fn is_openai_reasoning_slug(slug: &str) -> bool {
+    let lower = slug.to_ascii_lowercase();
+    lower.starts_with("gpt-5")
+        || lower.starts_with("gpt-oss-")
+        || lower.starts_with("codex-")
+        || matches!(lower.as_str(), "o1" | "o3" | "o4")
+        || lower.starts_with("o1-")
+        || lower.starts_with("o3-")
+        || lower.starts_with("o4-")
+}
+
+fn default_reasoning_for_slug(slug: &str) -> (Vec<ReasoningEffort>, Option<ReasoningEffort>) {
+    if is_openai_reasoning_slug(slug) {
+        (
+            vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ],
+            Some(ReasoningEffort::Medium),
+        )
+    } else {
+        (Vec::new(), None)
+    }
+}
+
+fn is_non_chat_openai_model(id: &str) -> bool {
+    let lower = id.to_ascii_lowercase();
+    [
+        "dall-e-",
+        "whisper-",
+        "tts-",
+        "text-embedding-",
+        "omni-moderation-",
+        "text-moderation-",
+        "babbage-",
+        "davinci-",
+        "gpt-image-",
+        "sora-",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+}
+
+fn validate_and_push_model(
+    slug: String,
+    context_window: Option<u32>,
+    default_reasoning_level: Option<ReasoningEffort>,
+    supported_reasoning_levels: Option<Vec<ReasoningLevel>>,
+    seen: &mut HashSet<String>,
+    models: &mut Vec<ProviderModel>,
+) -> Result<()> {
+    let resolved_context_window = match context_window {
+        Some(0) => anyhow::bail!("Invalid ChatGPT model identity or context window"),
+        Some(window) => window,
+        None => default_context_window_for_slug(&slug),
+    };
+    ensure!(
+        !slug.is_empty()
+            && slug.len() <= 128
+            && slug
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+            && seen.insert(slug.to_ascii_lowercase()),
+        "Invalid ChatGPT model identity or context window"
+    );
+    let (efforts, resolved_default) = match supported_reasoning_levels {
+        Some(levels) => (
+            levels.into_iter().map(|level| level.effort).collect(),
+            default_reasoning_level,
+        ),
+        None => {
+            let (efforts, fallback_default) = default_reasoning_for_slug(&slug);
+            (efforts, default_reasoning_level.or(fallback_default))
+        }
+    };
+    let unique: HashSet<_> = efforts.iter().collect();
+    ensure!(
+        unique.len() == efforts.len()
+            && resolved_default.is_none_or(|default| efforts.contains(&default)),
+        "Invalid ChatGPT model reasoning metadata"
+    );
+    models.push(ProviderModel {
+        slug,
+        context_window_tokens: resolved_context_window,
+        supported_reasoning_efforts: efforts,
+        default_reasoning_effort: resolved_default,
+    });
+    Ok(())
+}
+
 fn decode_models(bytes: &[u8]) -> Result<Vec<ProviderModel>> {
     let response: ModelsResponse = serde_json::from_slice(bytes)
         .map_err(|_| anyhow::anyhow!("Invalid ChatGPT model catalog metadata"))?;
-    let total_models = response.models.len();
     let mut seen = HashSet::new();
     let mut models = Vec::new();
-    for model in response
-        .models
-        .into_iter()
-        .filter(|model| model.visibility == "list")
-    {
-        ensure!(
-            !model.slug.is_empty()
-                && model.slug.len() <= 128
-                && model
-                    .slug
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-                && model.context_window > 0
-                && seen.insert(model.slug.to_ascii_lowercase()),
-            "Invalid ChatGPT model identity or context window"
-        );
-        let efforts: Vec<_> = model
-            .supported_reasoning_levels
+    let total_models: usize;
+
+    if let Some(catalog_models) = response.models {
+        total_models = catalog_models.len();
+        for model in catalog_models
             .into_iter()
-            .map(|level| level.effort)
-            .collect();
-        let unique: HashSet<_> = efforts.iter().collect();
-        ensure!(
-            unique.len() == efforts.len()
-                && model
-                    .default_reasoning_level
-                    .is_none_or(|default| efforts.contains(&default)),
-            "Invalid ChatGPT model reasoning metadata"
-        );
-        models.push(ProviderModel {
-            slug: model.slug,
-            context_window_tokens: model.context_window,
-            supported_reasoning_efforts: efforts,
-            default_reasoning_effort: model.default_reasoning_level,
-        });
+            .filter(|model| model.visibility.as_deref().is_none_or(|v| v == "list"))
+        {
+            validate_and_push_model(
+                model.slug,
+                model.context_window,
+                model.default_reasoning_level,
+                Some(model.supported_reasoning_levels),
+                &mut seen,
+                &mut models,
+            )?;
+        }
+    } else if let Some(data_models) = response.data {
+        total_models = data_models.len();
+        for model in data_models
+            .into_iter()
+            .filter(|model| !is_non_chat_openai_model(&model.id))
+        {
+            validate_and_push_model(
+                model.id,
+                model.context_window,
+                model.default_reasoning_level,
+                model.supported_reasoning_levels,
+                &mut seen,
+                &mut models,
+            )?;
+        }
+    } else {
+        anyhow::bail!("Invalid ChatGPT model catalog metadata");
     }
+
     ensure!(
         !models.is_empty(),
         "ChatGPT model catalog has no selectable models ({total_models} returned)"
@@ -161,5 +277,54 @@ mod tests {
                 .find("secret")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn catalog_decodes_openai_data_shape_with_fallback_context_windows() {
+        let raw = serde_json::to_vec(&serde_json::json!({
+            "object": "list",
+            "data": [
+                {"id": "gpt-5.4"},
+                {"id": "gpt-5-mini"},
+                {"id": "gpt-4.1"},
+                {"id": "gpt-5-chat-latest", "supported_reasoning_levels": []},
+                {"id": "dall-e-3"},
+                {"id": "text-embedding-3-large"}
+            ]
+        }))
+        .unwrap();
+        let parsed = decode_models(&raw).unwrap();
+        assert_eq!(parsed.len(), 4);
+        assert_eq!(parsed[0].slug, "gpt-5.4");
+        assert_eq!(parsed[0].context_window_tokens, 1_050_000);
+        assert_eq!(
+            parsed[0].supported_reasoning_efforts,
+            vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High
+            ]
+        );
+        assert_eq!(
+            parsed[0].default_reasoning_effort,
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(parsed[1].slug, "gpt-5-mini");
+        assert_eq!(parsed[1].context_window_tokens, 400_000);
+        assert_eq!(
+            parsed[1].supported_reasoning_efforts,
+            vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High
+            ]
+        );
+        assert_eq!(parsed[2].slug, "gpt-4.1");
+        assert_eq!(parsed[2].context_window_tokens, 1_047_576);
+        assert!(parsed[2].supported_reasoning_efforts.is_empty());
+        assert_eq!(parsed[2].default_reasoning_effort, None);
+        assert_eq!(parsed[3].slug, "gpt-5-chat-latest");
+        assert!(parsed[3].supported_reasoning_efforts.is_empty());
+        assert_eq!(parsed[3].default_reasoning_effort, None);
     }
 }

@@ -210,4 +210,12 @@ fn http_status_failures_preserve_transient_and_permanent_categories() {
             .context("private request context");
         assert_eq!(safe_failure_reason(&error), expected, "HTTP {status}");
     }
+    let usage_err = anyhow::Error::new(crate::ChatgptSubscriptionLimitError {
+        kind: crate::ChatgptSubscriptionLimitKind::SharedUsageLimitExceeded,
+    });
+    assert_eq!(safe_failure_reason(&usage_err), "stream_error:usage_limit");
+    assert_eq!(
+        safe_finish_reason("stream_error:usage_limit"),
+        "stream_error:usage_limit"
+    );
 }

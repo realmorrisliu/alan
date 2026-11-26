@@ -164,12 +164,12 @@ impl ProviderConfig {
         }
     }
 
-    /// Create a new provider config for the ChatGPT/Codex managed-auth Responses surface.
+    /// Create a new provider config for the Sign in with ChatGPT Responses surface.
     pub fn chatgpt(model: impl Into<String>) -> Self {
         Self {
             provider_type: ProviderType::ChatgptResponses,
             api_key: None,
-            base_url: Some("https://chatgpt.com/backend-api/codex".to_string()),
+            base_url: Some("https://api.openai.com/v1".to_string()),
             model: model.into(),
             expected_account_id: None,
             chatgpt_auth_storage_path: None,
@@ -440,7 +440,7 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
             {
                 let base_url = config
                     .base_url
-                    .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".to_string());
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
                 let client = ChatgptResponsesClient::with_params(
                     &base_url,
                     &config.model,

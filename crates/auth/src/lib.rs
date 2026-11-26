@@ -10,8 +10,8 @@ mod token_data;
 pub use chatgpt::{
     BrowserLoginCompletion, BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthError,
     ChatgptAuthErrorKind, ChatgptAuthManager, ChatgptAuthSnapshot, ChatgptLoginSuccess,
-    ChatgptRequestAuth, DeviceCodeLoginOptions, DeviceCodePrompt, ImportedChatgptTokenBundle,
-    PendingBrowserLogin, new_chatgpt_session_id,
+    ChatgptRequestAuth, ImportedChatgptTokenBundle, PendingBrowserLogin, new_chatgpt_session_id,
+    parse_manual_browser_callback,
 };
 pub use storage::{
     ACCESS_TOKEN_REFRESH_WINDOW_SECS, AuthStorage, AuthStore, StoredChatgptAuth, StoredGoogleAuth,

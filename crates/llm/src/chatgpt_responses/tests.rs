@@ -22,6 +22,7 @@ struct TestServerState {
     refresh_count: Arc<AtomicUsize>,
     authorizations: Arc<Mutex<Vec<String>>>,
     account_ids: Arc<Mutex<Vec<String>>>,
+    session_headers: Arc<Mutex<Vec<String>>>,
     accept_headers: Arc<Mutex<Vec<String>>>,
     request_bodies: Arc<Mutex<Vec<serde_json::Value>>>,
     response_mode: TestResponseMode,
@@ -33,6 +34,8 @@ enum TestResponseMode {
     RequireStream,
     UnauthorizedThenOk,
     AlwaysUnauthorized,
+    SharedUsageLimitExceeded,
+    WorkplaceUsageLimitExceeded,
 }
 
 fn build_jwt(payload: serde_json::Value) -> String {
@@ -55,18 +58,25 @@ fn seed_chatgpt_auth(storage_path: PathBuf, access_token: String, refresh_token:
     storage
         .save(&AuthStore {
             version: 1,
+            ext_agent_host_id: None,
             chatgpt: Some(
-                StoredChatgptAuth::from_tokens(ChatgptTokenData {
-                    id_token: ChatgptIdTokenInfo {
-                        email: Some("user@example.com".to_string()),
-                        plan_type: Some("pro".to_string()),
-                        user_id: Some("user_123".to_string()),
-                        account_id: Some("acct_123".to_string()),
-                        raw_jwt: id_token,
+                StoredChatgptAuth::from_tokens(
+                    ChatgptTokenData {
+                        id_token: ChatgptIdTokenInfo {
+                            email: Some("user@example.com".to_string()),
+                            plan_type: Some("pro".to_string()),
+                            user_id: Some("user_123".to_string()),
+                            account_id: Some("acct_123".to_string()),
+                            subject: None,
+                            nonce: None,
+                            raw_jwt: id_token,
+                        },
+                        access_token,
+                        refresh_token: refresh_token.to_string(),
                     },
-                    access_token,
-                    refresh_token: refresh_token.to_string(),
-                })
+                    "oaiapp_test".to_string(),
+                    vec!["chatgpt.tokens.use.direct".to_string()],
+                )
                 .expect("stored auth"),
             ),
             google: None,
@@ -81,12 +91,13 @@ fn test_client(base_url: &str, storage_path: PathBuf) -> ChatgptResponsesClient 
         auth_manager: ChatgptAuthManager::new(ChatgptAuthConfig {
             storage_path,
             issuer: base_url.to_string(),
-            client_id: "client".to_string(),
+            resource: "https://api.openai.com/v1".to_string(),
+            agent_name_hint: "Alan".to_string(),
             browser_callback_port: 1455,
         })
         .expect("auth manager"),
         base_url: base_url.trim_end_matches('/').to_string(),
-        model: "gpt-5.3-codex".to_string(),
+        model: "gpt-5.4".to_string(),
         custom_headers: HashMap::new(),
         expected_account_id: Some("acct_123".to_string()),
         prompt_cache_key: alan_auth::new_chatgpt_session_id(),
@@ -182,6 +193,16 @@ async fn spawn_chatgpt_test_server(
                 .expect("account ids")
                 .push(account_id.to_string());
         }
+        if let Some(session_id) = headers
+            .get("session_id")
+            .and_then(|value| value.to_str().ok())
+        {
+            state
+                .session_headers
+                .lock()
+                .expect("session headers")
+                .push(session_id.to_string());
+        }
         if let Some(accept) = headers.get("accept").and_then(|value| value.to_str().ok()) {
             state
                 .accept_headers
@@ -228,6 +249,24 @@ async fn spawn_chatgpt_test_server(
                 axum::http::StatusCode::UNAUTHORIZED,
                 serde_json::json!({"error": "still unauthorized"}),
             ),
+            TestResponseMode::SharedUsageLimitExceeded => json_response(
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                serde_json::json!({
+                    "error": {
+                        "code": "subscription_sharing_usage_limit_exceeded",
+                        "message": "Usage limit exceeded"
+                    }
+                }),
+            ),
+            TestResponseMode::WorkplaceUsageLimitExceeded => json_response(
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                serde_json::json!({
+                    "error": {
+                        "code": "subscription_sharing_workplace_individual_usage_limit_exceeded",
+                        "message": "Workspace limit exceeded"
+                    }
+                }),
+            ),
         }
     }
 
@@ -236,26 +275,13 @@ async fn spawn_chatgpt_test_server(
         headers: HeaderMap,
         uri: axum::http::Uri,
     ) -> axum::response::Response {
-        assert_eq!(
-            uri.query(),
-            Some(
-                format!(
-                    "client_version={}",
-                    super::catalog::CODEX_MODELS_API_VERSION
-                )
-                .as_str()
-            )
-        );
+        assert_eq!(uri.query(), None);
+        assert!(headers.get("chatgpt-account-id").is_none());
         state
             .authorizations
             .lock()
             .unwrap()
             .push(headers["authorization"].to_str().unwrap().into());
-        state
-            .account_ids
-            .lock()
-            .unwrap()
-            .push(headers["chatgpt-account-id"].to_str().unwrap().into());
         let count = state.response_count.fetch_add(1, Ordering::SeqCst);
         if matches!(state.response_mode, TestResponseMode::AlwaysUnauthorized)
             || matches!(state.response_mode, TestResponseMode::UnauthorizedThenOk) && count == 0
@@ -279,6 +305,7 @@ async fn spawn_chatgpt_test_server(
         refresh_count: Arc::new(AtomicUsize::new(0)),
         authorizations: Arc::new(Mutex::new(Vec::new())),
         account_ids: Arc::new(Mutex::new(Vec::new())),
+        session_headers: Arc::new(Mutex::new(Vec::new())),
         accept_headers: Arc::new(Mutex::new(Vec::new())),
         request_bodies: Arc::new(Mutex::new(Vec::new())),
         response_mode,
@@ -286,7 +313,7 @@ async fn spawn_chatgpt_test_server(
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let address = listener.local_addr().expect("local addr");
     let app = Router::new()
-        .route("/oauth/token", post(refresh_token))
+        .route("/api/accounts/oauth/token", post(refresh_token))
         .route("/responses", post(responses))
         .route("/models", axum::routing::get(models))
         .with_state(state.clone());
@@ -371,9 +398,17 @@ async fn proactive_refresh_happens_before_dispatch() {
         state.authorizations.lock().expect("authorizations").clone(),
         vec![format!("Bearer {}", refreshed_access_token())]
     );
-    assert_eq!(
-        state.account_ids.lock().expect("account ids").clone(),
-        vec!["acct_123".to_string()]
+    assert!(
+        state.account_ids.lock().expect("account ids").is_empty(),
+        "SIWC requests must not send chatgpt-account-id"
+    );
+    assert!(
+        state
+            .session_headers
+            .lock()
+            .expect("session headers")
+            .is_empty(),
+        "SIWC requests must not send legacy session_id header"
     );
     assert_eq!(
         state.accept_headers.lock().expect("accept headers").clone(),
@@ -414,10 +449,7 @@ async fn unauthorized_response_triggers_single_refresh_and_retry() {
         authorizations[1],
         format!("Bearer {}", refreshed_access_token())
     );
-    assert_eq!(
-        state.account_ids.lock().expect("account ids").clone(),
-        vec!["acct_123".to_string(), "acct_123".to_string()]
-    );
+    assert!(state.account_ids.lock().expect("account ids").is_empty());
     let request_bodies = state.request_bodies.lock().expect("request bodies").clone();
     assert_eq!(request_bodies.len(), 2);
     assert_eq!(request_bodies[0]["stream"], true);
@@ -565,31 +597,38 @@ async fn generate_rejects_previous_response_id_for_managed_chatgpt() {
 fn chatgpt_build_request_normalizes_managed_request_fields() {
     let storage = TempDir::new().unwrap();
     let client = ChatgptResponsesClient::with_params(
-        "https://chatgpt.com/backend-api/codex",
-        "gpt-5.3-codex",
+        "https://api.openai.com/v1",
+        "gpt-5.4",
         HashMap::new(),
         Some("acct_123".to_string()),
         Some(storage.path().join("auth.json")),
     )
     .expect("client");
 
-    let request = client
-        .build_openai_responses_request(
-            crate::GenerationRequest::new()
-                .with_system_prompt("system")
-                .with_user_message("hello")
-                .with_previous_response_id("resp_prev")
-                .with_temperature(0.7)
-                .with_store(true),
-            false,
-        )
-        .unwrap();
+    let mut req = crate::GenerationRequest::new()
+        .with_system_prompt("system")
+        .with_user_message("hello")
+        .with_previous_response_id("resp_prev")
+        .with_temperature(0.7)
+        .with_store(true);
+    req.extra_params.insert(
+        "prompt_cache_retention".to_string(),
+        serde_json::json!("24h"),
+    );
+    req.extra_params.insert(
+        "prompt_cache_options".to_string(),
+        serde_json::json!({"mode": "explicit"}),
+    );
+
+    let request = client.build_openai_responses_request(req, false).unwrap();
 
     assert_eq!(request.previous_response_id.as_deref(), Some("resp_prev"));
     assert_eq!(request.store, Some(false));
     assert_eq!(request.instructions.as_deref(), Some("system"));
     assert_eq!(request.temperature, None);
     assert_eq!(request.max_output_tokens, None);
+    assert!(!request.extra_params.contains_key("prompt_cache_retention"));
+    assert!(!request.extra_params.contains_key("prompt_cache_options"));
 }
 
 #[tokio::test]
@@ -646,10 +685,7 @@ async fn catalog_uses_bound_account_and_refreshes_only_once() {
         assert_eq!(result.is_ok(), succeeds);
         assert_eq!(state.response_count.load(Ordering::SeqCst), 2);
         assert_eq!(state.refresh_count.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            *state.account_ids.lock().unwrap(),
-            vec!["acct_123", "acct_123"]
-        );
+        assert!(state.account_ids.lock().unwrap().is_empty());
         assert_eq!(
             *state.authorizations.lock().unwrap(),
             vec![
@@ -766,4 +802,32 @@ fn client_requires_host_auth_binding_instead_of_detecting_a_personal_store() {
             .to_string()
             .contains("explicit Host auth storage binding")
     );
+}
+
+#[tokio::test]
+async fn subscription_sharing_usage_limit_errors_are_typed_and_actionable() {
+    for (mode, expected_substr) in [
+        (
+            TestResponseMode::SharedUsageLimitExceeded,
+            "https://chatgpt.com/settings/usage",
+        ),
+        (
+            TestResponseMode::WorkplaceUsageLimitExceeded,
+            "admin.openai.com",
+        ),
+    ] {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let storage_path = seed_chatgpt_auth(
+            temp_dir.path().join("auth.json"),
+            valid_access_token(),
+            "refresh",
+        );
+        let (base_url, _state, server) = spawn_chatgpt_test_server(mode).await;
+        let mut client = test_client(&base_url, storage_path);
+
+        let err = client.chat(None, "hello").await.unwrap_err();
+        assert!(err.to_string().contains(expected_substr), "{err}");
+        assert_eq!(crate::safe_failure_reason(&err), "stream_error:usage_limit");
+        server.abort();
+    }
 }

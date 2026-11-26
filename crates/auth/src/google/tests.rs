@@ -88,6 +88,7 @@ async fn browser_pkce_flow_persists_google_auth_and_preserves_chatgpt() {
     storage
         .save(&AuthStore {
             version: 1,
+            ext_agent_host_id: None,
             chatgpt: Some(StoredChatgptAuth {
                 tokens: ChatgptTokenData {
                     id_token: ChatgptIdTokenInfo {
@@ -95,12 +96,16 @@ async fn browser_pkce_flow_persists_google_auth_and_preserves_chatgpt() {
                         plan_type: Some("pro".to_string()),
                         account_id: Some("acct_1".to_string()),
                         user_id: Some("usr_1".to_string()),
+                        subject: None,
+                        nonce: None,
                         raw_jwt: fake_id_token_with_email("gpt@example.com"),
                     },
                     access_token: fake_id_token_with_email("gpt@example.com"),
                     refresh_token: "gpt-refresh".to_string(),
                 },
                 account_id: "acct_1".to_string(),
+                client_id: "oaiapp_1".to_string(),
+                scopes: vec!["chatgpt.tokens.use.direct".to_string()],
                 email: Some("gpt@example.com".to_string()),
                 plan_type: Some("pro".to_string()),
                 user_id: Some("usr_1".to_string()),
@@ -251,6 +256,7 @@ async fn single_flight_refresh_coalesces_concurrent_requests() {
     storage
         .save(&AuthStore {
             version: 1,
+            ext_agent_host_id: None,
             chatgpt: None,
             google: Some(StoredGoogleAuth {
                 refresh_token: "old-refresh".to_string(),
@@ -348,6 +354,7 @@ async fn adc_authorized_user_file_exchanges_token_and_respects_priority_chain() 
     storage
         .save(&AuthStore {
             version: 1,
+            ext_agent_host_id: None,
             chatgpt: None,
             google: Some(StoredGoogleAuth {
                 refresh_token: "managed-refresh".to_string(),
@@ -485,6 +492,7 @@ async fn drive_file_scope_single_flight_refresh_preserves_scope_and_isolation() 
     vertex_storage
         .save(&AuthStore {
             version: 1,
+            ext_agent_host_id: None,
             chatgpt: None,
             google: Some(StoredGoogleAuth {
                 refresh_token: "vertex-refresh".to_string(),
@@ -526,6 +534,7 @@ async fn drive_file_scope_single_flight_refresh_preserves_scope_and_isolation() 
     drive_storage
         .save(&AuthStore {
             version: 1,
+            ext_agent_host_id: None,
             chatgpt: None,
             google: Some(StoredGoogleAuth {
                 refresh_token: "1//stale-drive".to_string(),

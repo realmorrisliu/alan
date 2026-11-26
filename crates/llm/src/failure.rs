@@ -26,11 +26,42 @@ impl std::fmt::Display for StreamClosed {
 }
 impl std::error::Error for StreamClosed {}
 
+/// Typed error for OpenAI Sign in with ChatGPT subscription-sharing usage limits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatgptSubscriptionLimitKind {
+    SharedUsageLimitExceeded,
+    WorkplaceIndividualUsageLimitExceeded,
+}
+
+/// Non-retryable usage limit returned by OpenAI Sign in with ChatGPT.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatgptSubscriptionLimitError {
+    pub kind: ChatgptSubscriptionLimitKind,
+}
+
+impl std::fmt::Display for ChatgptSubscriptionLimitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            ChatgptSubscriptionLimitKind::SharedUsageLimitExceeded => f.write_str(
+                "ChatGPT subscription_sharing_usage_limit_exceeded: your ChatGPT plan's connected-app usage limit has been reached. Check your ChatGPT usage at https://chatgpt.com/settings/usage",
+            ),
+            ChatgptSubscriptionLimitKind::WorkplaceIndividualUsageLimitExceeded => f.write_str(
+                "ChatGPT subscription_sharing_workplace_individual_usage_limit_exceeded: you have reached your ChatGPT workspace's usage limit. Ask your workspace admin to increase it at admin.openai.com -> Workspace -> Usage limits",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ChatgptSubscriptionLimitError {}
+
 /// Bounded provider diagnostic. Never formats an error or any of its sources.
 pub fn safe_failure_reason(error: &anyhow::Error) -> &'static str {
     for source in error.chain() {
         if source.is::<StreamClosed>() {
             return "stream_error:closed";
+        }
+        if source.is::<ChatgptSubscriptionLimitError>() {
+            return "stream_error:usage_limit";
         }
         if source.is::<serde_json::Error>() {
             return "stream_error:parse";
@@ -97,6 +128,7 @@ pub fn safe_finish_reason(reason: &str) -> &'static str {
         "stream_error:payload_too_large" => "stream_error:payload_too_large",
         "stream_error:unprocessable" => "stream_error:unprocessable",
         "stream_error:rate_limit" => "stream_error:rate_limit",
+        "stream_error:usage_limit" => "stream_error:usage_limit",
         "stream_error:unavailable" => "stream_error:unavailable",
         "stream_error:timeout" => "stream_error:timeout",
         "stream_error:connect" => "stream_error:connect",

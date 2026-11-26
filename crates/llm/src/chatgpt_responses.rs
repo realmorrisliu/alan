@@ -7,7 +7,10 @@ use crate::openai_chat_completions::{
     OpenAiResponsesRequest, OpenAiResponsesResponse, build_responses_request_for_model,
     convert_openai_responses_output,
 };
-use crate::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
+use crate::{
+    ChatgptSubscriptionLimitError, ChatgptSubscriptionLimitKind, GenerationRequest,
+    GenerationResponse, LlmProvider, StreamChunk,
+};
 use alan_auth::{ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthManager, new_chatgpt_session_id};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -16,20 +19,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{debug, instrument};
 
-/// Header carrying the stable per-client request-session identity.
-const SESSION_ID_HEADER: &str = "session_id";
-/// Header carrying the same identity under the Codex conversation name.
-const CONVERSATION_ID_HEADER: &str = "conversation_id";
-/// Header carrying the managed account/workspace identity from the token claims.
-const ACCOUNT_ID_HEADER: &str = "chatgpt-account-id";
 /// Body field the backend uses to route requests to a warm prompt cache.
 const PROMPT_CACHE_KEY: &str = "prompt_cache_key";
 
-/// Client for the ChatGPT/Codex managed-auth Responses-compatible surface.
+/// Client for the Sign in with ChatGPT managed-auth OpenAI Responses surface.
 ///
-/// Each client instance owns one stable session id, sent as the `session_id` and
-/// `conversation_id` headers and as the body `prompt_cache_key` on every request, so
-/// consecutive turns hit the same backend KV cache.
+/// Each client instance owns one stable session key, sent as the body `prompt_cache_key`
+/// on every request so consecutive turns hit the same backend prompt cache.
 pub struct ChatgptResponsesClient {
     client: reqwest::Client,
     auth_manager: ChatgptAuthManager,
@@ -100,16 +96,8 @@ impl ChatgptResponsesClient {
         mut builder: reqwest::RequestBuilder,
     ) -> reqwest::RequestBuilder {
         for (name, value) in &self.custom_headers {
-            // Managed credentials, account and session identity have exactly one owner.
-            if ![
-                "authorization",
-                ACCOUNT_ID_HEADER,
-                SESSION_ID_HEADER,
-                CONVERSATION_ID_HEADER,
-            ]
-            .iter()
-            .any(|owned| name.eq_ignore_ascii_case(owned))
-            {
+            // Managed Bearer authorization has a single owner.
+            if !name.eq_ignore_ascii_case("authorization") {
                 builder = builder.header(name, value);
             }
         }
@@ -120,16 +108,11 @@ impl ChatgptResponsesClient {
         &self,
         builder: reqwest::RequestBuilder,
         auth: &alan_auth::ChatgptRequestAuth,
-        affinity_key: &str,
     ) -> reqwest::RequestBuilder {
-        self.apply_custom_headers(builder)
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", auth.access_token),
-            )
-            .header(ACCOUNT_ID_HEADER, &auth.account_id)
-            .header(SESSION_ID_HEADER, affinity_key)
-            .header(CONVERSATION_ID_HEADER, affinity_key)
+        self.apply_custom_headers(builder).header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", auth.access_token),
+        )
     }
 
     /// Send a managed request, refreshing credentials before dispatch when they are
@@ -140,19 +123,9 @@ impl ChatgptResponsesClient {
         operation: &'static str,
         build: impl Fn() -> reqwest::RequestBuilder,
     ) -> Result<reqwest::Response> {
-        self.send_with_auth_retry_for_session(operation, &self.prompt_cache_key, build)
-            .await
-    }
-
-    async fn send_with_auth_retry_for_session(
-        &self,
-        operation: &'static str,
-        affinity_key: &str,
-        build: impl Fn() -> reqwest::RequestBuilder,
-    ) -> Result<reqwest::Response> {
         let auth = self.request_auth(None).await?;
         let response = self
-            .authorize(build(), &auth, affinity_key)
+            .authorize(build(), &auth)
             .send()
             .await
             .with_context(|| format!("Failed to {operation}"))?;
@@ -166,7 +139,7 @@ impl ChatgptResponsesClient {
         );
         drop(response);
         let auth = self.request_auth(Some(&auth.access_token)).await?;
-        self.authorize(build(), &auth, affinity_key)
+        self.authorize(build(), &auth)
             .send()
             .await
             .with_context(|| format!("Failed to {operation}"))
@@ -179,15 +152,13 @@ impl ChatgptResponsesClient {
     ) -> Result<OpenAiResponsesRequest> {
         let mut request = build_responses_request_for_model(self.model.clone(), request, stream)?;
         request.instructions = Some(request.instructions.unwrap_or_default());
-        // Managed ChatGPT rejects `store=true`, so keep that provider invariant here.
+        // Sign in with ChatGPT requires `store=false` and rejects temperature,
+        // max_output_tokens, prompt_cache_retention, and prompt_cache_options.
         request.store = Some(false);
-        // Managed ChatGPT also rejects the generic Responses `temperature`
-        // field; runtime may still set one globally, so strip it here.
         request.temperature = None;
-        // Managed ChatGPT currently rejects the official Responses
-        // `max_output_tokens` field, so keep the request surface to the
-        // subset accepted by the managed endpoint.
         request.max_output_tokens = None;
+        request.extra_params.remove("prompt_cache_retention");
+        request.extra_params.remove("prompt_cache_options");
         Ok(request)
     }
 
@@ -305,18 +276,14 @@ impl ChatgptResponsesClient {
         self.bind_prompt_cache_key(&mut request, affinity_key);
         let url = format!("{}/responses", self.base_url);
         let response = self
-            .send_with_auth_retry_for_session(
-                "send request to ChatGPT Responses API",
-                affinity_key,
-                || {
-                    let builder = self.client.post(&url).json(&request);
-                    if stream {
-                        builder.header(reqwest::header::ACCEPT, "text/event-stream")
-                    } else {
-                        builder
-                    }
-                },
-            )
+            .send_with_auth_retry("send request to ChatGPT Responses API", || {
+                let builder = self.client.post(&url).json(&request);
+                if stream {
+                    builder.header(reqwest::header::ACCEPT, "text/event-stream")
+                } else {
+                    builder
+                }
+            })
             .await?;
         if stream {
             debug!("Started ChatGPT streaming Responses request");
@@ -459,7 +426,25 @@ async fn check_chatgpt_response_status(response: reqwest::Response) -> Result<re
         let body = response.text().await.unwrap_or_default();
         return Err(ChatgptAuthError::UnauthorizedAfterRefresh(body).into());
     }
-    let response = response.error_for_status()?;
+    if let Err(status_err) = response.error_for_status_ref() {
+        let body = response.text().await.unwrap_or_default();
+        if body.contains("subscription_sharing_workplace_individual_usage_limit_exceeded") {
+            return Err(ChatgptSubscriptionLimitError {
+                kind: ChatgptSubscriptionLimitKind::WorkplaceIndividualUsageLimitExceeded,
+            }
+            .into());
+        }
+        if body.contains("subscription_sharing_usage_limit_exceeded") {
+            return Err(ChatgptSubscriptionLimitError {
+                kind: ChatgptSubscriptionLimitKind::SharedUsageLimitExceeded,
+            }
+            .into());
+        }
+        if body.trim().is_empty() {
+            return Err(status_err.into());
+        }
+        return Err(anyhow::Error::new(status_err).context(body));
+    }
     Ok(response)
 }
 

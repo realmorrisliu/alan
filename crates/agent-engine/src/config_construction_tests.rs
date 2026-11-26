@@ -192,27 +192,18 @@ fn test_config_for_openai_responses_defaults() {
 
 #[test]
 fn test_config_for_chatgpt() {
-    let config = Config::for_chatgpt(
-        Some("https://chatgpt.com/backend-api/codex"),
-        Some("gpt-5.3-codex"),
-    );
+    let config = Config::for_chatgpt(Some("https://api.openai.com/v1"), Some("gpt-5.4"));
     assert_eq!(config.llm_provider, LlmProvider::Chatgpt);
-    assert_eq!(
-        config.chatgpt_base_url,
-        "https://chatgpt.com/backend-api/codex"
-    );
-    assert_eq!(config.chatgpt_model, "gpt-5.3-codex");
+    assert_eq!(config.chatgpt_base_url, "https://api.openai.com/v1");
+    assert_eq!(config.chatgpt_model, "gpt-5.4");
     assert!(config.has_llm_config());
 }
 
 #[test]
 fn test_config_for_chatgpt_defaults() {
     let config = Config::for_chatgpt(None, None);
-    assert_eq!(
-        config.chatgpt_base_url,
-        "https://chatgpt.com/backend-api/codex"
-    );
-    assert_eq!(config.chatgpt_model, "gpt-5.3-codex");
+    assert_eq!(config.chatgpt_base_url, "https://api.openai.com/v1");
+    assert_eq!(config.chatgpt_model, "gpt-5.4");
 }
 
 #[test]

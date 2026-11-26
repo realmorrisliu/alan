@@ -121,10 +121,7 @@ async fn managed_connection(
     managed.credential_id = Some("managed-ref".into());
     managed.settings = BTreeMap::from([
         ("model".into(), "model-a".into()),
-        (
-            "base_url".into(),
-            "https://chatgpt.com/backend-api/codex".into(),
-        ),
+        ("base_url".into(), "https://api.openai.com/v1".into()),
     ]);
     connections.profiles.insert("managed".into(), managed);
     service

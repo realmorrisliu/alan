@@ -1,5 +1,6 @@
 use crate::token_data::{ChatgptTokenData, parse_jwt_expiration};
 use chrono::{DateTime, Utc};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fs;
@@ -19,6 +20,10 @@ const OPAQUE_ACCESS_TOKEN_MAX_AGE_SECS: i64 = 8 * 24 * 60 * 60;
 pub struct StoredChatgptAuth {
     pub tokens: ChatgptTokenData,
     pub account_id: String,
+    #[serde(default)]
+    pub client_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,14 +36,40 @@ pub struct StoredChatgptAuth {
     pub last_refresh_at: Option<DateTime<Utc>>,
 }
 
+pub(crate) fn is_issued_client_id(client_id: &str) -> bool {
+    let trimmed = client_id.trim();
+    !trimmed.is_empty() && trimmed != crate::chatgpt::DYNAMIC_CLIENT_ID
+}
+
 impl StoredChatgptAuth {
-    pub fn from_tokens(tokens: ChatgptTokenData) -> io::Result<Self> {
-        let account_id = tokens.id_token.account_id.clone().ok_or_else(|| {
-            io::Error::new(
+    /// Whether this credential carries a real OAuth `client_id` issued by SIWC
+    /// (excluding empty values and the pre-registration placeholder).
+    pub fn has_issued_client_id(&self) -> bool {
+        is_issued_client_id(&self.client_id)
+    }
+
+    pub fn from_tokens(
+        tokens: ChatgptTokenData,
+        client_id: String,
+        scopes: Vec<String>,
+    ) -> io::Result<Self> {
+        let client_id = client_id.trim().to_string();
+        if !is_issued_client_id(&client_id) {
+            return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "ChatGPT id token did not include chatgpt_account_id",
-            )
-        })?;
+                "ChatGPT auth requires an issued OAuth client_id",
+            ));
+        }
+        let account_id = tokens
+            .id_token
+            .effective_account_id()
+            .map(ToString::to_string)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "ChatGPT id token did not include a subject or account identity",
+                )
+            })?;
 
         Ok(Self {
             email: tokens.id_token.email.clone(),
@@ -47,6 +78,8 @@ impl StoredChatgptAuth {
             access_token_expires_at: parse_jwt_expiration(&tokens.access_token).ok().flatten(),
             tokens,
             account_id,
+            client_id,
+            scopes,
             last_refresh_at: Some(Utc::now()),
         })
     }
@@ -114,9 +147,26 @@ pub struct AuthStore {
     #[serde(default)]
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ext_agent_host_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_chatgpt_auth"
+    )]
     pub chatgpt: Option<StoredChatgptAuth>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub google: Option<StoredGoogleAuth>,
+}
+
+/// Treat pre-SIWC ChatGPT grants (missing an issued `client_id`) as logged out so
+/// existing auth stores remain readable without manual file deletion while `google`
+/// and `ext_agent_host_id` stay intact.
+fn deserialize_chatgpt_auth<'de, D>(deserializer: D) -> Result<Option<StoredChatgptAuth>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<StoredChatgptAuth>::deserialize(deserializer)?
+        .filter(StoredChatgptAuth::has_issued_client_id))
 }
 
 #[derive(Debug, Clone)]
@@ -141,11 +191,32 @@ impl AuthStorage {
             Ok(raw) => serde_json::from_str(&raw).map_err(io::Error::other),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AuthStore {
                 version: 1,
+                ext_agent_host_id: None,
                 chatgpt: None,
                 google: None,
             }),
             Err(error) => Err(error),
         }
+    }
+
+    /// Return the persistent installation-level `ext_agent_host_id` (`urn:uuid:<uuid>`),
+    /// generating and saving one atomically if absent.
+    pub fn ensure_ext_agent_host_id(&self) -> io::Result<String> {
+        let _guard = self.lock("auth.json.lock")?;
+        let mut store = self.load()?;
+        if let Some(existing) = store
+            .ext_agent_host_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            return Ok(existing.to_string());
+        }
+        let generated = new_ext_agent_host_id();
+        store.version = 1;
+        store.ext_agent_host_id = Some(generated.clone());
+        self.save_locked(&store)?;
+        Ok(generated)
     }
 
     /// Validate an existing managed-auth file for offline installation adoption.
@@ -164,7 +235,10 @@ impl AuthStorage {
         };
         let value: serde_json::Value =
             serde_json::from_slice(&fs::read(path)?).map_err(|_| invalid())?;
-        validate_fields(&value, &["version", "chatgpt", "google"])?;
+        validate_fields(
+            &value,
+            &["version", "ext_agent_host_id", "chatgpt", "google"],
+        )?;
         if value.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
             return Err(invalid());
         }
@@ -174,6 +248,8 @@ impl AuthStorage {
                 &[
                     "tokens",
                     "account_id",
+                    "client_id",
+                    "scopes",
                     "email",
                     "plan_type",
                     "user_id",
@@ -204,7 +280,8 @@ impl AuthStorage {
         let store: AuthStore = serde_json::from_value(value).map_err(|_| invalid())?;
         if let Some(auth) = store.chatgpt
             && (auth.account_id.is_empty()
-                || auth.tokens.id_token.account_id.as_deref() != Some(auth.account_id.as_str())
+                || !auth.has_issued_client_id()
+                || auth.tokens.id_token.effective_account_id() != Some(auth.account_id.as_str())
                 || auth.tokens.access_token.is_empty()
                 || auth.tokens.refresh_token.is_empty())
         {
@@ -316,6 +393,32 @@ impl AuthStorage {
     }
 }
 
+fn new_ext_agent_host_id() -> String {
+    let mut bytes = [0u8; 16];
+    rand::rng().fill_bytes(&mut bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    format!(
+        "urn:uuid:{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15],
+    )
+}
+
 fn validate_fields(value: &serde_json::Value, allowed: &[&str]) -> io::Result<()> {
     if value
         .as_object()
@@ -424,21 +527,31 @@ mod tests {
             }
         }));
         let access_token = build_jwt(json!({"exp": 4_102_444_800_i64}));
-        let auth = StoredChatgptAuth::from_tokens(ChatgptTokenData {
-            id_token: ChatgptIdTokenInfo {
-                email: Some("user@example.com".to_string()),
-                plan_type: Some("pro".to_string()),
-                user_id: Some("user_123".to_string()),
-                account_id: Some("acct_123".to_string()),
-                raw_jwt: id_token,
+        let auth = StoredChatgptAuth::from_tokens(
+            ChatgptTokenData {
+                id_token: ChatgptIdTokenInfo {
+                    email: Some("user@example.com".to_string()),
+                    plan_type: Some("pro".to_string()),
+                    user_id: Some("user_123".to_string()),
+                    account_id: Some("acct_123".to_string()),
+                    subject: None,
+                    nonce: None,
+                    raw_jwt: id_token,
+                },
+                access_token,
+                refresh_token: "refresh".to_string(),
             },
-            access_token,
-            refresh_token: "refresh".to_string(),
-        })
+            "oaiapp_123".to_string(),
+            vec![
+                "openid".to_string(),
+                "chatgpt.tokens.use.direct".to_string(),
+            ],
+        )
         .expect("stored auth");
         storage
             .save(&AuthStore {
                 version: 1,
+                ext_agent_host_id: Some("urn:uuid:11111111-1111-4111-8111-111111111111".into()),
                 chatgpt: Some(auth.clone()),
                 google: None,
             })
@@ -466,17 +579,23 @@ mod tests {
             }
         }));
 
-        let auth = StoredChatgptAuth::from_tokens(ChatgptTokenData {
-            id_token: ChatgptIdTokenInfo {
-                email: Some("user@example.com".to_string()),
-                plan_type: None,
-                user_id: None,
-                account_id: Some("acct_123".to_string()),
-                raw_jwt: id_token,
+        let auth = StoredChatgptAuth::from_tokens(
+            ChatgptTokenData {
+                id_token: ChatgptIdTokenInfo {
+                    email: Some("user@example.com".to_string()),
+                    plan_type: None,
+                    user_id: None,
+                    account_id: Some("acct_123".to_string()),
+                    subject: None,
+                    nonce: None,
+                    raw_jwt: id_token,
+                },
+                access_token: "opaque-access-token".to_string(),
+                refresh_token: "refresh".to_string(),
             },
-            access_token: "opaque-access-token".to_string(),
-            refresh_token: "refresh".to_string(),
-        })
+            "oaiapp_123".to_string(),
+            vec!["chatgpt.tokens.use.direct".to_string()],
+        )
         .expect("stored auth");
 
         assert_eq!(auth.access_token_expires_at, None);
@@ -491,11 +610,15 @@ mod tests {
             ..Default::default()
         };
         let auth = |access_token: String| {
-            StoredChatgptAuth::from_tokens(ChatgptTokenData {
-                id_token: id_token.clone(),
-                access_token,
-                refresh_token: "refresh".to_string(),
-            })
+            StoredChatgptAuth::from_tokens(
+                ChatgptTokenData {
+                    id_token: id_token.clone(),
+                    access_token,
+                    refresh_token: "refresh".to_string(),
+                },
+                "oaiapp_123".to_string(),
+                vec!["chatgpt.tokens.use.direct".to_string()],
+            )
             .unwrap()
         };
         let window = super::ACCESS_TOKEN_REFRESH_WINDOW_SECS;
@@ -518,5 +641,68 @@ mod tests {
         let mut earlier_stored_exp = auth(exp(window + 3600));
         earlier_stored_exp.access_token_expires_at = Some(now + chrono::Duration::seconds(30));
         assert!(earlier_stored_exp.should_refresh(now));
+    }
+
+    #[test]
+    fn ext_agent_host_id_is_persistent_across_clear_chatgpt() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let storage = AuthStorage::new(temp_dir.path().join("auth.json")).expect("storage");
+        let first = storage.ensure_ext_agent_host_id().expect("host id");
+        assert!(first.starts_with("urn:uuid:"));
+        assert_eq!(first.len(), "urn:uuid:".len() + 36);
+        assert_eq!(storage.ensure_ext_agent_host_id().unwrap(), first);
+
+        storage.clear_chatgpt().unwrap();
+        assert_eq!(
+            storage.load().unwrap().ext_agent_host_id.as_deref(),
+            Some(first.as_str())
+        );
+    }
+
+    #[test]
+    fn legacy_chatgpt_auth_without_client_id_is_invalidated_while_preserving_google_and_allowing_reauth()
+     {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let path = temp_dir.path().join("auth.json");
+        let storage = AuthStorage::new(path.clone()).expect("storage");
+        let id_token = build_jwt(json!({
+            "email": "user@example.com",
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "acct_legacy"
+            }
+        }));
+        let legacy_json = json!({
+            "version": 1,
+            "chatgpt": {
+                "tokens": {
+                    "id_token": id_token,
+                    "access_token": "legacy-access",
+                    "refresh_token": "legacy-refresh"
+                },
+                "account_id": "acct_legacy",
+                "email": "user@example.com"
+            },
+            "google": {
+                "refresh_token": "g-refresh",
+                "access_token": "g-access"
+            }
+        });
+        fs::write(&path, serde_json::to_string_pretty(&legacy_json).unwrap()).unwrap();
+
+        let loaded = storage.load().expect("legacy store should still load");
+        assert_eq!(loaded.chatgpt, None);
+        assert!(loaded.google.is_some());
+        storage
+            .validate_for_migration()
+            .expect("legacy chatgpt entry should validate without blocking migration");
+
+        let host_id = storage
+            .ensure_ext_agent_host_id()
+            .expect("ensure host id for reauthentication");
+        assert!(host_id.starts_with("urn:uuid:"));
+        assert!(storage.load().unwrap().google.is_some());
+
+        storage.clear_chatgpt().expect("clear obsolete chatgpt");
+        assert!(storage.load().unwrap().google.is_some());
     }
 }

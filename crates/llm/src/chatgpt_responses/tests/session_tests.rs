@@ -171,7 +171,7 @@ async fn fixture(mode: Mode, initial_token: String, refresh_account: &'static st
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let app = Router::new()
-        .route("/oauth/token", post(refresh))
+        .route("/api/accounts/oauth/token", post(refresh))
         .route("/responses", post(responses))
         .with_state(server.clone());
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -194,15 +194,13 @@ async fn plain_request(client: &super::ChatgptResponsesClient) -> anyhow::Result
 }
 
 #[tokio::test]
-async fn session_headers_and_cache_key_are_stable_per_client_and_distinct_across_clients() {
+async fn cache_key_is_stable_per_client_and_siwc_headers_omit_codex_session_headers() {
     let fixture = fixture(Mode::AlwaysOk, token_expiring_in(3600), "acct_123").await;
     let mut first = fixture.client();
-    // Profile headers cannot replace the client-owned session identity, while
-    // originator / User-Agent headers pass through untouched.
+    // Profile custom headers pass through while Authorization remains managed-only.
     first.custom_headers = HashMap::from([
-        ("Session_Id".to_string(), "spoofed".to_string()),
-        ("conversation_id".to_string(), "spoofed".to_string()),
-        ("originator".to_string(), "codex_cli_rs".to_string()),
+        ("Authorization".to_string(), "spoofed".to_string()),
+        ("originator".to_string(), "alan".to_string()),
         ("User-Agent".to_string(), "alan-test/1.0".to_string()),
     ]);
     let mut second = fixture.client();
@@ -217,15 +215,16 @@ async fn session_headers_and_cache_key_are_stable_per_client_and_distinct_across
     assert_eq!(seen.len(), 4);
     let session = first.prompt_cache_key().to_string();
     for request in &seen[..3] {
-        assert_eq!(request.session, session);
-        assert_eq!(request.conversation, session);
-        assert_eq!(request.originator, "codex_cli_rs");
+        assert_eq!(request.session, "");
+        assert_eq!(request.conversation, "");
+        assert_eq!(request.account, "");
+        assert_eq!(request.originator, "alan");
         assert_eq!(request.user_agent, "alan-test/1.0");
         assert_eq!(request.cache_key, serde_json::json!(session));
-        assert_eq!(request.account, "acct_123");
+        assert!(request.authorization.starts_with("Bearer "));
+        assert_ne!(request.authorization, "spoofed");
     }
     assert_ne!(second.prompt_cache_key(), session);
-    assert_eq!(seen[3].session, second.prompt_cache_key());
     assert_eq!(
         seen[3].cache_key,
         serde_json::json!(second.prompt_cache_key())
@@ -247,11 +246,8 @@ async fn request_session_key_derives_stable_opaque_affinity_across_clients() {
 
     let seen = fixture.seen();
     assert_eq!(seen.len(), 2);
-    assert_eq!(seen[0].session, seen[1].session);
-    assert_eq!(seen[0].conversation, seen[0].session);
-    assert_eq!(seen[0].cache_key, serde_json::json!(seen[0].session));
-    assert_eq!(seen[1].cache_key, serde_json::json!(seen[1].session));
-    assert!(!seen[0].session.contains("agent"));
+    assert_eq!(seen[0].cache_key, seen[1].cache_key);
+    assert!(!seen[0].cache_key.as_str().unwrap().contains("agent"));
 }
 
 #[tokio::test]
@@ -268,9 +264,7 @@ async fn pinned_session_id_and_explicit_cache_key_are_respected() {
     client.openai_responses(request).await.unwrap();
 
     let seen = fixture.seen();
-    assert_eq!(seen[0].session, "process-42");
     assert_eq!(seen[0].cache_key, serde_json::json!("process-42"));
-    assert_eq!(seen[1].session, "process-42");
     assert_eq!(seen[1].cache_key, serde_json::json!("caller-key"));
 }
 
@@ -306,7 +300,6 @@ async fn unauthorized_retries_once_with_refreshed_token_and_same_session() {
             seen[1].authorization,
             format!("Bearer {}", refreshed_token(1))
         );
-        assert_eq!(seen[0].session, seen[1].session);
         assert_eq!(seen[0].cache_key, seen[1].cache_key);
     }
 }
@@ -380,7 +373,7 @@ async fn concurrent_requests_share_one_refresh() {
         );
         assert!(
             seen.iter()
-                .all(|request| request.session == client.prompt_cache_key())
+                .all(|request| request.cache_key == serde_json::json!(client.prompt_cache_key()))
         );
     }
 }

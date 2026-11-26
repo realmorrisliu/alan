@@ -398,8 +398,8 @@ mod tests {
         let auth_storage = tempfile::tempdir().unwrap();
         let chatgpt = LlmClient::new(
             ChatgptResponsesClient::with_params(
-                "https://chatgpt.com/backend-api/codex",
-                "gpt-5.3-codex",
+                "https://api.openai.com/v1",
+                "gpt-5.4",
                 HashMap::new(),
                 None,
                 Some(auth_storage.path().join("auth.json")),
