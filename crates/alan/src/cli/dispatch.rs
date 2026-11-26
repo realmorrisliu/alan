@@ -77,9 +77,6 @@ pub enum Commands {
         /// Print authorization URL instead of launching a web browser
         #[arg(long = "no-browser")]
         no_browser: bool,
-        /// Use device-code flow instead of browser callback (ChatGPT)
-        #[arg(long)]
-        device: bool,
         /// Explicit connection profile id to create or update
         #[arg(long)]
         profile: Option<String>,
@@ -315,7 +312,6 @@ pub enum ConnectionDefaultAction {
 pub enum ConnectionLoginMode {
     #[default]
     Browser,
-    Device,
 }
 
 /// Skill inspection and authoring subcommands (`alan skills ...`).
@@ -590,9 +586,8 @@ pub async fn dispatch_subcommand(command: Commands) -> Result<Option<LegacyState
         Commands::Login {
             provider,
             no_browser,
-            device,
             profile,
-        } => login::run_login(provider, no_browser, device, profile).await?,
+        } => login::run_login(provider, no_browser, profile).await?,
         Commands::Skills { action } => dispatch_skills(action)?,
         Commands::About => about::run()?,
         Commands::Doctor(args) => doctor::run(args)?,
@@ -703,15 +698,10 @@ async fn dispatch_connection(action: ConnectionAction) -> Result<()> {
         }
         ConnectionAction::Login {
             profile_id,
-            mode,
+            mode: _mode,
             no_browser,
         } => {
-            connection::run_connection_login(
-                &profile_id,
-                matches!(mode, ConnectionLoginMode::Device),
-                !no_browser,
-            )
-            .await?;
+            connection::run_connection_login(&profile_id, !no_browser).await?;
         }
         ConnectionAction::Logout { profile_id } => {
             connection::run_connection_logout(&profile_id).await?;

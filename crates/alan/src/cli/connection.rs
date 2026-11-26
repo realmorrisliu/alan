@@ -1,7 +1,5 @@
 use alan_agent_engine::{Config, LlmProvider};
-use alan_auth::{
-    BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthManager, DeviceCodeLoginOptions,
-};
+use alan_auth::{BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthManager};
 
 mod test_connectivity;
 use alan_os_host::{HostStorePaths, SecretStore, SystemStorePaths, apply_profile_to_config};
@@ -569,51 +567,21 @@ pub async fn run_connection_set_secret(profile_id: &str, value: Option<String>) 
     Ok(())
 }
 
-pub async fn run_connection_login(
-    profile_id: &str,
-    use_device_code: bool,
-    open_browser: bool,
-) -> Result<()> {
+pub async fn run_connection_login(profile_id: &str, open_browser: bool) -> Result<()> {
     let (mut stores, mut connections) = load_connections().await?;
     let provider = connection_profile(&connections, profile_id)?.provider;
-    anyhow::ensure!(
-        !use_device_code || provider == LlmProvider::Chatgpt,
-        "device code login is supported only for chatgpt"
-    );
     match provider {
         LlmProvider::Chatgpt => {
-            let request_id = request_native(
-                &stores,
-                profile_id,
-                if use_device_code {
-                    "device_login"
-                } else {
-                    "browser_login"
-                },
-            )
-            .await?;
+            let request_id = request_native(&stores, profile_id, "browser_login").await?;
             let manager = chatgpt_auth_manager(&stores)?;
-            if use_device_code {
-                let prompt = manager.start_device_code().await?;
-                println!(
-                    "Open this URL in your browser:\n{}",
-                    prompt.verification_url
-                );
-                println!("Enter this one-time code:\n{}", prompt.user_code);
-                manager
-                    .complete_device_code(&prompt, DeviceCodeLoginOptions::default())
-                    .await?;
-            } else {
-                manager
-                    .login_with_browser(BrowserLoginOptions {
-                        open_browser,
-                        forced_workspace_id: None,
-                        timeout: Duration::from_secs(300),
-                        redirect_uri: None,
-                        login_id: None,
-                    })
-                    .await?;
-            }
+            manager
+                .login_with_browser(BrowserLoginOptions {
+                    open_browser,
+                    timeout: Duration::from_secs(300),
+                    redirect_uri: None,
+                    login_id: None,
+                })
+                .await?;
             respond_native(
                 &stores,
                 &request_id,

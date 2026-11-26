@@ -70,8 +70,8 @@ fn provider_harness_or_skip(provider: &'static str) -> Option<LiveProviderHarnes
                 );
                 return None;
             };
-            let model = non_empty_env("ALAN_LIVE_CHATGPT_MODEL")
-                .unwrap_or_else(|| "gpt-5.3-codex".to_string());
+            let model =
+                non_empty_env("ALAN_LIVE_CHATGPT_MODEL").unwrap_or_else(|| "gpt-5.4".to_string());
             let mut config = ProviderConfig::chatgpt(model)
                 .with_chatgpt_auth_storage_path(PathBuf::from(auth_storage_path));
             if let Some(base_url) = non_empty_env("ALAN_LIVE_CHATGPT_BASE_URL") {

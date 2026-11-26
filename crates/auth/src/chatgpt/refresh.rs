@@ -6,8 +6,9 @@
 //! locks, so a rotation performed by the first refresher satisfies all later ones.
 
 use super::{
-    ChatgptAuthError, ChatgptAuthManager, ChatgptRequestAuth, ensure_expected_account_matches,
-    parse_chatgpt_id_token,
+    ChatgptAuthError, ChatgptAuthManager, ChatgptRequestAuth, DIRECT_TOKEN_SCOPE,
+    DYNAMIC_CLIENT_ID, TOKEN_PATH, ensure_expected_account_matches, form_encode,
+    parse_chatgpt_id_token, parse_scopes,
 };
 use crate::storage::{AuthStore, StoredChatgptAuth};
 use crate::token_data::{ChatgptTokenData, parse_chatgpt_jwt_claims};
@@ -92,6 +93,12 @@ impl ChatgptAuthManager {
         if auth.tokens.refresh_token.trim().is_empty() {
             return Err(ChatgptAuthError::TokenExpired);
         }
+        if auth.client_id.trim().is_empty() || auth.client_id == DYNAMIC_CLIENT_ID {
+            return Err(ChatgptAuthError::RefreshFailed(
+                "stored ChatGPT credential is missing an issued client_id; re-run `alan login chatgpt`"
+                    .to_string(),
+            ));
+        }
 
         self.refresh_inner(store, expected_account_id).await
     }
@@ -108,25 +115,31 @@ impl ChatgptAuthManager {
             refresh_token: Option<String>,
             #[serde(default)]
             expires_in: Option<i64>,
+            #[serde(default)]
+            scope: Option<String>,
         }
 
         let existing = expected
             .chatgpt
             .as_ref()
             .ok_or(ChatgptAuthError::NotLoggedIn)?;
+        let body = form_encode(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", &existing.client_id),
+            ("refresh_token", &existing.tokens.refresh_token),
+            ("resource", &self.inner.config.resource),
+        ]);
         let response = self
             .inner
             .client
             .post(format!(
-                "{}/oauth/token",
+                "{}{TOKEN_PATH}",
                 self.inner.config.issuer.trim_end_matches('/')
             ))
             .timeout(REFRESH_REQUEST_TIMEOUT)
-            .json(&serde_json::json!({
-                "client_id": self.inner.config.client_id,
-                "grant_type": "refresh_token",
-                "refresh_token": existing.tokens.refresh_token,
-            }))
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
             .send()
             .await?;
 
@@ -142,25 +155,41 @@ impl ChatgptAuthManager {
         }
 
         let refreshed: RefreshResponse = response.json().await?;
+        let scopes = match refreshed.scope.as_deref() {
+            Some(raw) => {
+                let parsed = parse_scopes(raw);
+                if !parsed.iter().any(|scope| scope == DIRECT_TOKEN_SCOPE) {
+                    return Err(ChatgptAuthError::RefreshFailed(format!(
+                        "refreshed OpenAI OAuth grant did not include `{DIRECT_TOKEN_SCOPE}`"
+                    )));
+                }
+                parsed
+            }
+            None => existing.scopes.clone(),
+        };
         let id_token = refreshed
             .id_token
             .unwrap_or_else(|| existing.tokens.id_token.raw_jwt.clone());
         let refresh_token = refreshed
             .refresh_token
             .unwrap_or_else(|| existing.tokens.refresh_token.clone());
-        let mut persisted = StoredChatgptAuth::from_tokens(ChatgptTokenData {
-            id_token: parse_chatgpt_id_token(&id_token)?,
-            access_token: refreshed.access_token,
-            refresh_token,
-        })?;
+        let mut persisted = StoredChatgptAuth::from_tokens(
+            ChatgptTokenData {
+                id_token: parse_chatgpt_id_token(&id_token)?,
+                access_token: refreshed.access_token,
+                refresh_token,
+            },
+            existing.client_id.clone(),
+            scopes,
+        )?;
         if persisted.access_token_expires_at.is_none()
             && let Some(expires_in) = refreshed.expires_in.filter(|secs| *secs >= 0)
         {
             persisted.access_token_expires_at =
                 Some(Utc::now() + chrono::Duration::seconds(expires_in));
         }
-        // A refresh can never move the stored login to another account/workspace;
-        // check both the ID token and any account claim carried on the access token.
+        // A refresh can never move the stored login to another account;
+        // check both the ID token and any account/subject claim carried on the access token.
         if persisted.account_id != existing.account_id {
             return Err(ChatgptAuthError::WorkspaceMismatch {
                 expected: existing.account_id.clone(),

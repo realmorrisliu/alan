@@ -9,6 +9,10 @@ pub struct ChatgptIdTokenInfo {
     pub plan_type: Option<String>,
     pub user_id: Option<String>,
     pub account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
     pub raw_jwt: String,
 }
 
@@ -25,6 +29,10 @@ pub struct ChatgptTokenData {
 
 #[derive(Deserialize)]
 struct IdClaims {
+    #[serde(default)]
+    sub: Option<String>,
+    #[serde(default)]
+    nonce: Option<String>,
     #[serde(default)]
     email: Option<String>,
     #[serde(rename = "https://api.openai.com/profile", default)]
@@ -90,21 +98,29 @@ pub fn parse_chatgpt_jwt_claims(jwt: &str) -> Result<ChatgptIdTokenInfo, TokenDa
     let email = claims
         .email
         .or_else(|| claims.profile.and_then(|profile| profile.email));
+    let subject = claims.sub.filter(|value| !value.trim().is_empty());
+    let nonce = claims.nonce.filter(|value| !value.trim().is_empty());
 
     if let Some(auth) = claims.auth {
+        let user_id = auth.chatgpt_user_id.or(auth.user_id).or(subject.clone());
+        let account_id = auth.chatgpt_account_id.or(subject.clone());
         Ok(ChatgptIdTokenInfo {
             email,
             plan_type: auth.chatgpt_plan_type,
-            user_id: auth.chatgpt_user_id.or(auth.user_id),
-            account_id: auth.chatgpt_account_id,
+            user_id,
+            account_id,
+            subject,
+            nonce,
             raw_jwt: jwt.to_string(),
         })
     } else {
         Ok(ChatgptIdTokenInfo {
             email,
             plan_type: None,
-            user_id: None,
-            account_id: None,
+            user_id: subject.clone(),
+            account_id: subject.clone(),
+            subject,
+            nonce,
             raw_jwt: jwt.to_string(),
         })
     }
@@ -162,5 +178,20 @@ mod tests {
         let jwt = build_jwt(json!({"exp": 1_800_000_000_i64}));
         let expiration = parse_jwt_expiration(&jwt).expect("expiration");
         assert!(expiration.is_some());
+    }
+
+    #[test]
+    fn parses_standard_oidc_subject_and_nonce_claims() {
+        let jwt = build_jwt(json!({
+            "sub": "user-sub-123",
+            "nonce": "nonce-abc",
+            "email": "oidc@example.com"
+        }));
+        let info = parse_chatgpt_jwt_claims(&jwt).expect("claims");
+        assert_eq!(info.account_id.as_deref(), Some("user-sub-123"));
+        assert_eq!(info.user_id.as_deref(), Some("user-sub-123"));
+        assert_eq!(info.subject.as_deref(), Some("user-sub-123"));
+        assert_eq!(info.nonce.as_deref(), Some("nonce-abc"));
+        assert_eq!(info.email.as_deref(), Some("oidc@example.com"));
     }
 }

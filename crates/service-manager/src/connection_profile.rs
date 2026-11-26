@@ -346,8 +346,8 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
     const CHATGPT_REQUIRED: &[&str] = &["base_url", "model"];
     const CHATGPT_OPTIONAL: &[&str] = &["account_id"];
     const CHATGPT_DEFAULTS: &[(&str, &str)] = &[
-        ("base_url", "https://chatgpt.com/backend-api/codex"),
-        ("model", "gpt-5.3-codex"),
+        ("base_url", "https://api.openai.com/v1"),
+        ("model", "gpt-5.4"),
         ("account_id", ""),
     ];
 
@@ -422,12 +422,12 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
                 },
                 ProviderDescriptor {
                     provider_id: LlmProvider::Chatgpt,
-                    display_name: "ChatGPT / Codex",
+                    display_name: "ChatGPT (Sign in with ChatGPT)",
                     first_party: true,
                     credential_kind: CredentialKind::ManagedOauth,
                     credential_optional: false,
                     supports_browser_login: true,
-                    supports_device_login: true,
+                    supports_device_login: false,
                     supports_secret_entry: false,
                     supports_logout: true,
                     supports_test: true,

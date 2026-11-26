@@ -1,8 +1,6 @@
 use crate::storage::{AuthStorage, StoredChatgptAuth};
 use crate::token_data::{ChatgptTokenData, parse_chatgpt_jwt_claims};
-use anyhow::Context;
 use chrono::{DateTime, Utc};
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::PathBuf;
@@ -15,7 +13,9 @@ mod browser;
 mod refresh;
 mod session;
 
-pub use browser::{BrowserLoginCompletion, BrowserLoginOptions, PendingBrowserLogin};
+pub use browser::{
+    BrowserLoginCompletion, BrowserLoginOptions, PendingBrowserLogin, parse_manual_browser_callback,
+};
 pub use session::new_chatgpt_session_id;
 
 use refresh::RefreshMode;
@@ -27,15 +27,26 @@ pub struct BrowserLoginCallbackReceipt {
 }
 
 const DEFAULT_ISSUER: &str = "https://auth.openai.com";
-const DEFAULT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+pub(crate) const DYNAMIC_CLIENT_ID: &str = "dynamic_agent_client";
+const DEFAULT_AGENT_NAME_HINT: &str = "Alan";
+const DEFAULT_RESOURCE: &str = "https://api.openai.com/v1";
+pub(crate) const DIRECT_TOKEN_SCOPE: &str = "chatgpt.tokens.use.direct";
+pub(crate) const REQUIRED_SCOPE: &str =
+    "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
+const AUTHORIZE_PATH: &str = "/api/accounts/authorize";
+const TOKEN_PATH: &str = "/api/accounts/oauth/token";
+const REVOKE_PATH: &str = "/api/accounts/oauth/revoke";
 const DEFAULT_BROWSER_CALLBACK_PORT: u16 = 1455;
+const TOKEN_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const REVOKE_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct ChatgptAuthConfig {
     /// Explicit Host-owned backing; auth never infers a product or home directory.
     pub storage_path: PathBuf,
     pub issuer: String,
-    pub client_id: String,
+    pub resource: String,
+    pub agent_name_hint: String,
     pub browser_callback_port: u16,
 }
 
@@ -44,7 +55,8 @@ impl ChatgptAuthConfig {
         Self {
             storage_path,
             issuer: DEFAULT_ISSUER.to_string(),
-            client_id: DEFAULT_CLIENT_ID.to_string(),
+            resource: DEFAULT_RESOURCE.to_string(),
+            agent_name_hint: DEFAULT_AGENT_NAME_HINT.to_string(),
             browser_callback_port: DEFAULT_BROWSER_CALLBACK_PORT,
         }
     }
@@ -63,32 +75,10 @@ struct ChatgptAuthManagerInner {
     refresh_lock: Mutex<()>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct DeviceCodeLoginOptions {
-    pub forced_workspace_id: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct DeviceCodePrompt {
-    pub verification_url: String,
-    pub user_code: String,
-    device_auth_id: String,
-    interval_secs: u64,
-}
-
-impl DeviceCodePrompt {
-    pub fn interval_secs(&self) -> u64 {
-        self.interval_secs
-    }
-
-    pub fn device_auth_id(&self) -> &str {
-        &self.device_auth_id
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ChatgptLoginSuccess {
     pub account_id: String,
+    pub client_id: String,
     pub email: Option<String>,
     pub plan_type: Option<String>,
 }
@@ -97,6 +87,7 @@ pub struct ChatgptLoginSuccess {
 pub struct ChatgptAuthSnapshot {
     pub storage_path: PathBuf,
     pub account_id: String,
+    pub client_id: String,
     pub email: Option<String>,
     pub plan_type: Option<String>,
     pub user_id: Option<String>,
@@ -115,16 +106,20 @@ pub struct ImportedChatgptTokenBundle {
     pub id_token: String,
     pub access_token: String,
     pub refresh_token: String,
+    pub client_id: String,
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug, Error)]
 pub enum ChatgptAuthError {
-    #[error("not logged in to ChatGPT; run `alan connection login <profile-id> browser` first")]
+    #[error(
+        "not logged in to ChatGPT; run `alan login chatgpt` or `alan connection login <profile-id>` first"
+    )]
     NotLoggedIn,
-    #[error("ChatGPT login did not resolve an account/workspace identity")]
+    #[error("ChatGPT login did not resolve an account or subject identity")]
     MissingAccountIdentity,
     #[error(
-        "ChatGPT login is bound to workspace/account `{expected}` but current login resolved `{actual:?}`"
+        "ChatGPT login is bound to account `{expected}` but current login resolved `{actual:?}`"
     )]
     WorkspaceMismatch {
         expected: String,
@@ -214,6 +209,7 @@ impl ChatgptAuthManager {
         Ok(store.chatgpt.map(|auth| ChatgptAuthSnapshot {
             storage_path: self.inner.config.storage_path.clone(),
             account_id: auth.account_id,
+            client_id: auth.client_id,
             email: auth.email,
             plan_type: auth.plan_type,
             user_id: auth.user_id,
@@ -223,116 +219,33 @@ impl ChatgptAuthManager {
     }
 
     pub async fn logout(&self) -> Result<bool, ChatgptAuthError> {
-        let had_auth = self.inner.storage.load()?.chatgpt.is_some();
-        self.inner.storage.clear_chatgpt()?;
-        Ok(had_auth)
-    }
-
-    pub async fn start_device_code(&self) -> Result<DeviceCodePrompt, ChatgptAuthError> {
-        #[derive(Deserialize)]
-        struct DeviceCodeResponse {
-            device_auth_id: String,
-            #[serde(alias = "user_code", alias = "usercode")]
-            user_code: String,
-            interval: String,
-        }
-
-        let url = format!(
-            "{}/api/accounts/deviceauth/usercode",
-            self.inner.config.issuer.trim_end_matches('/')
-        );
-        let response = self
-            .inner
-            .client
-            .post(url)
-            .json(&serde_json::json!({ "client_id": self.inner.config.client_id }))
-            .send()
-            .await?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(ChatgptAuthError::LoginFailed(format!(
-                "device code request failed ({status}): {body}"
-            )));
-        }
-        let payload: DeviceCodeResponse = response.json().await?;
-        Ok(DeviceCodePrompt {
-            verification_url: format!(
-                "{}/codex/device",
-                self.inner.config.issuer.trim_end_matches('/')
-            ),
-            user_code: payload.user_code,
-            device_auth_id: payload.device_auth_id,
-            interval_secs: payload.interval.trim().parse::<u64>().unwrap_or(5),
-        })
-    }
-
-    pub async fn complete_device_code(
-        &self,
-        prompt: &DeviceCodePrompt,
-        options: DeviceCodeLoginOptions,
-    ) -> Result<ChatgptLoginSuccess, ChatgptAuthError> {
-        #[derive(Deserialize)]
-        struct DeviceCodeTokenResponse {
-            authorization_code: String,
-            code_verifier: String,
-        }
-
-        let url = format!(
-            "{}/api/accounts/deviceauth/token",
-            self.inner.config.issuer.trim_end_matches('/')
-        );
-        let started_at = std::time::Instant::now();
-        let max_wait = Duration::from_secs(15 * 60);
-
-        loop {
-            let response = self
+        let stored = self.inner.storage.load()?.chatgpt;
+        let had_auth = stored.is_some();
+        if let Some(auth) = stored
+            && !auth.tokens.refresh_token.trim().is_empty()
+            && !auth.client_id.trim().is_empty()
+            && auth.client_id != DYNAMIC_CLIENT_ID
+        {
+            let body = form_encode(&[
+                ("client_id", &auth.client_id),
+                ("token", &auth.tokens.refresh_token),
+                ("token_type_hint", "refresh_token"),
+            ]);
+            let _ = self
                 .inner
                 .client
-                .post(&url)
-                .json(&serde_json::json!({
-                    "device_auth_id": prompt.device_auth_id,
-                    "user_code": prompt.user_code,
-                }))
-                .send()
-                .await?;
-
-            if response.status().is_success() {
-                let code: DeviceCodeTokenResponse = response.json().await?;
-                let redirect_uri = format!(
-                    "{}/deviceauth/callback",
+                .post(format!(
+                    "{}{REVOKE_PATH}",
                     self.inner.config.issuer.trim_end_matches('/')
-                );
-                let tokens = self
-                    .exchange_code_for_tokens(
-                        &redirect_uri,
-                        &code.code_verifier,
-                        &code.authorization_code,
-                    )
-                    .await?;
-                let persisted =
-                    self.persist_tokens(tokens, options.forced_workspace_id.as_deref())?;
-                return Ok(to_login_success(&persisted));
-            }
-
-            match response.status() {
-                StatusCode::FORBIDDEN | StatusCode::NOT_FOUND => {
-                    if started_at.elapsed() >= max_wait {
-                        return Err(ChatgptAuthError::Io(io::Error::new(
-                            io::ErrorKind::TimedOut,
-                            "device code login timed out after 15 minutes",
-                        )));
-                    }
-                    tokio::time::sleep(Duration::from_secs(prompt.interval_secs)).await;
-                }
-                status => {
-                    let body = response.text().await.unwrap_or_default();
-                    return Err(ChatgptAuthError::LoginFailed(format!(
-                        "device code login failed ({status}): {body}"
-                    )));
-                }
-            }
+                ))
+                .timeout(REVOKE_REQUEST_TIMEOUT)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .body(body)
+                .send()
+                .await;
         }
+        self.inner.storage.clear_chatgpt()?;
+        Ok(had_auth)
     }
 
     pub async fn request_auth(&self) -> Result<ChatgptRequestAuth, ChatgptAuthError> {
@@ -380,15 +293,18 @@ impl ChatgptAuthManager {
     pub fn import_token_bundle(
         &self,
         bundle: ImportedChatgptTokenBundle,
-        forced_workspace_id: Option<&str>,
     ) -> Result<ChatgptLoginSuccess, ChatgptAuthError> {
         let persisted = self.persist_tokens(
             TokenExchangeResponse {
                 id_token: bundle.id_token,
                 access_token: bundle.access_token,
                 refresh_token: bundle.refresh_token,
+                expires_in: None,
+                scope: None,
             },
-            forced_workspace_id,
+            bundle.client_id,
+            bundle.scopes,
+            None,
         )?;
         Ok(to_login_success(&persisted))
     }
@@ -396,18 +312,39 @@ impl ChatgptAuthManager {
     fn persist_tokens(
         &self,
         tokens: TokenExchangeResponse,
-        forced_workspace_id: Option<&str>,
+        client_id: String,
+        default_scopes: Vec<String>,
+        expected_nonce: Option<&str>,
     ) -> Result<StoredChatgptAuth, ChatgptAuthError> {
-        if let Some(expected) = forced_workspace_id {
-            ensure_workspace_allowed(expected, &tokens.id_token)?;
-        }
-
         let id_token = parse_chatgpt_id_token(&tokens.id_token)?;
-        let persisted = StoredChatgptAuth::from_tokens(ChatgptTokenData {
-            id_token,
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
-        })?;
+        if let (Some(expected), Some(actual)) = (expected_nonce, id_token.nonce.as_deref())
+            && actual != expected
+        {
+            return Err(ChatgptAuthError::LoginFailed(
+                "ChatGPT ID token nonce mismatch".to_string(),
+            ));
+        }
+        let scopes = tokens
+            .scope
+            .as_deref()
+            .map(parse_scopes)
+            .filter(|parsed| !parsed.is_empty())
+            .unwrap_or(default_scopes);
+        let mut persisted = StoredChatgptAuth::from_tokens(
+            ChatgptTokenData {
+                id_token,
+                access_token: tokens.access_token,
+                refresh_token: tokens.refresh_token,
+            },
+            client_id,
+            scopes,
+        )?;
+        if persisted.access_token_expires_at.is_none()
+            && let Some(expires_in) = tokens.expires_in.filter(|secs| *secs >= 0)
+        {
+            persisted.access_token_expires_at =
+                Some(Utc::now() + chrono::Duration::seconds(expires_in));
+        }
         let persisted_clone = persisted.clone();
         self.inner.storage.update(move |store| {
             store.chatgpt = Some(persisted_clone);
@@ -417,24 +354,28 @@ impl ChatgptAuthManager {
 
     async fn exchange_code_for_tokens(
         &self,
+        client_id: &str,
         redirect_uri: &str,
         code_verifier: &str,
         code: &str,
     ) -> Result<TokenExchangeResponse, ChatgptAuthError> {
-        let body = format!(
-            "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&code_verifier={}",
-            urlencoding::encode(code),
-            urlencoding::encode(redirect_uri),
-            urlencoding::encode(&self.inner.config.client_id),
-            urlencoding::encode(code_verifier),
-        );
+        let body = form_encode(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", client_id),
+            ("code", code),
+            ("code_verifier", code_verifier),
+            ("redirect_uri", redirect_uri),
+            ("resource", &self.inner.config.resource),
+        ]);
         let response = self
             .inner
             .client
             .post(format!(
-                "{}/oauth/token",
+                "{}{TOKEN_PATH}",
                 self.inner.config.issuer.trim_end_matches('/')
             ))
+            .timeout(TOKEN_REQUEST_TIMEOUT)
+            .header("Accept", "application/json")
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(body)
             .send()
@@ -446,7 +387,21 @@ impl ChatgptAuthManager {
                 "token endpoint returned {status}: {body}"
             )));
         }
-        Ok(response.json().await?)
+        let payload: TokenExchangeResponse = response.json().await?;
+        let granted_scopes = payload
+            .scope
+            .as_deref()
+            .map(parse_scopes)
+            .unwrap_or_default();
+        if !granted_scopes
+            .iter()
+            .any(|scope| scope == DIRECT_TOKEN_SCOPE)
+        {
+            return Err(ChatgptAuthError::LoginFailed(format!(
+                "OpenAI OAuth grant did not include `{DIRECT_TOKEN_SCOPE}` (plan usage permission is required)"
+            )));
+        }
+        Ok(payload)
     }
 }
 
@@ -455,6 +410,25 @@ struct TokenExchangeResponse {
     id_token: String,
     access_token: String,
     refresh_token: String,
+    #[serde(default)]
+    expires_in: Option<i64>,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+pub(crate) fn form_encode(pairs: &[(&str, &str)]) -> String {
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+pub(crate) fn parse_scopes(raw: &str) -> Vec<String> {
+    raw.split_whitespace()
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn parse_chatgpt_id_token(
@@ -462,23 +436,16 @@ fn parse_chatgpt_id_token(
 ) -> Result<crate::token_data::ChatgptIdTokenInfo, ChatgptAuthError> {
     let info = parse_chatgpt_jwt_claims(jwt)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    if info.account_id.is_none() {
+    if info
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
         return Err(ChatgptAuthError::MissingAccountIdentity);
     }
     Ok(info)
-}
-
-fn ensure_workspace_allowed(expected: &str, id_token: &str) -> Result<(), ChatgptAuthError> {
-    let info = parse_chatgpt_jwt_claims(id_token)
-        .with_context(|| "Failed to parse id token workspace claims")
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    if info.account_id.as_deref() == Some(expected) {
-        return Ok(());
-    }
-    Err(ChatgptAuthError::WorkspaceMismatch {
-        expected: expected.to_string(),
-        actual: info.account_id,
-    })
 }
 
 fn ensure_expected_account_matches(
@@ -502,6 +469,7 @@ fn ensure_expected_account_matches(
 fn to_login_success(auth: &StoredChatgptAuth) -> ChatgptLoginSuccess {
     ChatgptLoginSuccess {
         account_id: auth.account_id.clone(),
+        client_id: auth.client_id.clone(),
         email: auth.email.clone(),
         plan_type: auth.plan_type.clone(),
     }

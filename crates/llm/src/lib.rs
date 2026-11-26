@@ -75,7 +75,10 @@ pub mod openrouter;
 pub mod openrouter {
     pub use crate::provider_meta::OPENROUTER_BASE_URL;
 }
-pub use failure::{safe_failure_reason, safe_finish_reason};
+pub use failure::{
+    ChatgptSubscriptionLimitError, ChatgptSubscriptionLimitKind, safe_failure_reason,
+    safe_finish_reason,
+};
 mod provider;
 mod provider_meta;
 #[cfg(any(feature = "provider-magpie", feature = "provider-openai"))]

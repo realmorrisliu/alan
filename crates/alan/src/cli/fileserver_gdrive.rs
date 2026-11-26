@@ -266,6 +266,7 @@ mod tests {
         storage
             .save(&AuthStore {
                 version: 1,
+                ext_agent_host_id: None,
                 chatgpt: None,
                 google: Some(StoredGoogleAuth {
                     refresh_token: "1//host-refresh".to_string(),

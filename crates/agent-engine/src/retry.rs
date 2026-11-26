@@ -48,6 +48,7 @@ impl GenerationCause {
                 | "stream_error:not_found"
                 | "stream_error:payload_too_large"
                 | "stream_error:unprocessable"
+                | "stream_error:usage_limit"
                 | "stream_error:http"
                 | "stream_error:safety"
                 | "stream_error:recitation"
@@ -65,7 +66,11 @@ impl std::error::Error for GenerationCause {}
 
 /// Check typed namespace causes before legacy LLM/provider error heuristics.
 pub fn is_retryable(error: &anyhow::Error) -> bool {
-    if error.is::<crate::runtime::NamespaceOperationUncertainty>() {
+    if error.is::<crate::runtime::NamespaceOperationUncertainty>()
+        || error
+            .chain()
+            .any(|source| source.is::<alan_llm::ChatgptSubscriptionLimitError>())
+    {
         return false;
     }
     if let Some(cause) = error.downcast_ref::<GenerationCause>() {
@@ -77,6 +82,12 @@ pub fn is_retryable(error: &anyhow::Error) -> bool {
         .collect::<Vec<_>>()
         .join("\n")
         .to_lowercase();
+
+    if error_str.contains("subscription_sharing_usage_limit_exceeded")
+        || error_str.contains("subscription_sharing_workplace_individual_usage_limit_exceeded")
+    {
+        return false;
+    }
 
     let retryable_patterns = [
         "timeout",

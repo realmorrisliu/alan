@@ -246,13 +246,13 @@ pub struct Config {
     pub openai_responses_model: String,
 
     // ========================================================================
-    // ChatGPT/Codex Managed Auth Configuration
+    // ChatGPT (Sign in with ChatGPT) Managed Auth Configuration
     // ========================================================================
-    /// CHATGPT_BASE_URL (default: <https://chatgpt.com/backend-api/codex>)
+    /// CHATGPT_BASE_URL (default: <https://api.openai.com/v1>)
     #[serde(skip, default = "default_chatgpt_base_url")]
     pub chatgpt_base_url: String,
 
-    /// CHATGPT_MODEL (default: gpt-5.3-codex)
+    /// CHATGPT_MODEL (default: gpt-5.4)
     #[serde(skip, default = "default_chatgpt_model")]
     pub chatgpt_model: String,
 
@@ -445,11 +445,11 @@ fn default_openai_responses_model() -> String {
 }
 
 fn default_chatgpt_base_url() -> String {
-    "https://chatgpt.com/backend-api/codex".to_string()
+    "https://api.openai.com/v1".to_string()
 }
 
 fn default_chatgpt_model() -> String {
-    "gpt-5.3-codex".to_string()
+    "gpt-5.4".to_string()
 }
 
 fn default_magpie_base_url() -> String {

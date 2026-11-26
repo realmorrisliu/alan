@@ -62,8 +62,8 @@ credential_id = "chatgpt"
 source = "managed"
 
 [profiles.chatgpt-main.settings]
-base_url = "https://chatgpt.com/backend-api/codex"
-model = "gpt-5.3-codex"
+base_url = "https://api.openai.com/v1"
+model = "gpt-5.4"
 account_id = ""
 ```
 
@@ -105,7 +105,6 @@ Stable event types:
 - `credential_status_changed`
 - `login_started`
 - `browser_login_ready`
-- `device_code_ready`
 - `login_succeeded`
 - `login_failed`
 - `logout_completed`
@@ -209,10 +208,20 @@ Provider-specific requirements:
   background polling, provider compaction where supported, reasoning items,
   encrypted reasoning state, native multimodal/file inputs, cached usage, and
   named reasoning effort when model-supported.
-- Managed ChatGPT Responses preserves compatible Responses-shaped semantics
-  but defaults to explicit capability limits: stream transport, `store=false`,
-  no `temperature`, no `max_output_tokens`, no `previous_response_id`, and no
-  background/retrieve/cancel/provider compaction unless revalidated.
+- Managed ChatGPT Responses uses OpenAI's Sign in with ChatGPT (OAuth 2.0 / OIDC
+  with PKCE, RFC 8707 `resource=https://api.openai.com/v1`, dynamic client
+  registration via `dynamic_agent_client` with installation-scoped
+  `ext_agent_host_id`, and `chatgpt.tokens.use.direct` scope) rather than
+  device-code login (supporting manual callback URL paste for headless/SSH
+  terminals). It sends only `Authorization: Bearer <access_token>` to
+  `https://api.openai.com/v1`, preserves compatible Responses-shaped semantics
+  and `prompt_cache_key` affinity, enforces `store=false`, `stream=true`, no
+  `temperature`, no `max_output_tokens`, no `prompt_cache_retention`, no
+  `prompt_cache_options`, no `previous_response_id`, and no
+  background/retrieve/cancel/provider compaction unless revalidated, and treats
+  `subscription_sharing_usage_limit_exceeded` and
+  `subscription_sharing_workplace_individual_usage_limit_exceeded` as
+  non-retryable usage-limit errors.
 - OpenAI Chat Completions preserves official role model including `developer`,
   multimodal content arrays where supported, tool calls and `tool` messages,
   response id, streaming deltas, usage, and reasoning-effort controls where

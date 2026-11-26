@@ -35,14 +35,9 @@ pub(super) async fn verify_connection_connectivity(
                     anyhow::anyhow!("ChatGPT profile `{profile_id}` authentication failed: {err}")
                 })?;
             let base = require_base(profile_id, &config.chatgpt_base_url)?;
-            let mut url = reqwest::Url::parse(&format!("{}/models", base.trim_end_matches('/')))
+            let url = reqwest::Url::parse(&format!("{}/models", base.trim_end_matches('/')))
                 .with_context(|| format!("invalid ChatGPT base URL for `{profile_id}`"))?;
-            url.query_pairs_mut()
-                .append_pair("client_version", "0.159.0");
-            client
-                .get(url)
-                .bearer_auth(&auth.access_token)
-                .header("chatgpt-account-id", &auth.account_id)
+            client.get(url).bearer_auth(&auth.access_token)
         }
         LlmProvider::Magpie
         | LlmProvider::OpenAiResponses

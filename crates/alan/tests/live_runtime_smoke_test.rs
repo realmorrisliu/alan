@@ -76,7 +76,7 @@ async fn live_chatgpt_runtime_smoke_uses_agentfs() -> Result<()> {
         std::fs::create_dir_all(path)?;
     }
 
-    let model = non_empty_env(CHATGPT_MODEL_ENV).unwrap_or_else(|| "gpt-5.3-codex".to_string());
+    let model = non_empty_env(CHATGPT_MODEL_ENV).unwrap_or_else(|| "gpt-5.4".to_string());
     let mut core_config =
         Config::for_chatgpt(non_empty_env(CHATGPT_BASE_URL_ENV).as_deref(), Some(&model));
     core_config.chatgpt_account_id = non_empty_env(CHATGPT_ACCOUNT_ID_ENV);

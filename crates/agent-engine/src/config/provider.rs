@@ -510,7 +510,7 @@ fn inferred_context_window_tokens(provider: LlmProvider) -> u32 {
         LlmProvider::TypesafeEvaluation => 32_768,
         LlmProvider::GoogleGeminiGenerateContent => 1_048_576,
         LlmProvider::AnthropicMessages => 200_000,
-        LlmProvider::Chatgpt => 400_000,
+        LlmProvider::Chatgpt => 1_050_000,
         LlmProvider::OpenAiResponses
         | LlmProvider::OpenAiChatCompletions
         | LlmProvider::OpenAiChatCompletionsCompatible

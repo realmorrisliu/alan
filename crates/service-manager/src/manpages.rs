@@ -268,7 +268,7 @@ SYNOPSIS
   alan connection list
   alan connection current
   alan connection add <PROVIDER> [--profile <ID>] [--setting key=val] [--default]
-  alan connection login <PROFILE_ID> [browser|device]
+  alan connection login <PROFILE_ID> [browser]
   alan connection set-secret <PROFILE_ID>
   alan connection default set <PROFILE_ID>
   alan connection test [PROFILE_ID]
@@ -277,7 +277,7 @@ SYNOPSIS
 FIRST-PARTY PROVIDERS (ADR-0061)
   magpie                local/self-hosted gateway (keyless by default)
   openai_responses      OpenAI Responses API
-  chatgpt               ChatGPT / Codex OAuth managed session
+  chatgpt               Sign in with ChatGPT (plan & credits OAuth)
   vertex                Google Cloud Vertex AI (Google OAuth / ADC / Express Mode)
   openrouter            OpenRouter PKCE browser OAuth or API key
 

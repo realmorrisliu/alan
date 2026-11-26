@@ -66,18 +66,25 @@ fn seed_chatgpt_auth(data_dir: &Path) {
     storage
         .save(&AuthStore {
             version: 1,
+            ext_agent_host_id: Some("urn:uuid:e61bbe28-07ef-466d-8e5d-a344f94ab305".into()),
             chatgpt: Some(
-                StoredChatgptAuth::from_tokens(ChatgptTokenData {
-                    id_token: ChatgptIdTokenInfo {
-                        email: Some("user@example.com".to_string()),
-                        plan_type: Some("pro".to_string()),
-                        user_id: Some("user_123".to_string()),
-                        account_id: Some("acct_123".to_string()),
-                        raw_jwt: id_token,
+                StoredChatgptAuth::from_tokens(
+                    ChatgptTokenData {
+                        id_token: ChatgptIdTokenInfo {
+                            email: Some("user@example.com".to_string()),
+                            plan_type: Some("pro".to_string()),
+                            user_id: Some("user_123".to_string()),
+                            account_id: Some("acct_123".to_string()),
+                            subject: None,
+                            nonce: None,
+                            raw_jwt: id_token,
+                        },
+                        access_token,
+                        refresh_token: "refresh_token".to_string(),
                     },
-                    access_token,
-                    refresh_token: "refresh_token".to_string(),
-                })
+                    "oaiapp_123".to_string(),
+                    vec!["chatgpt.tokens.use.direct".to_string()],
+                )
                 .unwrap(),
             ),
             google: None,

@@ -48,9 +48,18 @@ pub struct LoopbackCallbackReceipt {
     pub stream: TcpStream,
     pub code: String,
     pub state: Option<String>,
+    pub query_params: Vec<(String, String)>,
 }
 
 impl LoopbackCallbackReceipt {
+    /// Return the first callback query parameter matching `key`.
+    pub fn query_param(&self, key: &str) -> Option<&str> {
+        self.query_params
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
     /// Send a success HTML page to the browser after code exchange succeeds.
     pub async fn respond_success(&mut self, title: &str, message: &str) -> io::Result<()> {
         write_http_response(
@@ -197,10 +206,16 @@ impl LoopbackCallbackServer {
                     return Err(LoopbackCallbackError::MissingCode);
                 };
 
+                let query_params = query
+                    .into_iter()
+                    .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                    .collect();
+
                 return Ok(LoopbackCallbackReceipt {
                     stream,
                     code,
                     state: returned_state,
+                    query_params,
                 });
             }
         })

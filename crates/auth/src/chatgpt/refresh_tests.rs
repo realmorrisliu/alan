@@ -66,6 +66,15 @@ async fn spawn_token_server(account: &'static str) -> TokenServer {
                         break;
                     }
                 }
+                let request_raw = String::from_utf8_lossy(&request);
+                assert!(request_raw.starts_with("POST /api/accounts/oauth/token "));
+                let body_part = request_raw
+                    .split_once("\r\n\r\n")
+                    .map(|(_, b)| b)
+                    .unwrap_or("");
+                assert!(body_part.contains("grant_type=refresh_token"));
+                assert!(body_part.contains("client_id=oaiapp_test"));
+                assert!(body_part.contains("resource=https%3A%2F%2Fapi.openai.com%2Fv1"));
                 let n = count.fetch_add(1, Ordering::SeqCst) + 1;
                 // Hold the response so concurrent callers really overlap the refresh.
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -95,7 +104,8 @@ fn manager_for(temp: &TempDir, issuer: &str) -> ChatgptAuthManager {
     let mut manager = ChatgptAuthManager::new(ChatgptAuthConfig {
         storage_path: temp.path().join("auth.json"),
         issuer: issuer.to_string(),
-        client_id: "test".into(),
+        resource: "https://api.openai.com/v1".to_string(),
+        agent_name_hint: "Alan".to_string(),
         browser_callback_port: 1455,
     })
     .unwrap();
@@ -109,14 +119,18 @@ fn manager_for(temp: &TempDir, issuer: &str) -> ChatgptAuthManager {
 
 fn seed(manager: &ChatgptAuthManager, access: String) {
     manager
-        .import_token_bundle(
-            ImportedChatgptTokenBundle {
-                id_token: id_token("acct-test"),
-                access_token: access,
-                refresh_token: "old-refresh".into(),
-            },
-            None,
-        )
+        .import_token_bundle(ImportedChatgptTokenBundle {
+            id_token: id_token("acct-test"),
+            access_token: access,
+            refresh_token: "old-refresh".into(),
+            client_id: "oaiapp_test".into(),
+            scopes: vec![
+                "openid".into(),
+                "offline_access".into(),
+                "resource.invoke".into(),
+                "chatgpt.tokens.use.direct".into(),
+            ],
+        })
         .unwrap();
 }
 

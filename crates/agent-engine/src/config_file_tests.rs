@@ -428,8 +428,8 @@ fn test_effective_context_window_tokens_uses_provider_family_defaults() {
         Config::for_google_gemini_generate_content("project", None, Some("gemini-2.5-pro"));
     assert_eq!(gemini.effective_context_window_tokens(), 1_048_576);
 
-    let chatgpt = Config::for_chatgpt(None, Some("gpt-5.3-codex"));
-    assert_eq!(chatgpt.effective_context_window_tokens(), 400_000);
+    let chatgpt = Config::for_chatgpt(None, Some("gpt-5.4"));
+    assert_eq!(chatgpt.effective_context_window_tokens(), 1_050_000);
 
     let anthropic = Config::for_anthropic_messages("key", None, Some("claude-3-5-sonnet-latest"));
     assert_eq!(anthropic.effective_context_window_tokens(), 200_000);

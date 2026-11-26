@@ -141,18 +141,25 @@ fn doctor_cli_reports_profiles_rollouts_and_never_leaks_secrets() {
         .unwrap()
         .save(&AuthStore {
             version: 1,
+            ext_agent_host_id: None,
             chatgpt: Some(
-                StoredChatgptAuth::from_tokens(ChatgptTokenData {
-                    id_token: ChatgptIdTokenInfo {
-                        email: Some("doctor@example.com".to_string()),
-                        plan_type: Some("pro".to_string()),
-                        user_id: Some("user_doc".to_string()),
-                        account_id: Some("acct_doc".to_string()),
-                        raw_jwt: id_token.clone(),
+                StoredChatgptAuth::from_tokens(
+                    ChatgptTokenData {
+                        id_token: ChatgptIdTokenInfo {
+                            email: Some("doctor@example.com".to_string()),
+                            plan_type: Some("pro".to_string()),
+                            user_id: Some("user_doc".to_string()),
+                            account_id: Some("acct_doc".to_string()),
+                            subject: None,
+                            nonce: None,
+                            raw_jwt: id_token.clone(),
+                        },
+                        access_token: access_token.clone(),
+                        refresh_token: refresh_sentinel.to_string(),
                     },
-                    access_token: access_token.clone(),
-                    refresh_token: refresh_sentinel.to_string(),
-                })
+                    "oaiapp_doc".to_string(),
+                    vec!["chatgpt.tokens.use.direct".to_string()],
+                )
                 .unwrap(),
             ),
             google: None,

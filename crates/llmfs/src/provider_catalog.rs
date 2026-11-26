@@ -336,12 +336,26 @@ const OPENAI_COMPATIBLE_MODELS: &[StaticProviderModel] = &[
     },
 ];
 
-const CHATGPT_MODELS: &[StaticProviderModel] = &[StaticProviderModel {
-    slug: "gpt-5.3-codex",
-    family: "gpt-5-codex",
-    context_window_tokens: 400_000,
-    supports_reasoning: true,
-}];
+const CHATGPT_MODELS: &[StaticProviderModel] = &[
+    StaticProviderModel {
+        slug: "gpt-5.4",
+        family: "gpt-5",
+        context_window_tokens: 1_050_000,
+        supports_reasoning: true,
+    },
+    StaticProviderModel {
+        slug: "gpt-5.4-pro",
+        family: "gpt-5",
+        context_window_tokens: 1_050_000,
+        supports_reasoning: true,
+    },
+    StaticProviderModel {
+        slug: "gpt-5-mini",
+        family: "gpt-5",
+        context_window_tokens: 400_000,
+        supports_reasoning: true,
+    },
+];
 
 const ANTHROPIC_MODELS: &[StaticProviderModel] = &[StaticProviderModel {
     slug: "claude-sonnet-4-5",
@@ -387,7 +401,7 @@ fn provider_model_catalog(provider: &str) -> Option<ProviderModelCatalog> {
             models: OPENAI_COMPATIBLE_MODELS,
         }),
         "chatgpt" => Some(ProviderModelCatalog {
-            default_model: "gpt-5.3-codex",
+            default_model: "gpt-5.4",
             source: "bundled-chatgpt",
             models: CHATGPT_MODELS,
         }),

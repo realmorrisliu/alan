@@ -322,7 +322,11 @@ fn resolve_profile_uses_default_profile() {
     assert_eq!(resolved.profile_id, "chatgpt-main");
     assert_eq!(
         resolved.settings.get("model").map(String::as_str),
-        Some("gpt-5.3-codex")
+        Some("gpt-5.4")
+    );
+    assert_eq!(
+        resolved.settings.get("base_url").map(String::as_str),
+        Some("https://api.openai.com/v1")
     );
 }
 
