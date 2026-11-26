@@ -60,7 +60,7 @@ pub struct ToolCall {
 }
 
 /// Token usage information
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub prompt_tokens: i32,
     /// Prompt tokens served from a provider prompt/context cache.

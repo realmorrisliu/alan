@@ -11,11 +11,12 @@ use crate::GoogleGeminiGenerateContentClient;
 use crate::OpenAiChatCompletionsClient;
 #[cfg(feature = "provider-openrouter")]
 use crate::OpenRouterClient;
+use crate::{
+    CalibrationKind, CompatibilityTier, InstructionRole, LlmProvider, ProviderCapabilities, magpie,
+    openrouter,
+};
 #[cfg(feature = "provider-openai")]
 use crate::{ChatgptResponsesClient, OpenAiResponsesClient};
-use crate::{
-    CompatibilityTier, InstructionRole, LlmProvider, ProviderCapabilities, magpie, openrouter,
-};
 
 /// Configuration for creating an LLM provider
 #[derive(Debug, Clone)]
@@ -37,6 +38,9 @@ pub struct ProviderConfig {
     pub app_categories: Option<Vec<String>>, // OpenRouter app category metadata
     /// Magpie canonical-effort → router thinking-level map (`None` = discover/default).
     pub thinking_level_map: Option<crate::ReasoningEffortMap>,
+    /// Opt-in generation-based uncalibrated decision fallback for generation-only
+    /// providers (or to select Magpie's chat fallback mode). Defaults to `false`.
+    pub decision_fallback: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +78,7 @@ impl ProviderConfig {
             x_title: None,
             app_categories: None,
             thinking_level_map: None,
+            decision_fallback: false,
         }
     }
 
@@ -98,6 +103,7 @@ impl ProviderConfig {
             x_title: None,
             app_categories: None,
             thinking_level_map: None,
+            decision_fallback: false,
         }
     }
 
@@ -119,6 +125,7 @@ impl ProviderConfig {
             x_title: None,
             app_categories: None,
             thinking_level_map: None,
+            decision_fallback: false,
         }
     }
 
@@ -140,6 +147,7 @@ impl ProviderConfig {
             x_title: None,
             app_categories: None,
             thinking_level_map: None,
+            decision_fallback: false,
         }
     }
 
@@ -161,6 +169,7 @@ impl ProviderConfig {
             x_title: None,
             app_categories: None,
             thinking_level_map: None,
+            decision_fallback: false,
         }
     }
 
@@ -182,6 +191,7 @@ impl ProviderConfig {
             x_title: None,
             app_categories: None,
             thinking_level_map: None,
+            decision_fallback: false,
         }
     }
 
@@ -203,6 +213,7 @@ impl ProviderConfig {
             x_title: None,
             app_categories: None,
             thinking_level_map: None,
+            decision_fallback: false,
         }
     }
 
@@ -227,6 +238,7 @@ impl ProviderConfig {
             x_title: None,
             app_categories: None,
             thinking_level_map: None,
+            decision_fallback: false,
         }
     }
 
@@ -248,6 +260,7 @@ impl ProviderConfig {
             x_title: None,
             app_categories: None,
             thinking_level_map: None,
+            decision_fallback: false,
         }
     }
 
@@ -269,6 +282,7 @@ impl ProviderConfig {
             x_title: None,
             app_categories: None,
             thinking_level_map: None,
+            decision_fallback: false,
         }
     }
 
@@ -348,6 +362,46 @@ impl ProviderConfig {
         self.app_categories = Some(app_categories.into_iter().map(Into::into).collect());
         self
     }
+
+    /// Enable or disable opt-in generation-based uncalibrated decision fallback.
+    ///
+    /// For generation-only adapters (`AnthropicMessages`, `ChatgptResponses`,
+    /// `OpenAiChatCompletions`, `OpenAiChatCompletionsCompatible`), this opts into
+    /// `CalibrationKind::Uncalibrated` structured-generation decisions. For
+    /// `Magpie`, this switches from native `/v1/decisions` to chat fallback.
+    /// Dedicated native calibrated providers (`GoogleGeminiGenerateContent`,
+    /// `OpenAiResponses`, `OpenRouter`, `TypesafeEvaluation`) always use their
+    /// native calibrated Decisions endpoints.
+    pub fn with_decision_fallback(mut self, enabled: bool) -> Self {
+        self.decision_fallback = enabled;
+        self
+    }
+
+    /// Effective decision calibration reported by a provider created from this config.
+    pub fn decision_calibration(&self) -> Option<CalibrationKind> {
+        match self.provider_type {
+            ProviderType::Magpie => Some(if self.decision_fallback {
+                CalibrationKind::Uncalibrated
+            } else {
+                CalibrationKind::Calibrated
+            }),
+            ProviderType::GoogleGeminiGenerateContent
+            | ProviderType::OpenAiResponses
+            | ProviderType::OpenRouter
+            | ProviderType::TypesafeEvaluation => Some(CalibrationKind::Calibrated),
+            ProviderType::ChatgptResponses
+            | ProviderType::OpenAiChatCompletions
+            | ProviderType::OpenAiChatCompletionsCompatible
+            | ProviderType::AnthropicMessages => self
+                .decision_fallback
+                .then_some(CalibrationKind::Uncalibrated),
+        }
+    }
+
+    /// Whether a provider created from this config supports typed Decisions.
+    pub fn supports_decisions(&self) -> bool {
+        self.decision_calibration().is_some()
+    }
 }
 
 /// Create an LLM provider from configuration
@@ -363,6 +417,9 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
                 );
                 if let Some(map) = config.thinking_level_map {
                     client = client.with_reasoning_effort_map(map);
+                }
+                if config.decision_fallback {
+                    client = client.with_decision_fallback(true);
                 }
                 Ok(Box::new(client))
             }
@@ -447,7 +504,8 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
                     config.custom_headers.unwrap_or_default(),
                     config.expected_account_id,
                     config.chatgpt_auth_storage_path,
-                )?;
+                )?
+                .with_decision_fallback(config.decision_fallback);
                 Ok(Box::new(client))
             }
             #[cfg(not(feature = "provider-openai"))]
@@ -492,11 +550,14 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
                     .base_url
                     .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-                Ok(Box::new(OpenAiChatCompletionsClient::official_with_params(
-                    &api_key,
-                    &base_url,
-                    &config.model,
-                )))
+                Ok(Box::new(
+                    OpenAiChatCompletionsClient::official_with_params(
+                        &api_key,
+                        &base_url,
+                        &config.model,
+                    )
+                    .with_decision_fallback(config.decision_fallback),
+                ))
             }
             #[cfg(not(feature = "provider-openai"))]
             {
@@ -523,7 +584,8 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
                         &api_key,
                         &base_url,
                         &config.model,
-                    ),
+                    )
+                    .with_decision_fallback(config.decision_fallback),
                 ))
             }
             #[cfg(not(feature = "provider-openai"))]
@@ -586,6 +648,9 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
                 if let Some(user_agent) = config.user_agent {
                     client = client.with_user_agent(&user_agent);
                 }
+                if config.decision_fallback {
+                    client = client.with_decision_fallback(true);
+                }
 
                 Ok(Box::new(client))
             }
@@ -601,6 +666,25 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
 }
 
 impl ProviderType {
+    /// Whether this provider type ships a dedicated native calibrated Decisions endpoint.
+    pub fn supports_native_decisions(self) -> bool {
+        matches!(
+            self,
+            ProviderType::Magpie
+                | ProviderType::GoogleGeminiGenerateContent
+                | ProviderType::OpenAiResponses
+                | ProviderType::OpenRouter
+                | ProviderType::TypesafeEvaluation
+        )
+    }
+
+    /// Default decision calibration advertised by this provider type before any
+    /// opt-in `decision_fallback` override on [`ProviderConfig`].
+    pub fn default_decision_calibration(self) -> Option<CalibrationKind> {
+        self.supports_native_decisions()
+            .then_some(CalibrationKind::Calibrated)
+    }
+
     pub fn capabilities(self) -> ProviderCapabilities {
         match self {
             ProviderType::Magpie => ProviderCapabilities {
@@ -777,3 +861,7 @@ impl ProviderType {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "factory_tests.rs"]
+mod tests;

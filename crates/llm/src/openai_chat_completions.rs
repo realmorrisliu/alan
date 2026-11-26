@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use tracing::{debug, instrument, warn};
 
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, TokenUsage,
-    ToolCall as LlmToolCall,
+    CalibrationKind, DecisionRequest, DecisionResponse, GenerationRequest, GenerationResponse,
+    LlmProvider, StreamChunk, TokenUsage, ToolCall as LlmToolCall,
 };
 #[cfg(test)]
 use crate::{MessageRole, ReasoningEffort};
@@ -68,6 +68,8 @@ pub struct OpenAiChatCompletionsClient {
     extra_headers: Vec<(String, String)>,
     /// Canonical effort name → wire `reasoning_effort` (`None` omits the field).
     reasoning_effort_map: Option<std::sync::Arc<ReasoningEffortMap>>,
+    /// Opt-in uncalibrated structured-generation decision fallback.
+    decision_fallback: bool,
 }
 
 /// Canonical reasoning-effort name to provider wire value; `None` omits the field.
@@ -112,7 +114,19 @@ impl OpenAiChatCompletionsClient {
             api_flavor,
             extra_headers: Vec::new(),
             reasoning_effort_map: None,
+            decision_fallback: false,
         }
+    }
+
+    /// Opt in to uncalibrated structured-generation decision fallback via
+    /// [`crate::decide_via_generation`].
+    ///
+    /// Defaults to `false`. When enabled, [`LlmProvider::supports_decisions`]
+    /// returns `true` and [`LlmProvider::decision_calibration`] reports
+    /// [`CalibrationKind::Uncalibrated`] (never [`CalibrationKind::Calibrated`]).
+    pub fn with_decision_fallback(mut self, enabled: bool) -> Self {
+        self.decision_fallback = enabled;
+        self
     }
 
     /// Attach stable headers sent on every Chat Completions request.
@@ -203,6 +217,7 @@ impl OpenAiChatCompletionsClient {
             api_flavor: self.api_flavor,
             extra_headers: self.extra_headers.clone(),
             reasoning_effort_map: self.reasoning_effort_map.clone(),
+            decision_fallback: self.decision_fallback,
         }
     }
 
@@ -772,6 +787,25 @@ impl LlmProvider for OpenAiChatCompletionsClient {
             .await
     }
 
+    fn supports_decisions(&self) -> bool {
+        self.decision_fallback
+    }
+
+    fn decision_calibration(&self) -> Option<CalibrationKind> {
+        self.decision_fallback
+            .then_some(CalibrationKind::Uncalibrated)
+    }
+
+    async fn decide(&mut self, request: DecisionRequest) -> anyhow::Result<DecisionResponse> {
+        anyhow::ensure!(
+            self.decision_fallback,
+            "Provider '{}' does not support typed decisions unless decision fallback is enabled",
+            self.provider_name()
+        );
+        let model = self.model.clone();
+        crate::decide_via_generation(self, &model, request).await
+    }
+
     fn provider_name(&self) -> &'static str {
         match self.api_flavor {
             OpenAiChatCompletionsApiFlavor::Official => "openai_chat_completions",
@@ -799,5 +833,7 @@ impl OpenAiChatCompletionsClient {
     }
 }
 
+#[cfg(test)]
+mod decisions_tests;
 #[cfg(test)]
 mod tests;

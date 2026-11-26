@@ -9,12 +9,13 @@ use anyhow::{Context, Result};
 use tracing::{error, instrument};
 
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, ProviderModel,
-    StreamChunk as UnifiedStreamChunk, ToolCall as LlmToolCall,
+    CalibrationKind, DecisionRequest, DecisionResponse, GenerationRequest, GenerationResponse,
+    LlmProvider, ProviderModel, StreamChunk as UnifiedStreamChunk, ToolCall as LlmToolCall,
 };
 
 mod auth;
 mod catalog;
+mod decisions;
 mod endpoint;
 mod input_projection;
 mod signatures;
@@ -22,6 +23,7 @@ mod streaming;
 mod wire;
 
 pub use auth::{GcloudAccessTokenSource, VertexAccessTokenSource, VertexAuth};
+pub use decisions::DEFAULT_GEMINI_DECISION_MODEL;
 pub use endpoint::VertexClientConfig;
 pub use streaming::{StreamCandidate, StreamChunk};
 pub use wire::{
@@ -40,6 +42,7 @@ use signatures::TurnSignatures;
 /// Client for the Google Gemini GenerateContent API on Vertex AI.
 pub struct GoogleGeminiGenerateContentClient {
     model: String,
+    decision_model: Option<String>,
     transport: Transport,
 }
 
@@ -117,12 +120,22 @@ impl GoogleGeminiGenerateContentClient {
 
         Ok(Self {
             model: cfg.model.trim().to_string(),
+            decision_model: None,
             transport: Transport {
                 http: reqwest::Client::new(),
                 endpoint,
                 auth: auth_state,
             },
         })
+    }
+
+    /// Override the default decision model used for native `POST /v1beta/decisions`
+    /// requests when `DecisionRequest::model_override` is not supplied.
+    pub fn with_decision_model(mut self, model: impl Into<String>) -> Self {
+        let model = model.into();
+        let trimmed = model.trim();
+        self.decision_model = (!trimmed.is_empty()).then(|| trimmed.to_string());
+        self
     }
 
     /// Resolved non-streaming endpoint URL.
@@ -133,6 +146,11 @@ impl GoogleGeminiGenerateContentClient {
     /// Resolved SSE streaming endpoint URL.
     pub fn stream_endpoint_url(&self) -> String {
         self.transport.endpoint.url(Method::StreamSse)
+    }
+
+    /// Resolved native `/v1beta/decisions` endpoint URL.
+    pub fn decisions_endpoint_url(&self) -> String {
+        self.transport.endpoint.decisions_url().to_string()
     }
 
     /// Generate content (non-streaming).
@@ -415,6 +433,18 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
 
     async fn model_catalog(&self) -> Result<Option<Vec<ProviderModel>>> {
         catalog::discover_vertex_model_catalog(&self.transport).await
+    }
+
+    fn supports_decisions(&self) -> bool {
+        true
+    }
+
+    fn decision_calibration(&self) -> Option<CalibrationKind> {
+        Some(CalibrationKind::Calibrated)
+    }
+
+    async fn decide(&mut self, request: DecisionRequest) -> Result<DecisionResponse> {
+        self.decide_gemini(request).await
     }
 
     fn provider_name(&self) -> &'static str {

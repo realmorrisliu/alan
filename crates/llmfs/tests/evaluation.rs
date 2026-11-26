@@ -63,6 +63,7 @@ fn setup(
         ConnectionLimits {
             max_generations: Some(0),
             max_evaluations: limit,
+            max_decisions: None,
         },
         Box::new(Evaluator {
             calls: calls.clone(),

@@ -12,13 +12,14 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, Message, MessageRole, ProviderModel,
-    StreamChunk, ToolCall, ToolDefinition,
+    CalibrationKind, DecisionRequest, DecisionResponse, GenerationRequest, GenerationResponse,
+    LlmProvider, Message, MessageRole, ProviderModel, StreamChunk, ToolCall, ToolDefinition,
 };
 
 mod catalog;
 #[cfg(test)]
 mod completion_tests;
+mod decisions;
 mod extra_params;
 mod input_projection;
 mod streaming;
@@ -180,6 +181,18 @@ impl LlmProvider for OpenRouterClient {
 
     async fn model_catalog(&self) -> Result<Option<Vec<ProviderModel>>> {
         self.fetch_model_catalog().await.map(Some)
+    }
+
+    fn supports_decisions(&self) -> bool {
+        true
+    }
+
+    fn decision_calibration(&self) -> Option<CalibrationKind> {
+        Some(CalibrationKind::Calibrated)
+    }
+
+    async fn decide(&mut self, request: DecisionRequest) -> Result<DecisionResponse> {
+        self.decide_openrouter(request).await
     }
 
     fn provider_name(&self) -> &'static str {

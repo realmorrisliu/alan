@@ -20,11 +20,16 @@ use tokio::sync::mpsc;
 use crate::openai_chat_completions::{
     OpenAiChatCompletionsApiFlavor, OpenAiChatCompletionsClient, ReasoningEffortMap,
 };
-use crate::{GenerationRequest, GenerationResponse, LlmProvider, ProviderModel, StreamChunk};
+use crate::{
+    CalibrationKind, DecisionRequest, DecisionResponse, GenerationRequest, GenerationResponse,
+    LlmProvider, ProviderModel, StreamChunk,
+};
 
 mod catalog;
+mod decisions;
 pub use crate::provider_meta::{MAGPIE_DEFAULT_BASE_URL, parse_reasoning_effort_map};
 use catalog::{MagpieModel, parse_models_response};
+pub use decisions::MagpieDecisionMode;
 
 #[cfg(test)]
 mod tests;
@@ -35,12 +40,17 @@ pub const MAGPIE_SESSION_AFFINITY_HEADER: &str = "x-session-affinity";
 pub const MAGPIE_SESSION_ID_HEADER: &str = "x-session-id";
 
 const MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
+const DECISION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// First-party Magpie provider client.
 pub struct MagpieClient {
     inner: OpenAiChatCompletionsClient,
+    decision_http: reqwest::Client,
     session_id: String,
     effort_map_resolved: bool,
+    decision_mode: MagpieDecisionMode,
+    decision_model: Option<String>,
+    decision_endpoint: Option<String>,
 }
 
 impl MagpieClient {
@@ -75,10 +85,20 @@ impl MagpieClient {
         )
         .with_extra_headers(session_headers(&session_id))
         .with_reasoning_effort_map(Some(default_reasoning_effort_map()));
+        let decision_http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .timeout(DECISION_TIMEOUT)
+            .build()
+            .expect("failed to build Magpie decision HTTP client");
         Self {
             inner,
+            decision_http,
             session_id,
             effort_map_resolved: false,
+            decision_mode: MagpieDecisionMode::Native,
+            decision_model: None,
+            decision_endpoint: None,
         }
     }
 
@@ -87,6 +107,48 @@ impl MagpieClient {
         self.inner = self.inner.with_reasoning_effort_map(Some(map));
         self.effort_map_resolved = true;
         self
+    }
+
+    /// Toggle opt-in uncalibrated chat-generation fallback for [`LlmProvider::decide`].
+    ///
+    /// When `false` (the default), `decide()` routes to Magpie's native
+    /// `POST {base_url}/decisions` endpoint and preserves native calibration.
+    /// When `true`, `decide()` uses [`crate::decide_via_generation`] over
+    /// `/v1/chat/completions` and ALWAYS reports [`CalibrationKind::Uncalibrated`].
+    pub fn with_decision_fallback(mut self, enabled: bool) -> Self {
+        self.decision_mode = if enabled {
+            MagpieDecisionMode::ChatFallback
+        } else {
+            MagpieDecisionMode::Native
+        };
+        self
+    }
+
+    /// Explicitly choose how [`LlmProvider::decide`] routes decision requests.
+    pub fn with_decision_mode(mut self, mode: MagpieDecisionMode) -> Self {
+        self.decision_mode = mode;
+        self
+    }
+
+    /// Configure a dedicated Magpie router model slug for native `/v1/decisions` calls.
+    pub fn with_decision_model(mut self, model: impl Into<String>) -> Self {
+        let model = model.into();
+        let trimmed = model.trim();
+        self.decision_model = (!trimmed.is_empty()).then(|| trimmed.to_string());
+        self
+    }
+
+    /// Override the native decisions endpoint URL (defaults to `{base_url}/decisions`).
+    pub fn with_decision_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        let endpoint = endpoint.into();
+        let trimmed = endpoint.trim();
+        self.decision_endpoint = (!trimmed.is_empty()).then(|| trimmed.to_string());
+        self
+    }
+
+    /// Return the active decision routing mode.
+    pub fn decision_mode(&self) -> MagpieDecisionMode {
+        self.decision_mode
     }
 
     /// Stable session-affinity key sent on every request from this client.
@@ -213,6 +275,21 @@ impl LlmProvider for MagpieClient {
                 .map(MagpieModel::into_provider_model)
                 .collect(),
         ))
+    }
+
+    fn supports_decisions(&self) -> bool {
+        true
+    }
+
+    fn decision_calibration(&self) -> Option<CalibrationKind> {
+        Some(match self.decision_mode {
+            MagpieDecisionMode::Native => CalibrationKind::Calibrated,
+            MagpieDecisionMode::ChatFallback => CalibrationKind::Uncalibrated,
+        })
+    }
+
+    async fn decide(&mut self, request: DecisionRequest) -> Result<DecisionResponse> {
+        self.decide_magpie(request).await
     }
 
     fn provider_name(&self) -> &'static str {

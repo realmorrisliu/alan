@@ -17,8 +17,12 @@ use crate::openai_chat_completions::{
     convert_openai_responses_output,
 };
 use crate::session_affinity::{new_session_id, request_session_id};
-use crate::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
+use crate::{
+    CalibrationKind, DecisionRequest, DecisionResponse, GenerationRequest, GenerationResponse,
+    LlmProvider, StreamChunk,
+};
 
+mod decisions;
 pub(crate) mod stream_events;
 mod websocket;
 
@@ -77,6 +81,7 @@ pub struct OpenAiResponsesClient {
     prompt_cache_retention: PromptCacheRetention,
     transport: OpenAiResponsesTransport,
     websocket: Arc<ResponsesWebSocket>,
+    decision_model: Option<String>,
 }
 
 impl OpenAiResponsesClient {
@@ -94,7 +99,22 @@ impl OpenAiResponsesClient {
             prompt_cache_retention: PromptCacheRetention::Auto,
             transport: OpenAiResponsesTransport::Auto,
             websocket: Arc::new(ResponsesWebSocket::new(ws_url, DEFAULT_COOLDOWN)),
+            decision_model: None,
         }
+    }
+
+    /// Override the default decision model used for native `POST /v1/decisions`
+    /// requests when `DecisionRequest::model_override` is not supplied.
+    pub fn with_decision_model(mut self, model: impl Into<String>) -> Self {
+        let model = model.into();
+        let trimmed = model.trim();
+        self.decision_model = (!trimmed.is_empty()).then(|| trimmed.to_string());
+        self
+    }
+
+    /// Resolved native `/v1/decisions` endpoint URL.
+    pub fn decisions_endpoint_url(&self) -> String {
+        format!("{}/decisions", self.inner.base_url().trim_end_matches('/'))
     }
 
     /// Override the stable per-client `prompt_cache_key`.
@@ -169,6 +189,7 @@ impl OpenAiResponsesClient {
             prompt_cache_retention: self.prompt_cache_retention.clone(),
             transport: self.transport,
             websocket: Arc::clone(&self.websocket),
+            decision_model: self.decision_model.clone(),
         }
     }
 
@@ -420,6 +441,18 @@ impl LlmProvider for OpenAiResponsesClient {
             let _ = status_tx.send(outcome.err().as_ref().map(crate::safe_failure_reason));
         });
         Ok(crate::failure::guard_stream(rx, status_rx))
+    }
+
+    fn supports_decisions(&self) -> bool {
+        true
+    }
+
+    fn decision_calibration(&self) -> Option<CalibrationKind> {
+        Some(CalibrationKind::Calibrated)
+    }
+
+    async fn decide(&mut self, request: DecisionRequest) -> anyhow::Result<DecisionResponse> {
+        self.decide_openai(request).await
     }
 
     fn provider_name(&self) -> &'static str {

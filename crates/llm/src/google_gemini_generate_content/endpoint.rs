@@ -28,9 +28,11 @@ pub struct VertexClientConfig {
 pub(super) struct Endpoint {
     /// `{origin}/v1/{resource}` without the `:method` suffix.
     model_url: String,
+    /// `{origin}/v1beta/decisions` for native calibrated Vertex AI Decisions.
+    decisions_url: String,
     /// `{catalog_origin}/v1beta1/publishers/google/models` for live discovery.
     catalog_url: String,
-    /// Configured GCP project sent as `x-goog-user-project` on catalog GETs.
+    /// Configured GCP project sent as `x-goog-user-project` on catalog GETs and Decisions POSTs.
     user_project: Option<String>,
 }
 
@@ -89,6 +91,7 @@ impl Endpoint {
         let catalog_origin = origin_override.unwrap_or(default_catalog_origin);
         Ok(Self {
             model_url: format!("{origin}/v1/{resource}"),
+            decisions_url: format!("{origin}/v1beta/decisions"),
             catalog_url: format!("{catalog_origin}/v1beta1/publishers/google/models"),
             user_project: trimmed_project,
         })
@@ -99,6 +102,10 @@ impl Endpoint {
             Method::Generate => format!("{}:generateContent", self.model_url),
             Method::StreamSse => format!("{}:streamGenerateContent?alt=sse", self.model_url),
         }
+    }
+
+    pub(super) fn decisions_url(&self) -> &str {
+        &self.decisions_url
     }
 
     pub(super) fn catalog_url(&self) -> &str {
@@ -238,6 +245,66 @@ impl Transport {
             .await
             .context("Failed to send request to Vertex AI")
     }
+
+    /// POST a native `/v1beta/decisions` request using Vertex AI Express Mode
+    /// (`x-goog-api-key`) or OAuth/ADC (`Authorization: Bearer` + `x-goog-user-project`),
+    /// retrying once with a refreshed ADC token on HTTP 401. Never includes auth
+    /// material or raw response bodies in returned errors.
+    pub(super) async fn post_decisions(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<reqwest::Response> {
+        let url = self.endpoint.decisions_url();
+        debug!(%url, "Sending Vertex AI decisions request");
+        let response = match &self.auth {
+            AuthState::ApiKey(key) => self
+                .http
+                .post(url)
+                .header("x-goog-api-key", key.as_ref())
+                .json(body)
+                .send()
+                .await
+                .map_err(|_| anyhow::anyhow!("Vertex AI decision transport failed"))?,
+            AuthState::Adc(cache) => {
+                let token = cache.token().await.map_err(|_| {
+                    anyhow::anyhow!("Cannot resolve Vertex AI credentials for decisions")
+                })?;
+                let response = self.send_decisions_bearer(url, &token, body).await?;
+                if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                    warn!("Vertex AI rejected the access token during decisions; refreshing once");
+                    let token = cache.refresh_rejected(&token).await.map_err(|_| {
+                        anyhow::anyhow!("Cannot refresh Vertex AI credentials for decisions")
+                    })?;
+                    self.send_decisions_bearer(url, &token, body).await?
+                } else {
+                    response
+                }
+            }
+        };
+        anyhow::ensure!(
+            response.status().is_success(),
+            "Vertex AI decision HTTP {}",
+            response.status().as_u16()
+        );
+        Ok(response)
+    }
+
+    async fn send_decisions_bearer(
+        &self,
+        url: &str,
+        token: &str,
+        body: &serde_json::Value,
+    ) -> Result<reqwest::Response> {
+        let mut request = self.http.post(url).bearer_auth(token);
+        if let Some(project) = self.endpoint.user_project() {
+            request = request.header("x-goog-user-project", project);
+        }
+        request
+            .json(body)
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("Vertex AI decision transport failed"))
+    }
 }
 
 /// Keep the `reqwest::Error` (status) in the chain for safe failure mapping and
@@ -333,6 +400,49 @@ mod tests {
         assert_eq!(
             regional.catalog_url(),
             "https://europe-west4-aiplatform.googleapis.com/v1beta1/publishers/google/models"
+        );
+    }
+
+    #[test]
+    fn decisions_url_uses_v1beta_decisions_across_modes_and_overrides() {
+        let global =
+            Endpoint::resolve(Some("proj"), "global", "gemini-decision-1", false, None).unwrap();
+        assert_eq!(
+            global.decisions_url(),
+            "https://aiplatform.googleapis.com/v1beta/decisions"
+        );
+
+        let regional = Endpoint::resolve(
+            Some("proj"),
+            "us-central1",
+            "gemini-decision-1",
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            regional.decisions_url(),
+            "https://us-central1-aiplatform.googleapis.com/v1beta/decisions"
+        );
+
+        let express =
+            Endpoint::resolve(None, "us-central1", "gemini-decision-1", true, None).unwrap();
+        assert_eq!(
+            express.decisions_url(),
+            "https://aiplatform.googleapis.com/v1beta/decisions"
+        );
+
+        let overridden = Endpoint::resolve(
+            Some("proj"),
+            "europe-west4",
+            "gemini-decision-1",
+            false,
+            Some("http://127.0.0.1:4321/"),
+        )
+        .unwrap();
+        assert_eq!(
+            overridden.decisions_url(),
+            "http://127.0.0.1:4321/v1beta/decisions"
         );
     }
 }

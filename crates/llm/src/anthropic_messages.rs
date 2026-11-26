@@ -7,8 +7,9 @@ use tracing::debug;
 
 use crate::message::reject_retired_message_overrides;
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, ReasoningEffort, SseEventParser,
-    StreamChunk, TokenUsage, ToolCall as LlmToolCall, ToolDefinition as LlmToolDefinition,
+    CalibrationKind, DecisionRequest, DecisionResponse, GenerationRequest, GenerationResponse,
+    LlmProvider, ReasoningEffort, SseEventParser, StreamChunk, TokenUsage, ToolCall as LlmToolCall,
+    ToolDefinition as LlmToolDefinition,
 };
 
 mod input_projection;
@@ -35,6 +36,7 @@ pub struct AnthropicMessagesClient {
     base_url: String,
     model: String,
     custom_headers: HeaderMap,
+    decision_fallback: bool,
 }
 
 impl AnthropicMessagesClient {
@@ -50,7 +52,19 @@ impl AnthropicMessagesClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             model,
             custom_headers: HeaderMap::new(),
+            decision_fallback: false,
         }
+    }
+
+    /// Opt in to uncalibrated structured-generation decision fallback via
+    /// [`crate::decide_via_generation`].
+    ///
+    /// Defaults to `false`. When enabled, [`LlmProvider::supports_decisions`]
+    /// returns `true` and [`LlmProvider::decision_calibration`] reports
+    /// [`CalibrationKind::Uncalibrated`] (never [`CalibrationKind::Calibrated`]).
+    pub fn with_decision_fallback(mut self, enabled: bool) -> Self {
+        self.decision_fallback = enabled;
+        self
     }
 
     /// Set custom headers to be included in all requests
@@ -667,10 +681,31 @@ impl LlmProvider for AnthropicMessagesClient {
         ))
     }
 
+    fn supports_decisions(&self) -> bool {
+        self.decision_fallback
+    }
+
+    fn decision_calibration(&self) -> Option<CalibrationKind> {
+        self.decision_fallback
+            .then_some(CalibrationKind::Uncalibrated)
+    }
+
+    async fn decide(&mut self, request: DecisionRequest) -> anyhow::Result<DecisionResponse> {
+        anyhow::ensure!(
+            self.decision_fallback,
+            "Provider '{}' does not support typed decisions unless decision fallback is enabled",
+            self.provider_name()
+        );
+        let model = self.model.clone();
+        crate::decide_via_generation(self, &model, request).await
+    }
+
     fn provider_name(&self) -> &'static str {
         "anthropic_messages"
     }
 }
 
+#[cfg(test)]
+mod decisions_tests;
 #[cfg(test)]
 mod tests;
