@@ -37,7 +37,8 @@ pub(crate) use namespace_environment::{
     NamespaceToolProcessError, PendingActionPublication,
 };
 pub use namespace_environment::{
-    NamespaceActionRecord, NamespaceEvaluation, NamespaceEvaluationFailure,
+    NamespaceActionRecord, NamespaceDecision, NamespaceDecisionFailure,
+    NamespaceDecisionUncertainty, NamespaceEvaluation, NamespaceEvaluationFailure,
     NamespaceEvaluationUncertainty, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
     NamespaceTurnOutput, NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
@@ -337,11 +338,8 @@ pub(super) fn tool_authorization_runtime(
         agent_files,
         llm_request_timeout_secs,
     )
-    .with_trust_posture(state.runtime_config.trust_posture)
-    .with_guardian_profile(state.runtime_config.guardian_profile.as_deref())
-    .with_guardian_config(state.runtime_config.guardian.clone())
+    .with_runtime_config(&state.runtime_config)
     .with_authority(authority)
-    .with_tool_policy_hook(state.runtime_config.tool_policy_hook.clone())
 }
 
 pub(super) fn tool_execution_runtime(
@@ -797,23 +795,22 @@ where
                 });
             }
             Err(error) if error.is::<crate::agent_machine::task_budget::Exhausted>() => {
-                let paused = super::task_budget::pause_tool_batch(
+                let exhausted = error
+                    .downcast_ref::<crate::agent_machine::task_budget::Exhausted>()
+                    .expect("typed exhaustion");
+                if let Some(outcome) = super::task_budget::handle_tool_batch_exhaustion(
                     state,
-                    error
-                        .downcast_ref::<crate::agent_machine::task_budget::Exhausted>()
-                        .expect("typed exhaustion"),
+                    exhausted,
                     &tool_calls[idx..],
                     !inputs.explicit_command,
+                    inputs.cancel,
                     emit,
                 )
-                .await?;
-                return Ok(if paused {
-                    ToolBatchOrchestratorOutcome::PauseTurn
-                } else {
-                    ToolBatchOrchestratorOutcome::EndTurn {
-                        surfaces_refreshed: false,
-                    }
-                });
+                .await?
+                {
+                    return Ok(outcome);
+                }
+                continue;
             }
             result => result?,
         };
@@ -908,16 +905,13 @@ where
 }
 
 fn submission_runtime(state: &mut RuntimeLoopState) -> SubmissionRuntime<'_> {
-    let RuntimeLoopState {
-        machine,
-        environment,
-        ..
-    } = state;
-    let agent_files = environment.agent_files();
-    let host_mount_requests = environment.host_mount_requests();
-    let service_activation = environment.service_activation().cloned();
-    SubmissionRuntime::new(machine, agent_files, host_mount_requests)
+    let smart = state.runtime_config.trust_posture == crate::policy::TrustPosture::ConfinedSmart;
+    let agent_files = state.environment.agent_files();
+    let host_mount_requests = state.environment.host_mount_requests();
+    let service_activation = state.environment.service_activation().cloned();
+    SubmissionRuntime::new(&mut state.machine, agent_files, host_mount_requests)
         .with_service_activation(service_activation)
+        .with_smart_auto_extensions(smart)
 }
 
 #[cfg(test)]

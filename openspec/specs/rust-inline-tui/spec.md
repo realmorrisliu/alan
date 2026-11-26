@@ -632,15 +632,29 @@ Esc and modal exit. No terminal-host harness SHALL be required.
 - **THEN** it passes using only the built binary and the terminal-state model
 
 ### Requirement: Approval posture and execution isolation are distinguishable
-The terminal SHALL distinguish governed versus fully trusted posture and actual confined versus Host-account execution. Activation SHALL show both choices through a trusted-user control; compact presentation MAY use a short indicator with details in status, but MUST NOT hide a broad Host-account execution state or imply unavailable confinement.
+The terminal SHALL distinguish governed (`rw·gov`/`ro·gov`), confined smart
+(`rw·smart`/`ro·smart`), confined trusted (`rw·trust`/`ro·trust`), and
+unsandboxed Host-account (`! unsandboxed`) modes, with ASCII fallbacks
+(`rw/gov`, `rw/smart`, `rw/trust`) in dumb terminals. Compact Row 1 MAY show the
+short badge while `^T` status discloses the evaluator profile, calibration
+(`calibrated`/`uncalibrated`), and receipts without hiding Host-account state.
+
+#### Scenario: ConfinedSmart posture renders distinctly in status bar and status panel
+- **WHEN** the user runs under `ConfinedSmart` on a writable project mount
+- **THEN** Row 1 displays `rw·smart` (or `rw/smart` in dumb-terminal mode)
+  rather than `rw·gov` or `rw·trust`
+- **AND** opening `^T` status discloses the active decision evaluator profile
+  and whether its calibration is `calibrated` or `uncalibrated`
 
 #### Scenario: Narrow trusted terminal
 - **WHEN** the user runs fully trusted Host-account execution in a narrow pane
-- **THEN** a visible indicator and accessible details identify broad native execution without displacing input
+- **THEN** a visible indicator (`! unsandboxed`) and accessible details
+  identify broad native execution without displacing input
 
 #### Scenario: Confinement unavailable
 - **WHEN** the selected backend cannot provide its promised boundary
-- **THEN** the UI reports the limitation rather than displaying an ordinary protected state
+- **THEN** the UI reports the limitation rather than displaying an ordinary
+  protected state
 
 ### Requirement: Terminal continuity controls preserve explicit user selection
 The terminal SHALL offer authorized history inspection, explicit recovery selection

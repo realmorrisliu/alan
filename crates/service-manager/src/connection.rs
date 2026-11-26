@@ -202,6 +202,18 @@ impl LlmProvider for ConnectionLlmProvider {
     fn supports_choice_evaluation(&self) -> bool {
         self.client.supports_choice_evaluation()
     }
+    fn supports_decisions(&self) -> bool {
+        self.client.supports_decisions()
+    }
+    fn decision_calibration(&self) -> Option<alan_llm::CalibrationKind> {
+        self.client.decision_calibration()
+    }
+    async fn decide(
+        &mut self,
+        request: alan_llm::DecisionRequest,
+    ) -> Result<alan_llm::DecisionResponse> {
+        self.client.decide(request).await
+    }
     async fn evaluate_choice(
         &mut self,
         request: alan_llm::ChoiceEvaluationRequest,

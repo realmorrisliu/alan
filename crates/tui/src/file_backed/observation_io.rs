@@ -9,6 +9,7 @@ enum Kind {
     Skills,
     Usage,
     Budget,
+    System1,
 }
 
 pub(super) enum Snapshot {
@@ -16,6 +17,7 @@ pub(super) enum Snapshot {
     Skills(Option<alan_agent_protocol::UiSkillSnapshot>),
     Usage(Option<alan_agent_protocol::UiUsageSnapshot>),
     Budget(Option<alan_agent_protocol::UiBudgetSnapshot>),
+    System1(Option<alan_agent_protocol::UiSystem1Snapshot>),
 }
 
 pub(super) struct Readers {
@@ -23,6 +25,7 @@ pub(super) struct Readers {
     pub skills: Request,
     pub usage: Request,
     pub budget: Request,
+    pub system1: Request,
 }
 
 impl Readers {
@@ -35,7 +38,8 @@ impl Readers {
             model: start(shell.clone(), true, tx.clone(), jobs),
             skills: start(shell.clone(), false, tx.clone(), jobs),
             usage: start_usage(shell.clone(), tx.clone(), jobs),
-            budget: start_budget(shell, tx, jobs),
+            budget: start_budget(shell.clone(), tx.clone(), jobs),
+            system1: start_system1(shell, tx, jobs),
         }
     }
 
@@ -51,6 +55,9 @@ impl Readers {
         }
         if !app.budget.owner.is_empty() {
             request(&self.budget, app.budget.owner.clone());
+        }
+        if !app.system1.owner.is_empty() {
+            request(&self.system1, app.system1.owner.clone());
         }
     }
 
@@ -99,6 +106,19 @@ impl Readers {
                 if owner == app.budget.owner {
                     request(&self.budget, String::new());
                     app.budget.apply(&owner, None);
+                    refresh_status_modal_if_open(app);
+                }
+            }
+            FileBackedEvent::System1Changed { owner } => {
+                if owner == app.system1.owner {
+                    request(&self.system1, owner);
+                }
+            }
+            FileBackedEvent::System1Unavailable { owner } => {
+                if owner == app.system1.owner {
+                    request(&self.system1, String::new());
+                    app.system1.apply(&owner, None);
+                    refresh_status_modal_if_open(app);
                 }
             }
             FileBackedEvent::ObservationRead {
@@ -111,11 +131,18 @@ impl Readers {
                     Snapshot::Skills(_) => &self.skills,
                     Snapshot::Usage(_) => &self.usage,
                     Snapshot::Budget(_) => &self.budget,
+                    Snapshot::System1(_) => &self.system1,
                 };
                 apply(app, req, revision, &owner, snapshot);
             }
             _ => {}
         }
+    }
+}
+
+fn refresh_status_modal_if_open(app: &mut FileBackedApp) {
+    if app.modal.active && app.modal.mode == app::action_modal::ModalMode::Status {
+        app.modal.rows = status_panel::build_rows(app);
     }
 }
 
@@ -149,6 +176,14 @@ pub(super) fn start_budget(
     start_kind(shell, Kind::Budget, tx, jobs)
 }
 
+pub(super) fn start_system1(
+    shell: alan_shell::Shell,
+    tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+    jobs: &mut tokio::task::JoinSet<()>,
+) -> Request {
+    start_kind(shell, Kind::System1, tx, jobs)
+}
+
 fn start_kind(
     shell: alan_shell::Shell,
     kind: Kind,
@@ -167,6 +202,7 @@ fn start_kind(
                 Kind::Skills => Snapshot::Skills(skills::read_skills(&shell, &owner).await),
                 Kind::Usage => Snapshot::Usage(usage::read_usage(&shell, &owner).await),
                 Kind::Budget => Snapshot::Budget(budget::read_budget(&shell, &owner).await),
+                Kind::System1 => Snapshot::System1(system1::read_system1(&shell, &owner).await),
             };
             if tx
                 .send(FileBackedEvent::ObservationRead {
@@ -212,7 +248,12 @@ pub(super) fn apply(
         }
         Snapshot::Usage(snapshot) if app.usage.owner == owner => app.usage.apply(owner, snapshot),
         Snapshot::Budget(snapshot) if app.budget.owner == owner => {
-            app.budget.apply(owner, snapshot)
+            app.budget.apply(owner, snapshot);
+            refresh_status_modal_if_open(app);
+        }
+        Snapshot::System1(snapshot) if app.system1.owner == owner => {
+            app.system1.apply(owner, snapshot);
+            refresh_status_modal_if_open(app);
         }
         _ => {}
     }

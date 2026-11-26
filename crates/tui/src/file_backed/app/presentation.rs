@@ -8,6 +8,38 @@ pub(in crate::file_backed) fn is_unsandboxed_posture(label: &str) -> bool {
         || lower.contains("host_account")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::file_backed) enum TuiTrustPosture {
+    Governed,
+    Smart,
+    Trust,
+    Unsandboxed,
+}
+
+pub(in crate::file_backed) fn classify_trust_posture(label: Option<&str>) -> TuiTrustPosture {
+    let Some(raw) = label else {
+        return TuiTrustPosture::Governed;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return TuiTrustPosture::Governed;
+    }
+    if is_unsandboxed_posture(trimmed) {
+        return TuiTrustPosture::Unsandboxed;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "smart" | "confined-smart" | "confined/smart" | "confined_smart"
+    ) {
+        return TuiTrustPosture::Smart;
+    }
+    if matches!(lower.as_str(), "governed" | "gov") {
+        return TuiTrustPosture::Governed;
+    }
+    TuiTrustPosture::Trust
+}
+
 impl FileBackedApp {
     pub(in crate::file_backed) fn has_pending_response(&self) -> bool {
         self.pending_yield.is_some()
@@ -260,19 +292,23 @@ impl FileBackedApp {
         if let Some(raw) = self.trust_posture_label.as_deref() {
             let safe = super::super::model::safe(raw);
             if !safe.is_empty() {
-                if is_unsandboxed_posture(&safe) {
-                    let badge = if self.theme.is_dumb {
-                        format!("! {safe}")
-                    } else {
-                        safe
-                    };
-                    return Some((
-                        badge,
-                        self.theme.bold_if_capable(self.theme.block_style()),
-                        true,
-                    ));
-                }
-                return Some((safe, self.theme.run_style(), false));
+                return match classify_trust_posture(Some(&safe)) {
+                    TuiTrustPosture::Unsandboxed => {
+                        let badge = if self.theme.is_dumb {
+                            format!("! {safe}")
+                        } else {
+                            safe
+                        };
+                        Some((
+                            badge,
+                            self.theme.bold_if_capable(self.theme.block_style()),
+                            true,
+                        ))
+                    }
+                    TuiTrustPosture::Smart => Some((safe, self.theme.accent_style(), false)),
+                    TuiTrustPosture::Trust => Some((safe, self.theme.run_style(), false)),
+                    TuiTrustPosture::Governed => None,
+                };
             }
         }
         let trust = self.project.as_ref().map(|p| p.access.label());

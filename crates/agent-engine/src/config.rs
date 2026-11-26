@@ -181,6 +181,10 @@ pub struct Config {
     #[serde(default)]
     pub guardian_profile: Option<String>,
 
+    /// Dedicated Connection profile used for Smart Approval (`--smart`) System 1 evaluation.
+    #[serde(default)]
+    pub smart_evaluator_profile: Option<String>,
+
     /// Guardian escalation budget, custom policy path, and fallback limits.
     #[serde(default)]
     pub guardian: GuardianConfig,
@@ -537,6 +541,7 @@ impl Default for Config {
         Self {
             connection_profile: None,
             guardian_profile: None,
+            smart_evaluator_profile: None,
             guardian: GuardianConfig::default(),
             llm_provider: default_llm_provider(),
             magpie_api_key: None,

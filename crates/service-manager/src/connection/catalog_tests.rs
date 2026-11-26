@@ -137,6 +137,7 @@ async fn managed_connection(
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -276,6 +277,7 @@ async fn implicit_account_replacement_cannot_select_or_restore_with_old_catalog_
         namespace: authority.namespace.clone(),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -360,6 +362,7 @@ async fn slow_discovery_does_not_block_published_observation_or_publish_into_rep
         namespace: authority.namespace.clone(),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -421,6 +424,7 @@ async fn magpie_and_openrouter_live_catalogs_and_static_provider_catalogs_publis
             namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
             evaluator: None,
             guardian_profile: None,
+            smart_evaluator_profile: None,
             allow_profile_switch: false,
             selected_profile: std::sync::Mutex::new(None),
         };
@@ -496,6 +500,7 @@ async fn magpie_and_openrouter_live_catalogs_and_static_provider_catalogs_publis
             namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
             evaluator: None,
             guardian_profile: None,
+            smart_evaluator_profile: None,
             allow_profile_switch: false,
             selected_profile: std::sync::Mutex::new(None),
         };
@@ -538,6 +543,7 @@ async fn reload_connections_redirects_unconfigured_default_after_live_login() {
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -699,6 +705,7 @@ async fn root_profile_switch_redirects_after_live_login_publishes_all_profiles_a
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: true,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -708,6 +715,7 @@ async fn root_profile_switch_redirects_after_live_login_publishes_all_profiles_a
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };

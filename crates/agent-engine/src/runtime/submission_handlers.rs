@@ -301,6 +301,7 @@ where
                         super::task_budget::publish_active(
                             &runtime.agent_files,
                             runtime.machine.task_budget.as_ref(),
+                            runtime.smart_auto_extensions,
                         )
                         .await;
                     }

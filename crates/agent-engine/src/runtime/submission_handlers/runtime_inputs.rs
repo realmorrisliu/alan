@@ -20,6 +20,7 @@ pub(crate) struct SubmissionRuntime<'a> {
     pub(super) agent_files: NamespaceAgentFiles,
     pub(super) host_mount_requests: NamespaceHostMountRequests,
     pub(super) service_activation: Option<Arc<dyn ServiceActivationAuthority>>,
+    pub(super) smart_auto_extensions: bool,
 }
 
 impl<'a> SubmissionRuntime<'a> {
@@ -33,6 +34,7 @@ impl<'a> SubmissionRuntime<'a> {
             agent_files,
             host_mount_requests,
             service_activation: None,
+            smart_auto_extensions: false,
         }
     }
 
@@ -41,6 +43,11 @@ impl<'a> SubmissionRuntime<'a> {
         service_activation: Option<Arc<dyn ServiceActivationAuthority>>,
     ) -> Self {
         self.service_activation = service_activation;
+        self
+    }
+
+    pub(crate) fn with_smart_auto_extensions(mut self, enabled: bool) -> Self {
+        self.smart_auto_extensions = enabled;
         self
     }
 

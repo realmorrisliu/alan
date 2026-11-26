@@ -92,6 +92,24 @@ fn trust_posture_flags_enforce_explicit_invocation_only_hierarchy() {
         alan_agent_engine::TrustPosture::Governed
     );
 
+    let smart = Cli::try_parse_from(["alan", "--smart"]).unwrap();
+    let resolved_smart =
+        super::cli::trust::resolve_bare_trust_options(&smart.trust, false).unwrap();
+    assert_eq!(
+        resolved_smart.posture,
+        alan_agent_engine::TrustPosture::ConfinedSmart
+    );
+    assert!(super::cli::trust::resolve_bare_trust_options(&smart.trust, true).is_err());
+
+    let smart_with_trust = Cli::try_parse_from(["alan", "--smart", "--trust"]).unwrap();
+    assert!(super::cli::trust::resolve_bare_trust_options(&smart_with_trust.trust, false).is_err());
+
+    let smart_with_unsafe =
+        Cli::try_parse_from(["alan", "--smart", "--unsafe-host-account"]).unwrap();
+    assert!(
+        super::cli::trust::resolve_bare_trust_options(&smart_with_unsafe.trust, false).is_err()
+    );
+
     let confined = Cli::try_parse_from(["alan", "--trust", "--guardian-profile", "fast"]).unwrap();
     let resolved_confined =
         super::cli::trust::resolve_bare_trust_options(&confined.trust, false).unwrap();

@@ -121,6 +121,8 @@ pub(super) struct MachineTransitionState {
     guardian_fallbacks_this_turn: usize,
     /// Strictly Process-local session allow-list populated by `"allow_session"`.
     session_tool_allowlist: SessionToolAllowlist,
+    /// Process-local System 1 observability counters and calibration provenance.
+    system1_stats: alan_agent_protocol::UiSystem1Snapshot,
 }
 
 /// Guardian rejection circuit-breaker thresholds (Codex parity).
@@ -290,6 +292,101 @@ impl AgentMachine {
         self.transition_state.submission_cancelled = false;
         self.transition_state.deferred_runtime_actions.clear();
         self.transition_state.session_tool_allowlist = SessionToolAllowlist::default();
+        self.transition_state.system1_stats = alan_agent_protocol::UiSystem1Snapshot::empty();
+    }
+
+    pub(crate) fn system1_snapshot(&self) -> alan_agent_protocol::UiSystem1Snapshot {
+        self.transition_state.system1_stats.clone()
+    }
+
+    fn apply_system1_provenance(
+        &mut self,
+        evaluator_profile: Option<String>,
+        evaluator_model: Option<String>,
+        calibration: Option<alan_agent_protocol::UiSystem1Calibration>,
+    ) {
+        if let Some(profile) = evaluator_profile.filter(|s| !s.trim().is_empty()) {
+            self.transition_state.system1_stats.evaluator_profile = Some(profile);
+        }
+        if let Some(model) = evaluator_model.filter(|s| !s.trim().is_empty()) {
+            self.transition_state.system1_stats.evaluator_model = Some(model);
+        }
+        if let Some(cal) = calibration {
+            self.transition_state.system1_stats.calibration = cal;
+        }
+    }
+
+    pub(crate) fn record_system1_allow(
+        &mut self,
+        evaluator_profile: Option<String>,
+        evaluator_model: Option<String>,
+        calibration: alan_agent_protocol::UiSystem1Calibration,
+    ) -> alan_agent_protocol::UiSystem1Snapshot {
+        self.transition_state.system1_stats.allows =
+            self.transition_state.system1_stats.allows.saturating_add(1);
+        self.apply_system1_provenance(evaluator_profile, evaluator_model, Some(calibration));
+        self.system1_snapshot()
+    }
+
+    pub(crate) fn record_system1_deny(
+        &mut self,
+        evaluator_profile: Option<String>,
+        evaluator_model: Option<String>,
+        calibration: alan_agent_protocol::UiSystem1Calibration,
+    ) -> alan_agent_protocol::UiSystem1Snapshot {
+        self.transition_state.system1_stats.denies =
+            self.transition_state.system1_stats.denies.saturating_add(1);
+        self.apply_system1_provenance(evaluator_profile, evaluator_model, Some(calibration));
+        self.system1_snapshot()
+    }
+
+    pub(crate) fn record_system1_escalation(
+        &mut self,
+        evaluator_profile: Option<String>,
+        evaluator_model: Option<String>,
+        calibration: alan_agent_protocol::UiSystem1Calibration,
+    ) -> alan_agent_protocol::UiSystem1Snapshot {
+        self.transition_state.system1_stats.escalations = self
+            .transition_state
+            .system1_stats
+            .escalations
+            .saturating_add(1);
+        self.apply_system1_provenance(evaluator_profile, evaluator_model, Some(calibration));
+        self.system1_snapshot()
+    }
+
+    pub(crate) fn record_system1_budget_extension(
+        &mut self,
+        evaluator_profile: Option<String>,
+        evaluator_model: Option<String>,
+        calibration: alan_agent_protocol::UiSystem1Calibration,
+    ) -> alan_agent_protocol::UiSystem1Snapshot {
+        self.transition_state.system1_stats.budget_extensions = self
+            .transition_state
+            .system1_stats
+            .budget_extensions
+            .saturating_add(1);
+        self.apply_system1_provenance(evaluator_profile, evaluator_model, Some(calibration));
+        self.system1_snapshot()
+    }
+
+    pub(crate) fn set_system1_evaluator_metadata(
+        &mut self,
+        evaluator_profile: Option<String>,
+        evaluator_model: Option<String>,
+        calibration: Option<alan_agent_protocol::UiSystem1Calibration>,
+    ) -> alan_agent_protocol::UiSystem1Snapshot {
+        self.apply_system1_provenance(evaluator_profile, evaluator_model, calibration);
+        self.system1_snapshot()
+    }
+
+    /// Invalidate cached session-scoped tool approvals and Guardian review state
+    /// when runtime trust posture is downgraded to a narrower posture.
+    pub(crate) fn invalidate_approvals_on_posture_downgrade(&mut self) {
+        self.transition_state.session_tool_allowlist = SessionToolAllowlist::default();
+        self.transition_state.guardian_recent_reviews.clear();
+        self.transition_state.guardian_consecutive_denials = 0;
+        self.transition_state.guardian_fallbacks_this_turn = 0;
     }
 
     pub(crate) fn reset_auto_mid_turn_compaction_state(&mut self) {

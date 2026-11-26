@@ -10,6 +10,7 @@ pub(crate) struct ProcessConnection {
     pub namespace: alan_kernel::LiveNamespace,
     pub evaluator: Option<CapturedCallable>,
     pub guardian_profile: Option<String>,
+    pub smart_evaluator_profile: Option<String>,
     pub allow_profile_switch: bool,
     pub selected_profile: std::sync::Mutex<Option<(u64, String)>>,
 }
@@ -271,6 +272,17 @@ impl ConnectionAuthority for ProcessConnection {
             .await
     }
 
+    async fn capture_smart_evaluator(&self, profile: &str) -> Result<CapturedCallable> {
+        ensure!(
+            self.smart_evaluator_profile.as_deref() == Some(profile)
+                || self.guardian_profile.as_deref() == Some(profile),
+            "smart evaluator profile is outside Process authority"
+        );
+        self.service
+            .capture_decision(profile, &self.namespace)
+            .await
+    }
+
     async fn catalog(&self) -> Result<serde_json::Value> {
         // Observation reads the Connection owner's published authority. Disk refresh
         // and callable construction belong to capture/restore and Connection operations,
@@ -441,6 +453,55 @@ impl ConnectionService {
                 model: config.effective_model().into(),
                 credential_ref: profile.credential_id.clone(),
                 revision: serde_json::to_string(profile)?,
+            },
+            root: captured_namespace(process_namespace, llmfs),
+            connection: profile_id.into(),
+            config,
+        })
+    }
+
+    /// Capture an explicitly selected decision-capable profile without touching generation selection.
+    pub(crate) async fn capture_decision(
+        &self,
+        profile_id: &str,
+        process_namespace: &alan_kernel::LiveNamespace,
+    ) -> Result<CapturedCallable> {
+        self.refresh().await?;
+        let callables = self.callables.lock().await;
+        let registry = callables
+            .as_ref()
+            .context("callable registry unavailable")?;
+        let raw_connections = self.metadata();
+        let packages = self.package_service();
+        let original = raw_connections
+            .profiles
+            .get(profile_id)
+            .context("smart evaluator profile unavailable")?
+            .clone();
+        provider_packages::validate_provider_package_for_profile(packages.as_deref(), &original)?;
+        ensure!(
+            registry.published_profiles.get(profile_id) == Some(&original),
+            "smart evaluator profile is not callable"
+        );
+        let llmfs = registry.llmfs.connection_snapshot(profile_id);
+        ensure!(
+            llmfs.supports_decisions(profile_id),
+            "Connection does not support typed Decisions"
+        );
+        let connections = provider_packages::hydrate_connections_with_package_defaults(
+            packages.as_deref(),
+            &raw_connections,
+            profile_id,
+        );
+        let mut config = registry.base_config.clone();
+        connections.apply_profile_metadata_to_config(Some(profile_id), &mut config)?;
+        Ok(CapturedCallable {
+            identity: CallableIdentity {
+                profile: profile_id.into(),
+                provider: config.llm_provider.as_str().into(),
+                model: config.effective_model().into(),
+                credential_ref: original.credential_id.clone(),
+                revision: serde_json::to_string(&original)?,
             },
             root: captured_namespace(process_namespace, llmfs),
             connection: profile_id.into(),

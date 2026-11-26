@@ -445,7 +445,7 @@ async fn run_issue_pty_session() -> Result<()> {
     let mut cfg = FileBackedRunConfig::new(InProcessTransport::new(mount_fs), "/agent/root");
     cfg.effective_model = Some("gpt-5.4".into());
     cfg.sandbox_backend = Some("seatbelt".into());
-    cfg.trust_posture_label = Some("auto-approve".into());
+    cfg.trust_posture_label = Some("trust".into());
     if mode == "fallback" {
         let unavail: IssueControlHandler = Arc::new(|_| {
             Box::pin(async {

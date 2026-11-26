@@ -86,6 +86,7 @@ mod skills;
 mod status_bar;
 mod status_panel;
 mod summary_view;
+mod system1;
 mod tape_view;
 mod usage;
 pub(crate) mod welcome;
@@ -193,8 +194,8 @@ pub struct FileBackedRunConfig {
     pub project_control: Option<ProjectControlHandler>,
     /// Active OS sandbox backend name used for diagnostics and access badge gating.
     pub sandbox_backend: Option<String>,
-    /// Optional explicit invocation permission/trust badge (for example `"auto-approve"`
-    /// or `"unsandboxed"`). `None` keeps standard governed status display.
+    /// Optional explicit invocation permission/trust badge (for example `"smart"`,
+    /// `"trust"`, or `"unsandboxed"`). `None` keeps standard governed status display.
     pub trust_posture_label: Option<String>,
     /// Optional image/content attachments queued for the first user prompt (from `--image`).
     pub initial_attachments: Vec<alan_agent_protocol::ContentPart>,
@@ -437,6 +438,8 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     | FileBackedEvent::UsageUnavailable { .. }
                     | FileBackedEvent::BudgetChanged { .. }
                     | FileBackedEvent::BudgetUnavailable { .. }
+                    | FileBackedEvent::System1Changed { .. }
+                    | FileBackedEvent::System1Unavailable { .. }
                     | FileBackedEvent::ObservationRead { .. }) => {
                         observation_readers.handle_event(&mut app, event);
                     }

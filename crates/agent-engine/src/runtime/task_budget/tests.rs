@@ -1,3 +1,4 @@
+mod auto_extend;
 mod inherited;
 use super::*;
 use crate::agent_machine::task_budget::Dimension;

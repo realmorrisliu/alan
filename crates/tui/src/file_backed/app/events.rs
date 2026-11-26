@@ -241,6 +241,12 @@ pub(in crate::file_backed) enum FileBackedEvent {
     BudgetUnavailable {
         owner: String,
     },
+    System1Changed {
+        owner: String,
+    },
+    System1Unavailable {
+        owner: String,
+    },
     RequestsChanged,
     ActionsChanged {
         agent_path: String,

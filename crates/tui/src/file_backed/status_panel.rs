@@ -187,13 +187,57 @@ pub(in crate::file_backed) fn build_rows(app: &FileBackedApp) -> Vec<Line<'stati
     }
     rows.push(Line::default());
 
-    // 6. System 1 Evaluator Stats (placeholder slot)
+    // 6. System 1 Evaluator Stats (read-only machine/ui/system1 projection; never carries secrets or request_id)
     rows.push(Line::styled("System 1 (Fast Evaluator)", header_style));
-    rows.push(kv_row(
-        "stats",
-        "standby (telemetry slot ready)",
-        label_style,
-    ));
+    match app.system1.known() {
+        Some(s1) => {
+            let decisions = format!(
+                "{} allow · {} deny · {} escalate · {} budget-ext",
+                s1.allows, s1.denies, s1.escalations, s1.budget_extensions
+            );
+            let evaluator = match (
+                s1.evaluator_profile
+                    .as_deref()
+                    .map(safe)
+                    .filter(|s| !s.is_empty()),
+                s1.evaluator_model
+                    .as_deref()
+                    .map(safe)
+                    .filter(|s| !s.is_empty()),
+            ) {
+                (Some(profile), Some(model)) => format!("{profile} / {model}"),
+                (Some(profile), None) => profile,
+                (None, Some(model)) => model,
+                (None, None) => "none active".to_string(),
+            };
+            let (calibration_label, cal_style) = match s1.calibration {
+                alan_agent_protocol::UiSystem1Calibration::Calibrated => {
+                    ("Calibrated", theme.run_style())
+                }
+                alan_agent_protocol::UiSystem1Calibration::Uncalibrated => {
+                    ("Uncalibrated", theme.wait_style())
+                }
+                alan_agent_protocol::UiSystem1Calibration::Unavailable => {
+                    ("Unavailable", label_style)
+                }
+            };
+            rows.push(kv_row("decisions", &decisions, label_style));
+            rows.push(kv_row("evaluator", &evaluator, label_style));
+            rows.push(Line::from(vec![
+                Span::styled(format!("  {:<12}", "calibration"), label_style),
+                Span::styled(calibration_label, cal_style),
+            ]));
+        }
+        None => {
+            rows.push(kv_row(
+                "decisions",
+                "0 allow · 0 deny · 0 escalate · 0 budget-ext",
+                label_style,
+            ));
+            rows.push(kv_row("evaluator", "none active", label_style));
+            rows.push(kv_row("calibration", "Unavailable", label_style));
+        }
+    }
     rows.push(Line::default());
 
     // 7. OS Sandbox / Host Isolation Diagnostics

@@ -73,6 +73,7 @@ impl State {
                 "notice" => Ok(Node::UiNotice),
                 "usage" => Ok(Node::UiUsage),
                 "budget" => Ok(Node::UiBudget),
+                "system1" => Ok(Node::UiSystem1),
                 "events" => Ok(Node::UiEvents),
                 _ => Err(ErrorCode::NotFound),
             },
@@ -125,7 +126,7 @@ impl State {
             Node::IoDir => b"input\noutput\nevents".to_vec(),
             Node::MachineDir => b"tape\nstatus\nevaluation\nwork\nctl\nui\ncheckpoints".to_vec(),
             Node::UiDir => {
-                b"activity\nplan\nthinking\nnotice\nusage\nbudget\nevents\nqueue\nmodels\nskills"
+                b"activity\nplan\nthinking\nnotice\nusage\nbudget\nsystem1\nevents\nqueue\nmodels\nskills"
                     .to_vec()
             }
             Node::CheckpointsDir => b"current".to_vec(),
@@ -142,6 +143,7 @@ impl State {
             Node::UiNotice => self.ui_notice.clone().into_bytes(),
             Node::UiUsage => self.ui_usage.clone().into_bytes(),
             Node::UiBudget => self.ui_budget.clone().into_bytes(),
+            Node::UiSystem1 => self.ui_system1.clone().into_bytes(),
             // machine/ctl exposes its accepted commands in-band, so a
             // namespace-native client discovers them by reading the file rather
             // than from external docs (self-describing namespace).
@@ -307,6 +309,7 @@ pub(super) fn is_writable(node: &Node) -> bool {
         | Node::UiNotice
         | Node::UiUsage
         | Node::UiBudget
+        | Node::UiSystem1
         | Node::UiEvents
         | Node::RequestsClone
         | Node::ActionsClone
@@ -371,6 +374,7 @@ pub(super) fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::UiNotice => (FileKind::File, "machine/ui/notice".into()),
         Node::UiUsage => (FileKind::File, "machine/ui/usage".into()),
         Node::UiBudget => (FileKind::File, "machine/ui/budget".into()),
+        Node::UiSystem1 => (FileKind::File, "machine/ui/system1".into()),
         Node::CurrentCheckpoint => (FileKind::File, "machine/checkpoints/current".into()),
         Node::RequestField(id, field) => (FileKind::File, format!("requests/{id}/{field}")),
         Node::ActionField(id, field) => (FileKind::File, format!("actions/{id}/{field}")),

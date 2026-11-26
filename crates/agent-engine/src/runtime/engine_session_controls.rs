@@ -1,4 +1,4 @@
-use alan_agent_protocol::{Op, Submission};
+use alan_agent_protocol::{ConfinedTrustPosture, Op, Submission};
 use anyhow::Result;
 use tracing::warn;
 
@@ -22,7 +22,10 @@ impl RuntimeSubmissionQueues {
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     ) -> bool {
         match &submission.op {
-            Op::SetTrustPosture { confined_trusted } => {
+            Op::SetTrustPosture {
+                posture,
+                confined_trusted,
+            } => {
                 let files = state.agent_files();
                 let current = state.runtime_config.trust_posture;
                 if current == TrustPosture::HostAccountTrusted {
@@ -36,25 +39,51 @@ impl RuntimeSubmissionQueues {
                     }
                     return true;
                 }
-                let next = if *confined_trusted {
-                    TrustPosture::ConfinedTrusted
-                } else {
-                    TrustPosture::Governed
+                let next = match ConfinedTrustPosture::resolve(*posture, *confined_trusted) {
+                    ConfinedTrustPosture::Governed => TrustPosture::Governed,
+                    ConfinedTrustPosture::ConfinedSmart => TrustPosture::ConfinedSmart,
+                    ConfinedTrustPosture::ConfinedTrusted => TrustPosture::ConfinedTrusted,
                 };
+                let is_downgrade = next != current && next.is_equal_or_narrower_than(current);
                 state.runtime_config.trust_posture = next;
                 state.environment.set_trust_posture(next);
+                if is_downgrade {
+                    state.machine.invalidate_approvals_on_posture_downgrade();
+                    state.environment.bump_posture_authority_revision();
+                }
                 let message = match next {
                     TrustPosture::ConfinedTrusted => {
-                        "Trust posture set to ConfinedTrusted (confined auto-approve enabled)."
+                        "Trust posture set to ConfinedTrusted (confined trust enabled; OS sandbox active)."
+                    }
+                    TrustPosture::ConfinedSmart => {
+                        "Trust posture set to ConfinedSmart (adaptive confined smart review enabled)."
                     }
                     TrustPosture::Governed => {
                         "Trust posture set to Governed (confirmation prompts enabled)."
                     }
-                    TrustPosture::HostAccountTrusted => unreachable!(),
+                    TrustPosture::HostAccountTrusted => {
+                        unreachable!()
+                    }
                 };
                 if let Err(err) = ui_surfaces::warning(&files, message).await {
                     warn!(error = %err, "Failed to emit trust posture update notice");
                 }
+                let configured_profile = if next == TrustPosture::ConfinedSmart {
+                    state
+                        .runtime_config
+                        .smart_evaluator_profile
+                        .clone()
+                        .or_else(|| state.runtime_config.guardian_profile.clone())
+                } else {
+                    None
+                };
+                let system1_snapshot =
+                    state
+                        .machine
+                        .set_system1_evaluator_metadata(configured_profile, None, None);
+                super::super::smart_approval::publish_system1_snapshot(&files, &system1_snapshot)
+                    .await;
+                task_budget::publish_state(state).await;
                 true
             }
             Op::ResetSession => {
@@ -180,6 +209,9 @@ impl RuntimeSubmissionQueues {
         if let Err(err) = ui_surfaces::warning(&files, "Started a fresh session.").await {
             warn!(error = %err, "Failed to emit fresh session notice");
         }
+        let system1_snapshot = state.machine.system1_snapshot();
+        super::super::smart_approval::publish_system1_snapshot(&files, &system1_snapshot).await;
+        task_budget::publish_state(state).await;
         self.observe_models().await;
     }
 

@@ -289,6 +289,7 @@ async fn bundled_anthropic_provider_install_bind_invoke_and_uninstall_revokes_av
         namespace: LiveNamespace::new(conn_ns),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };

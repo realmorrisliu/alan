@@ -71,6 +71,35 @@ pub struct PlanItem {
     pub status: PlanItemStatus,
 }
 
+/// Runtime-switchable confined trust postures for `Op::SetTrustPosture`.
+///
+/// `HostAccountTrusted` is intentionally excluded: unsandboxed host-account
+/// execution can only be chosen explicitly at invocation time and never
+/// entered or modified through runtime control operations.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfinedTrustPosture {
+    /// Default governed execution inside the OS sandbox with approvals.
+    #[default]
+    Governed,
+    /// Adaptive confined smart review inside the OS sandbox.
+    ConfinedSmart,
+    /// Confined trust posture inside the OS sandbox without per-action prompts.
+    ConfinedTrusted,
+}
+
+impl ConfinedTrustPosture {
+    /// Resolve the effective confined posture from the explicit `posture` field
+    /// or the legacy `confined_trusted` boolean.
+    pub const fn resolve(posture: Option<Self>, confined_trusted: bool) -> Self {
+        match posture {
+            Some(posture) => posture,
+            None if confined_trusted => Self::ConfinedTrusted,
+            None => Self::Governed,
+        }
+    }
+}
+
 /// User-submitted operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -144,13 +173,29 @@ pub enum Op {
     /// Reset the active Agent Process session to an empty tape and fresh rollout boundary.
     ResetSession,
 
-    /// Switch runtime trust posture between `Governed` and `ConfinedTrusted`.
+    /// Switch runtime trust posture among confined postures (`Governed`,
+    /// `ConfinedSmart`, `ConfinedTrusted`).
     ///
     /// Changes to or from `HostAccountTrusted` are refused at runtime.
     SetTrustPosture {
-        /// Enable (`true`) or disable (`false`) confined auto-approval posture.
+        /// Target confined posture. When omitted in legacy payloads, falls back
+        /// to `confined_trusted`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        posture: Option<ConfinedTrustPosture>,
+        /// Legacy compatibility flag (`true` -> `ConfinedTrusted`, `false` -> `Governed`).
+        #[serde(default)]
         confined_trusted: bool,
     },
+}
+
+impl Op {
+    /// Construct a `SetTrustPosture` operation for a runtime-switchable confined posture.
+    pub const fn set_trust_posture(posture: ConfinedTrustPosture) -> Self {
+        Self::SetTrustPosture {
+            posture: Some(posture),
+            confined_trusted: matches!(posture, ConfinedTrustPosture::ConfinedTrusted),
+        }
+    }
 }
 
 /// Turn context metadata — attached to Turn ops.
@@ -520,19 +565,63 @@ mod tests {
             Op::ResetSession
         ));
 
-        let trust_json = serde_json::to_string(&Op::SetTrustPosture {
-            confined_trusted: true,
-        })
-        .unwrap();
-        assert_eq!(
-            trust_json,
-            r#"{"type":"set_trust_posture","confined_trusted":true}"#
-        );
+        for (target, expected_trusted) in [
+            (ConfinedTrustPosture::Governed, false),
+            (ConfinedTrustPosture::ConfinedSmart, false),
+            (ConfinedTrustPosture::ConfinedTrusted, true),
+        ] {
+            let trust_json = serde_json::to_string(&Op::set_trust_posture(target)).unwrap();
+            let decoded: Op = serde_json::from_str(&trust_json).unwrap();
+            assert!(matches!(
+                decoded,
+                Op::SetTrustPosture {
+                    posture: Some(p),
+                    confined_trusted,
+                } if p == target && confined_trusted == expected_trusted
+            ));
+        }
+
+        // Compact modern payload (posture only, confined_trusted defaulted)
+        let smart_only: Op =
+            serde_json::from_str(r#"{"type":"set_trust_posture","posture":"confined_smart"}"#)
+                .unwrap();
         assert!(matches!(
-            serde_json::from_str::<Op>(&trust_json).unwrap(),
-            Op::SetTrustPosture {
-                confined_trusted: true
-            }
+            smart_only,
+            Op::SetTrustPosture { posture, confined_trusted }
+                if ConfinedTrustPosture::resolve(posture, confined_trusted)
+                    == ConfinedTrustPosture::ConfinedSmart
         ));
+
+        // Legacy boolean-only payloads remain deserializable for compatibility.
+        let legacy_true: Op =
+            serde_json::from_str(r#"{"type":"set_trust_posture","confined_trusted":true}"#)
+                .unwrap();
+        assert!(matches!(
+            legacy_true,
+            Op::SetTrustPosture { posture, confined_trusted }
+                if ConfinedTrustPosture::resolve(posture, confined_trusted)
+                    == ConfinedTrustPosture::ConfinedTrusted
+        ));
+        let legacy_false: Op =
+            serde_json::from_str(r#"{"type":"set_trust_posture","confined_trusted":false}"#)
+                .unwrap();
+        assert!(matches!(
+            legacy_false,
+            Op::SetTrustPosture { posture, confined_trusted }
+                if ConfinedTrustPosture::resolve(posture, confined_trusted)
+                    == ConfinedTrustPosture::Governed
+        ));
+
+        // Unsandboxed host-account posture and forged values are rejected at deserialization.
+        for forged in [
+            r#"{"type":"set_trust_posture","posture":"host_account_trusted"}"#,
+            r#"{"type":"set_trust_posture","posture":"unsandboxed"}"#,
+            r#"{"type":"set_trust_posture","posture":"auto_approve"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<Op>(forged).is_err(),
+                "forged trust posture accepted: {forged}"
+            );
+        }
     }
 }

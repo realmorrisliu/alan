@@ -284,6 +284,75 @@ impl UiBudgetSnapshot {
     }
 }
 
+/// Calibration status reported for the System 1 fast evaluator.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UiSystem1Calibration {
+    Calibrated,
+    Uncalibrated,
+    #[default]
+    Unavailable,
+}
+
+impl UiSystem1Calibration {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Calibrated => "calibrated",
+            Self::Uncalibrated => "uncalibrated",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+/// Read-only System 1 fast-evaluator observability projection published at `machine/ui/system1`.
+///
+/// Never carries credentials, secrets, or confirmation `request_id` values.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiSystem1Snapshot {
+    pub version: u16,
+    #[serde(default)]
+    pub allows: u64,
+    #[serde(default)]
+    pub denies: u64,
+    #[serde(default)]
+    pub escalations: u64,
+    #[serde(default)]
+    pub budget_extensions: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluator_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluator_model: Option<String>,
+    #[serde(default)]
+    pub calibration: UiSystem1Calibration,
+}
+
+impl UiSystem1Snapshot {
+    /// Standby snapshot before any System 1 evaluation has occurred.
+    pub fn empty() -> Self {
+        Self {
+            version: UI_SURFACE_VERSION,
+            allows: 0,
+            denies: 0,
+            escalations: 0,
+            budget_extensions: 0,
+            evaluator_profile: None,
+            evaluator_model: None,
+            calibration: UiSystem1Calibration::Unavailable,
+        }
+    }
+
+    /// Whether the document is a version this crate understands.
+    pub fn is_valid(&self) -> bool {
+        self.version == UI_SURFACE_VERSION
+    }
+}
+
+impl Default for UiSystem1Snapshot {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UiNoticeKind {
@@ -414,5 +483,32 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         let parsed: UiEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn system1_snapshot_round_trips_and_defaults_to_unavailable() {
+        let empty = UiSystem1Snapshot::empty();
+        assert!(empty.is_valid());
+        assert_eq!(empty.calibration, UiSystem1Calibration::Unavailable);
+        let empty_json = serde_json::to_string(&empty).unwrap();
+        assert!(!empty_json.contains("evaluator_profile"));
+        assert!(!empty_json.contains("evaluator_model"));
+
+        let populated = UiSystem1Snapshot {
+            allows: 5,
+            denies: 1,
+            escalations: 2,
+            budget_extensions: 1,
+            evaluator_profile: Some("smart-eval".to_string()),
+            evaluator_model: Some("magpie-small".to_string()),
+            calibration: UiSystem1Calibration::Calibrated,
+            ..UiSystem1Snapshot::empty()
+        };
+        let parsed: UiSystem1Snapshot =
+            serde_json::from_str(&serde_json::to_string(&populated).unwrap()).unwrap();
+        assert_eq!(parsed, populated);
+
+        let minimal: UiSystem1Snapshot = serde_json::from_str(r#"{"version":1}"#).unwrap();
+        assert_eq!(minimal, empty);
     }
 }

@@ -195,6 +195,7 @@ where
             u64::from(state.runtime_config.context_window_tokens),
         )
         .await;
+        crate::runtime::smart_approval::publish_state_system1(state).await;
         emit(Event::TurnStarted {}).await;
     } else {
         crate::runtime::ui_surfaces::resumed(&state.agent_files())
@@ -549,9 +550,17 @@ where
             Ok(response) => response,
             Err(error) => {
                 accepted_output::abandon(&live, emit).await;
-                if error.is::<crate::agent_machine::task_budget::Exhausted>()
-                    || error.is::<super::NamespaceOperationUncertainty>()
+                if let Some(exhausted) =
+                    error.downcast_ref::<crate::agent_machine::task_budget::Exhausted>()
                 {
+                    if crate::runtime::task_budget::try_auto_extend(state, exhausted, cancel, emit)
+                        .await?
+                    {
+                        continue;
+                    }
+                    return Err(error);
+                }
+                if error.is::<super::NamespaceOperationUncertainty>() {
                     return Err(error);
                 }
                 if cancel.is_cancelled()
@@ -593,12 +602,7 @@ where
             )
             .await;
         }
-        crate::runtime::task_budget::publish(
-            &agent_files,
-            state.machine.task_budget.as_ref(),
-            &state.core_config.task_budget,
-        )
-        .await;
+        crate::runtime::task_budget::publish_state(state).await;
 
         for warning in &response.warnings {
             crate::runtime::ui_surfaces::warning(&state.agent_files(), warning.clone())

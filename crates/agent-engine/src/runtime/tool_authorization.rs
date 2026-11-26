@@ -199,22 +199,39 @@ where
                 "submission_id": runtime.machine.current_submission_id(),
                 "tool_call_id": tool_call.id,
                 "host_mount_revision": pre_review_authority.host_mount_revision,
+                "posture_authority_revision": pre_review_authority.posture_authority_revision,
             });
             details = append_skill_permission_hints(details, runtime.machine.active_skills());
 
             if matches!(route, EscalationRoute::Reviewer) {
-                match Box::pin(review_escalation(
-                    &mut runtime,
-                    tool_call,
-                    tool_arguments,
-                    &details,
-                    &audit,
-                    &pre_review_authority,
-                    cancel,
-                    emit,
-                ))
-                .await?
-                {
+                let review_outcome =
+                    if runtime.trust_posture == crate::policy::TrustPosture::ConfinedSmart {
+                        Box::pin(super::smart_approval::review_smart_escalation(
+                            &mut runtime,
+                            tool_call,
+                            tool_arguments,
+                            tool_capability,
+                            &mut details,
+                            &audit,
+                            &pre_review_authority,
+                            cancel,
+                            emit,
+                        ))
+                        .await?
+                    } else {
+                        Box::pin(review_escalation(
+                            &mut runtime,
+                            tool_call,
+                            tool_arguments,
+                            &details,
+                            &audit,
+                            &pre_review_authority,
+                            cancel,
+                            emit,
+                        ))
+                        .await?
+                    };
+                match review_outcome {
                     EscalationReviewOutcome::Authorized => {
                         return Ok(ToolAuthorizationOutcome::Authorized { audit });
                     }
@@ -307,30 +324,37 @@ where
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EscalationReviewOutcome {
+pub(super) enum EscalationReviewOutcome {
     Authorized,
     Completed,
     Human,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct AuthoritySnapshot {
-    trust_posture: crate::policy::TrustPosture,
-    guardian_profile: Option<String>,
-    governance_json: String,
-    host_mount_revision: Option<u64>,
+pub(super) struct AuthoritySnapshot {
+    pub(super) trust_posture: crate::policy::TrustPosture,
+    pub(super) guardian_profile: Option<String>,
+    pub(super) smart_evaluator_profile: Option<String>,
+    pub(super) governance_json: String,
+    pub(super) host_mount_revision: Option<u64>,
+    pub(super) posture_authority_revision: Option<u64>,
 }
 
 impl AuthoritySnapshot {
-    fn capture(runtime: &ToolAuthorizationRuntime<'_>) -> Self {
+    pub(super) fn capture(runtime: &ToolAuthorizationRuntime<'_>) -> Self {
         Self {
             trust_posture: runtime.trust_posture,
             guardian_profile: runtime.guardian_profile.map(str::to_string),
+            smart_evaluator_profile: runtime.smart_evaluator_profile.map(str::to_string),
             governance_json: serde_json::to_string(runtime.governance).unwrap_or_default(),
             host_mount_revision: runtime
                 .authority
                 .as_ref()
                 .and_then(|authority| authority.authority_revision()),
+            posture_authority_revision: runtime
+                .authority
+                .as_ref()
+                .map(|authority| authority.posture_authority_revision()),
         }
     }
 }
@@ -458,31 +482,8 @@ where
                 emit(Event::Warning { message }).await;
                 Ok(EscalationReviewOutcome::Human)
             } else {
-                let denied_payload = json!({
-                    "status": "denied_by_reviewer",
-                    "reason": rationale,
-                    "instruction": "Do not work around this denial. Pursue a materially safer \
-                        alternative, or stop and ask the user."
-                });
-                emit(Event::ToolCallCompleted {
-                    presentation: None,
-                    id: tool_call.id.clone(),
-                    name: Some(tool_call.name.clone()),
-                    success: Some(false),
-                    result_preview: tool_result_preview(&denied_payload),
-                    audit: Some(audit.clone()),
-                })
-                .await;
-                runtime.machine.record_tool_call_with_audit(
-                    &tool_call.name,
-                    tool_arguments.clone(),
-                    denied_payload.clone(),
-                    false,
-                    Some(audit.clone()),
-                );
-                runtime
-                    .machine
-                    .add_tool_message(&tool_call.id, &tool_call.name, denied_payload);
+                record_reviewer_denial(runtime, tool_call, tool_arguments, audit, &rationale, emit)
+                    .await;
                 Ok(EscalationReviewOutcome::Completed)
             }
         }
@@ -491,6 +492,44 @@ where
             Ok(EscalationReviewOutcome::Human)
         }
     }
+}
+
+pub(super) async fn record_reviewer_denial<E, F>(
+    runtime: &mut ToolAuthorizationRuntime<'_>,
+    tool_call: &NormalizedToolCall,
+    tool_arguments: &Value,
+    audit: &ToolDecisionAudit,
+    rationale: &str,
+    emit: &mut E,
+) where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let denied_payload = json!({
+        "status": "denied_by_reviewer",
+        "reason": rationale,
+        "instruction": "Do not work around this denial. Pursue a materially safer \
+            alternative, or stop and ask the user."
+    });
+    emit(Event::ToolCallCompleted {
+        presentation: None,
+        id: tool_call.id.clone(),
+        name: Some(tool_call.name.clone()),
+        success: Some(false),
+        result_preview: tool_result_preview(&denied_payload),
+        audit: Some(audit.clone()),
+    })
+    .await;
+    runtime.machine.record_tool_call_with_audit(
+        &tool_call.name,
+        tool_arguments.clone(),
+        denied_payload.clone(),
+        false,
+        Some(audit.clone()),
+    );
+    runtime
+        .machine
+        .add_tool_message(&tool_call.id, &tool_call.name, denied_payload);
 }
 
 async fn run_captured_guardian_review(

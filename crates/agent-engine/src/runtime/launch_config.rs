@@ -28,6 +28,7 @@ struct ExplicitRuntimeOverrides {
     partial_stream_recovery_mode: bool,
     durability_required: bool,
     guardian_profile: bool,
+    smart_evaluator_profile: bool,
 }
 
 impl Default for AgentConfig {
@@ -101,6 +102,16 @@ impl AgentConfig {
         self.core_config.guardian_profile = guardian_profile.clone();
         self.runtime_config.guardian_profile = guardian_profile;
         self.explicit_runtime_overrides.guardian_profile = true;
+    }
+
+    /// Override dedicated Smart Approval evaluator connection profile across agent-root overlays.
+    pub fn set_smart_evaluator_profile_override(
+        &mut self,
+        smart_evaluator_profile: Option<String>,
+    ) {
+        self.core_config.smart_evaluator_profile = smart_evaluator_profile.clone();
+        self.runtime_config.smart_evaluator_profile = smart_evaluator_profile;
+        self.explicit_runtime_overrides.smart_evaluator_profile = true;
     }
 
     pub fn refresh_runtime_derived_fields(&mut self) {
@@ -181,6 +192,16 @@ impl AgentConfig {
             core_config.durability.required = self.runtime_config.durability_required;
             runtime_config.durability_required = self.runtime_config.durability_required;
         }
+        if self.explicit_runtime_overrides.guardian_profile {
+            core_config.guardian_profile = self.runtime_config.guardian_profile.clone();
+            runtime_config.guardian_profile = self.runtime_config.guardian_profile.clone();
+        }
+        if self.explicit_runtime_overrides.smart_evaluator_profile {
+            core_config.smart_evaluator_profile =
+                self.runtime_config.smart_evaluator_profile.clone();
+            runtime_config.smart_evaluator_profile =
+                self.runtime_config.smart_evaluator_profile.clone();
+        }
     }
 }
 
@@ -229,6 +250,7 @@ fn merge_runtime_config_from_core_overlay(
     sync_if_unmodified!(partial_stream_recovery_mode);
     sync_if_unmodified!(durability_required);
     sync_if_unmodified!(guardian_profile);
+    sync_if_unmodified!(smart_evaluator_profile);
     if merged_runtime.guardian == base_runtime.guardian {
         merged_runtime.guardian = overlaid_runtime.guardian;
     }

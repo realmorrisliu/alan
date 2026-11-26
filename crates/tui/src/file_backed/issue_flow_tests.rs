@@ -110,7 +110,7 @@ fn redaction_excludes_transcripts_source_contents_and_secrets() {
     });
     app.project_host_root = Some(std::path::PathBuf::from("/Users/alice/top-secret-client"));
     app.sandbox_backend = Some("seatbelt".into());
-    app.trust_posture_label = Some("auto-approve".into());
+    app.trust_posture_label = Some("trust".into());
     app.model.apply(
         "/agent/root",
         Some(UiModelSnapshot {
@@ -148,7 +148,7 @@ fn redaction_excludes_transcripts_source_contents_and_secrets() {
     assert!(rendered.contains(env!("CARGO_PKG_VERSION")));
     assert!(rendered.contains(std::env::consts::OS));
     assert!(rendered.contains("openai_responses / gpt-5.4 (high)"));
-    assert!(rendered.contains("auto-approve (sandbox: seatbelt, mount: read-only)"));
+    assert!(rendered.contains("trust (sandbox: seatbelt, mount: read-only)"));
     assert!(!rendered.contains("TRANSCRIPT_USER_SECRET"));
     assert!(!rendered.contains("TRANSCRIPT_ASSISTANT_SECRET"));
     assert!(!rendered.contains("ghp_1234567890abcdef"));

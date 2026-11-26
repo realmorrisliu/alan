@@ -63,6 +63,7 @@ async fn managed_none_catalog_exact_restore_preserves_full_authority() {
             namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
             evaluator: None,
             guardian_profile: None,
+            smart_evaluator_profile: None,
             allow_profile_switch: false,
             selected_profile: std::sync::Mutex::new(None),
         };
@@ -168,6 +169,7 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
         namespace: ns.clone(),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -194,6 +196,7 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
         namespace: ns.clone(),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -233,6 +236,7 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
         namespace: ns,
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -327,6 +331,7 @@ async fn catalog_observes_published_authority_without_recapturing_on_idle_polls(
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -525,6 +530,7 @@ async fn evaluation_capture_checks_callable_capability_and_preserves_generation_
                 namespace: namespace.clone(),
                 evaluator: None,
                 guardian_profile: None,
+                smart_evaluator_profile: None,
                 allow_profile_switch: false,
                 selected_profile: std::sync::Mutex::new(None),
             };

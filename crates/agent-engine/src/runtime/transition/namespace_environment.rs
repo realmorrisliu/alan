@@ -12,8 +12,10 @@ mod tape_files;
 pub(crate) use tape_files::NamespaceTapeWriter;
 mod child_launch;
 mod client;
+mod decision;
 mod evaluation;
 mod evidence_read;
+pub use decision::{NamespaceDecision, NamespaceDecisionFailure, NamespaceDecisionUncertainty};
 pub(crate) use evidence_read::read_action_evidence;
 mod generation;
 pub use evaluation::{
@@ -198,6 +200,8 @@ pub struct NamespaceRuntimeEnvironment {
     tool_process_context: Option<NamespaceToolProcessContext>,
     input_offset: Arc<AtomicU64>,
     control_offset: Arc<AtomicU64>,
+    posture_authority_revision: Arc<AtomicU64>,
+    smart_auto_extensions_enabled: Arc<std::sync::atomic::AtomicBool>,
     submission_response_schemas:
         Arc<std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>>,
     action_recorder: Option<crate::rollout::RolloutRecorder>,
@@ -282,18 +286,24 @@ pub(crate) struct NamespaceToolExecution {
     tool_process_context: Option<NamespaceToolProcessContext>,
 }
 
-/// Narrow handle for Tool authorization authority snapshots and dedicated Guardian capture.
+/// Narrow handle for Tool authorization authority snapshots and dedicated Guardian/Smart capture.
 #[derive(Clone)]
 pub(crate) struct NamespaceToolAuthorization {
     model_bindings: Arc<tokio::sync::Mutex<super::super::model_binding::ProcessBindings>>,
     operation_cleanup: NamespaceOperationCleanup,
     tool_process_context: Option<NamespaceToolProcessContext>,
+    posture_authority_revision: Arc<AtomicU64>,
 }
 
 impl NamespaceToolAuthorization {
     pub(crate) fn authority_revision(&self) -> Option<u64> {
         let context = self.tool_process_context.as_ref()?;
         context.tool_runner.authority_revision(context.pid)
+    }
+
+    pub(crate) fn posture_authority_revision(&self) -> u64 {
+        self.posture_authority_revision
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     pub(crate) fn git_push_delegations(&self) -> Vec<crate::policy::GitPushDelegationScope> {
@@ -373,6 +383,8 @@ impl NamespaceRuntimeEnvironment {
             tool_process_context: None,
             input_offset: Arc::new(AtomicU64::new(0)),
             control_offset: Arc::new(AtomicU64::new(0)),
+            posture_authority_revision: Arc::new(AtomicU64::new(0)),
+            smart_auto_extensions_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             submission_response_schemas: Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
@@ -521,16 +533,33 @@ impl NamespaceRuntimeEnvironment {
             model_bindings: Arc::clone(&self.model_bindings),
             operation_cleanup: self.operation_cleanup.clone(),
             tool_process_context: self.tool_process_context.clone(),
+            posture_authority_revision: Arc::clone(&self.posture_authority_revision),
         }
     }
 
     /// Update the invocation's active trust posture on the attached Tool Process runner.
     pub(crate) fn set_trust_posture(&self, trust_posture: crate::policy::TrustPosture) {
+        self.smart_auto_extensions_enabled.store(
+            trust_posture == crate::policy::TrustPosture::ConfinedSmart,
+            std::sync::atomic::Ordering::Release,
+        );
         if let Some(context) = &self.tool_process_context {
             context
                 .tool_runner
                 .register_process_trust_posture(context.pid, trust_posture);
         }
+    }
+
+    pub(crate) fn smart_auto_extensions_enabled(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        Arc::clone(&self.smart_auto_extensions_enabled)
+    }
+
+    /// Bump the monotonic posture authority revision when downgrading trust posture
+    /// so subsequent authorization checks observe a fresh authority epoch.
+    pub(crate) fn bump_posture_authority_revision(&self) -> u64 {
+        self.posture_authority_revision
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            .saturating_add(1)
     }
 
     /// Bind the invocation's explicit trust posture on the attached Tool Process runner.

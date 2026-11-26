@@ -36,6 +36,7 @@ mod response_guardrails;
 pub mod service_activation;
 mod service_activation_tool;
 mod shadow_evaluation;
+mod smart_approval;
 mod steering_queue;
 mod subagent_tool;
 mod submission_handlers;
@@ -128,9 +129,10 @@ pub use project_workstreams::{
 };
 pub use shadow_evaluation::EvaluationSurface;
 pub use transition::{
-    NamespaceEvaluation, NamespaceEvaluationFailure, NamespaceEvaluationUncertainty,
-    NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
-    NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
+    NamespaceDecision, NamespaceDecisionFailure, NamespaceDecisionUncertainty, NamespaceEvaluation,
+    NamespaceEvaluationFailure, NamespaceEvaluationUncertainty, NamespaceRuntimeEnvironment,
+    NamespaceToolActionOutput, NamespaceTurnOutput, NamespaceTurnRuntime,
+    NamespaceTurnRuntimeConfig,
 };
 pub use workstream_handoff::{
     HandoffDispatchPlan, HandoffDisposition, MAX_HANDOFF_HOPS, ROUTE_DEAD_LETTER_PORT,
@@ -185,6 +187,8 @@ pub struct RuntimeConfig {
     pub trust_posture: crate::policy::TrustPosture,
     /// Optional dedicated Connection profile for Guardian escalation reviews.
     pub guardian_profile: Option<String>,
+    /// Optional dedicated Connection profile for Smart Approval (`--smart`) System 1 evaluation.
+    pub smart_evaluator_profile: Option<String>,
     /// Guardian escalation budget, custom policy path, and fallback limits.
     pub guardian: crate::config::GuardianConfig,
     /// Request-control intent carried by runtime/machine launch.
@@ -250,6 +254,7 @@ impl Default for RuntimeConfig {
             policy_engine: crate::policy::PolicyEngine::autonomous(),
             trust_posture: crate::policy::TrustPosture::Governed,
             guardian_profile: None,
+            smart_evaluator_profile: None,
             guardian: crate::config::GuardianConfig::default(),
             request_control_intent: crate::RequestControlIntent::default(),
             streaming_mode: crate::config::StreamingMode::Auto,
@@ -286,6 +291,7 @@ impl From<&crate::config::Config> for RuntimeConfig {
             policy_engine: crate::policy::PolicyEngine::autonomous(),
             trust_posture: crate::policy::TrustPosture::Governed,
             guardian_profile: config.guardian_profile.clone(),
+            smart_evaluator_profile: config.smart_evaluator_profile.clone(),
             guardian: config.guardian.clone(),
             request_control_intent: crate::RequestControlIntent::from_config(config),
             streaming_mode: config.streaming_mode,
