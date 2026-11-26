@@ -267,3 +267,94 @@ async fn mismatched_account_constraint_aborts_before_refreshing() {
     ));
     assert_eq!(server.refreshes.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn refresh_keeps_subject_and_account_id_distinct() {
+    let id_with_both = build_jwt(json!({
+        "sub": "auth0|user-1",
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "acct-test"
+        }
+    }));
+    let valid_access = build_jwt(json!({
+        "sub": "auth0|user-1",
+        "exp": far_future()
+    }));
+    let wrong_subject_access = build_jwt(json!({
+        "sub": "auth0|intruder",
+        "exp": far_future()
+    }));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let issuer = format!("http://{}", listener.local_addr().unwrap());
+    let first_id = id_with_both.clone();
+    let first_access = valid_access.clone();
+    let second_id = id_with_both.clone();
+    let second_access = wrong_subject_access;
+    let task = tokio::spawn(async move {
+        for (body_id, body_access, next_refresh) in [
+            (first_id, first_access, "rotated-ok"),
+            (second_id, second_access, "rotated-bad"),
+        ] {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request).await.unwrap();
+            let body = json!({
+                "id_token": body_id,
+                "access_token": body_access,
+                "refresh_token": next_refresh,
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+        }
+    });
+
+    let temp = TempDir::new().unwrap();
+    let manager = manager_for(&temp, &issuer);
+    manager
+        .import_token_bundle(ImportedChatgptTokenBundle {
+            id_token: id_with_both,
+            access_token: build_jwt(json!({"sub": "auth0|user-1", "exp": 1})),
+            refresh_token: "old-refresh".into(),
+            client_id: "oaiapp_test".into(),
+            scopes: vec!["openid".into(), "chatgpt.tokens.use.direct".into()],
+        })
+        .unwrap();
+
+    // First refresh returns access_token with `sub: auth0|user-1` and no `chatgpt_account_id`:
+    // must succeed without comparing `sub` against `acct-test`.
+    let auth = manager
+        .request_auth_for_account(Some("acct-test"))
+        .await
+        .expect("sub-only access token must pass refresh check");
+    assert_eq!(auth.account_id, "acct-test");
+    assert_eq!(auth.access_token, valid_access);
+    let stored_after_ok = manager.inner.storage.load().unwrap();
+    assert_eq!(
+        stored_after_ok
+            .chatgpt
+            .as_ref()
+            .unwrap()
+            .tokens
+            .refresh_token,
+        "rotated-ok"
+    );
+
+    // Second refresh returns access_token with a different `sub`: must reject and not persist.
+    let err = manager
+        .force_refresh_auth_for_account(Some("acct-test"))
+        .await
+        .expect_err("different access-token sub must fail");
+    assert!(matches!(
+        err,
+        ChatgptAuthError::WorkspaceMismatch { ref expected, ref actual }
+            if expected == "auth0|user-1" && actual.as_deref() == Some("auth0|intruder")
+    ));
+    assert_eq!(manager.inner.storage.load().unwrap(), stored_after_ok);
+    task.abort();
+}

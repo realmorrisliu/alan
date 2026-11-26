@@ -406,3 +406,65 @@ fn metadata_lock_excludes_another_process() {
         .unwrap();
     released.try_lock().unwrap();
 }
+
+#[test]
+fn normalize_profile_settings_and_resolve_migrate_retired_codex_base_url() {
+    let legacy = BTreeMap::from([
+        (
+            "base_url".to_string(),
+            "https://chatgpt.com/backend-api/codex/".to_string(),
+        ),
+        ("model".to_string(), "gpt-5.3-codex".to_string()),
+    ]);
+    let normalized = normalize_profile_settings(LlmProvider::Chatgpt, &legacy);
+    assert_eq!(
+        normalized.get("base_url").map(String::as_str),
+        Some("https://api.openai.com/v1")
+    );
+    assert_eq!(
+        normalized.get("model").map(String::as_str),
+        Some("gpt-5.3-codex")
+    );
+
+    let file = ConnectionsFile {
+        default_profile: Some("chatgpt-main".to_string()),
+        credentials: BTreeMap::from([(
+            "chatgpt".to_string(),
+            ConnectionCredential {
+                kind: CredentialKind::ManagedOauth,
+                provider_family: LlmProvider::Chatgpt,
+                label: "ChatGPT".to_string(),
+                backend: CHATGPT_AUTH_BACKEND.to_string(),
+            },
+        )]),
+        profiles: BTreeMap::from([(
+            "chatgpt-main".to_string(),
+            ConnectionProfile {
+                provider: LlmProvider::Chatgpt,
+                label: None,
+                credential_id: Some("chatgpt".to_string()),
+                created_at: default_profile_timestamp(),
+                updated_at: default_profile_timestamp(),
+                source: default_profile_source(),
+                settings: legacy,
+            },
+        )]),
+        ..ConnectionsFile::default()
+    };
+    let resolved = file.resolve_profile(None).unwrap();
+    assert_eq!(
+        resolved.settings.get("base_url").map(String::as_str),
+        Some("https://api.openai.com/v1")
+    );
+
+    let custom = BTreeMap::from([(
+        "base_url".to_string(),
+        "http://127.0.0.1:8080/v1".to_string(),
+    )]);
+    assert_eq!(
+        normalize_profile_settings(LlmProvider::Chatgpt, &custom)
+            .get("base_url")
+            .map(String::as_str),
+        Some("http://127.0.0.1:8080/v1")
+    );
+}

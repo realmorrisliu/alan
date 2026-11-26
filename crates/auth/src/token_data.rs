@@ -16,6 +16,17 @@ pub struct ChatgptIdTokenInfo {
     pub raw_jwt: String,
 }
 
+impl ChatgptIdTokenInfo {
+    /// Account-level identifier when present, falling back to the OIDC subject `sub`.
+    pub fn effective_account_id(&self) -> Option<&str> {
+        self.account_id
+            .as_deref()
+            .or(self.subject.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ChatgptTokenData {
     #[serde(
@@ -103,7 +114,9 @@ pub fn parse_chatgpt_jwt_claims(jwt: &str) -> Result<ChatgptIdTokenInfo, TokenDa
 
     if let Some(auth) = claims.auth {
         let user_id = auth.chatgpt_user_id.or(auth.user_id).or(subject.clone());
-        let account_id = auth.chatgpt_account_id.or(subject.clone());
+        let account_id = auth
+            .chatgpt_account_id
+            .filter(|value| !value.trim().is_empty());
         Ok(ChatgptIdTokenInfo {
             email,
             plan_type: auth.chatgpt_plan_type,
@@ -118,7 +131,7 @@ pub fn parse_chatgpt_jwt_claims(jwt: &str) -> Result<ChatgptIdTokenInfo, TokenDa
             email,
             plan_type: None,
             user_id: subject.clone(),
-            account_id: subject.clone(),
+            account_id: None,
             subject,
             nonce,
             raw_jwt: jwt.to_string(),
@@ -188,9 +201,10 @@ mod tests {
             "email": "oidc@example.com"
         }));
         let info = parse_chatgpt_jwt_claims(&jwt).expect("claims");
-        assert_eq!(info.account_id.as_deref(), Some("user-sub-123"));
+        assert_eq!(info.account_id, None);
         assert_eq!(info.user_id.as_deref(), Some("user-sub-123"));
         assert_eq!(info.subject.as_deref(), Some("user-sub-123"));
+        assert_eq!(info.effective_account_id(), Some("user-sub-123"));
         assert_eq!(info.nonce.as_deref(), Some("nonce-abc"));
         assert_eq!(info.email.as_deref(), Some("oidc@example.com"));
     }

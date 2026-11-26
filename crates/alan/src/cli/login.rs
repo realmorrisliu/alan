@@ -570,10 +570,10 @@ async fn ensure_profile_exists(
             existing.provider.as_str(),
             provider.as_str()
         );
-        if !overrides.is_empty() {
-            let mut merged = existing.settings.clone();
-            merged.extend(overrides);
-            let normalized = normalize_profile_settings(provider, &merged);
+        let mut merged = existing.settings.clone();
+        merged.extend(overrides);
+        let normalized = normalize_profile_settings(provider, &merged);
+        if normalized != existing.settings {
             validate_profile_settings(provider, &normalized)?;
             existing.settings = normalized;
             existing.updated_at = Utc::now();

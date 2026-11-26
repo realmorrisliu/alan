@@ -6,9 +6,8 @@
 //! locks, so a rotation performed by the first refresher satisfies all later ones.
 
 use super::{
-    ChatgptAuthError, ChatgptAuthManager, ChatgptRequestAuth, DIRECT_TOKEN_SCOPE,
-    DYNAMIC_CLIENT_ID, TOKEN_PATH, ensure_expected_account_matches, form_encode,
-    parse_chatgpt_id_token, parse_scopes,
+    ChatgptAuthError, ChatgptAuthManager, ChatgptRequestAuth, DIRECT_TOKEN_SCOPE, TOKEN_PATH,
+    ensure_expected_account_matches, form_encode, parse_chatgpt_id_token, parse_scopes,
 };
 use crate::storage::{AuthStore, StoredChatgptAuth};
 use crate::token_data::{ChatgptTokenData, parse_chatgpt_jwt_claims};
@@ -93,7 +92,7 @@ impl ChatgptAuthManager {
         if auth.tokens.refresh_token.trim().is_empty() {
             return Err(ChatgptAuthError::TokenExpired);
         }
-        if auth.client_id.trim().is_empty() || auth.client_id == DYNAMIC_CLIENT_ID {
+        if !auth.has_issued_client_id() {
             return Err(ChatgptAuthError::RefreshFailed(
                 "stored ChatGPT credential is missing an issued client_id; re-run `alan login chatgpt`"
                     .to_string(),
@@ -188,22 +187,28 @@ impl ChatgptAuthManager {
             persisted.access_token_expires_at =
                 Some(Utc::now() + chrono::Duration::seconds(expires_in));
         }
-        // A refresh can never move the stored login to another account;
-        // check both the ID token and any account/subject claim carried on the access token.
+        // A refresh can never move the stored login to another account or OIDC subject;
+        // compare like identities (`account_id` vs `account_id`, `subject` vs `subject`)
+        // so an access token carrying only `sub` is never rejected against `chatgpt_account_id`.
         if persisted.account_id != existing.account_id {
             return Err(ChatgptAuthError::WorkspaceMismatch {
                 expected: existing.account_id.clone(),
                 actual: Some(persisted.account_id),
             });
         }
-        if let Ok(access_claims) = parse_chatgpt_jwt_claims(&persisted.tokens.access_token)
-            && let Some(access_account_id) = access_claims.account_id
-            && access_account_id != existing.account_id
-        {
-            return Err(ChatgptAuthError::WorkspaceMismatch {
-                expected: existing.account_id.clone(),
-                actual: Some(access_account_id),
-            });
+        ensure_matching_optional_identity(
+            existing.tokens.id_token.subject.as_deref(),
+            persisted.tokens.id_token.subject.as_deref(),
+        )?;
+        if let Ok(access_claims) = parse_chatgpt_jwt_claims(&persisted.tokens.access_token) {
+            ensure_matching_optional_identity(
+                existing.tokens.id_token.account_id.as_deref(),
+                access_claims.account_id.as_deref(),
+            )?;
+            ensure_matching_optional_identity(
+                existing.tokens.id_token.subject.as_deref(),
+                access_claims.subject.as_deref(),
+            )?;
         }
         ensure_expected_account_matches(expected_account_id, &persisted)?;
         let mut store = expected.clone();
@@ -212,4 +217,19 @@ impl ChatgptAuthManager {
         self.inner.storage.save_if_unchanged(&expected, &store)?;
         Ok(persisted)
     }
+}
+
+fn ensure_matching_optional_identity(
+    expected: Option<&str>,
+    actual: Option<&str>,
+) -> Result<(), ChatgptAuthError> {
+    if let (Some(expected), Some(actual)) = (expected, actual)
+        && expected != actual
+    {
+        return Err(ChatgptAuthError::WorkspaceMismatch {
+            expected: expected.to_string(),
+            actual: Some(actual.to_string()),
+        });
+    }
+    Ok(())
 }

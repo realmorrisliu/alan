@@ -223,8 +223,7 @@ impl ChatgptAuthManager {
         let had_auth = stored.is_some();
         if let Some(auth) = stored
             && !auth.tokens.refresh_token.trim().is_empty()
-            && !auth.client_id.trim().is_empty()
-            && auth.client_id != DYNAMIC_CLIENT_ID
+            && auth.has_issued_client_id()
         {
             let body = form_encode(&[
                 ("client_id", &auth.client_id),
@@ -436,13 +435,7 @@ fn parse_chatgpt_id_token(
 ) -> Result<crate::token_data::ChatgptIdTokenInfo, ChatgptAuthError> {
     let info = parse_chatgpt_jwt_claims(jwt)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    if info
-        .account_id
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or_default()
-        .is_empty()
-    {
+    if info.effective_account_id().is_none() {
         return Err(ChatgptAuthError::MissingAccountIdentity);
     }
     Ok(info)

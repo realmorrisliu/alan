@@ -582,6 +582,15 @@ pub async fn run_connection_login(profile_id: &str, open_browser: bool) -> Resul
                     login_id: None,
                 })
                 .await?;
+            if let Some(profile) = connections.profiles.get_mut(profile_id) {
+                let normalized = normalize_profile_settings(profile.provider, &profile.settings);
+                if normalized != profile.settings {
+                    validate_profile_settings(profile.provider, &normalized)?;
+                    profile.settings = normalized;
+                    profile.updated_at = Utc::now();
+                    save_connections(&mut stores, &connections).await?;
+                }
+            }
             respond_native(
                 &stores,
                 &request_id,

@@ -20,6 +20,7 @@ const OPAQUE_ACCESS_TOKEN_MAX_AGE_SECS: i64 = 8 * 24 * 60 * 60;
 pub struct StoredChatgptAuth {
     pub tokens: ChatgptTokenData,
     pub account_id: String,
+    #[serde(default)]
     pub client_id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scopes: Vec<String>,
@@ -35,14 +36,25 @@ pub struct StoredChatgptAuth {
     pub last_refresh_at: Option<DateTime<Utc>>,
 }
 
+pub(crate) fn is_issued_client_id(client_id: &str) -> bool {
+    let trimmed = client_id.trim();
+    !trimmed.is_empty() && trimmed != crate::chatgpt::DYNAMIC_CLIENT_ID
+}
+
 impl StoredChatgptAuth {
+    /// Whether this credential carries a real OAuth `client_id` issued by SIWC
+    /// (excluding empty values and the pre-registration placeholder).
+    pub fn has_issued_client_id(&self) -> bool {
+        is_issued_client_id(&self.client_id)
+    }
+
     pub fn from_tokens(
         tokens: ChatgptTokenData,
         client_id: String,
         scopes: Vec<String>,
     ) -> io::Result<Self> {
         let client_id = client_id.trim().to_string();
-        if client_id.is_empty() || client_id == "dynamic_agent_client" {
+        if !is_issued_client_id(&client_id) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "ChatGPT auth requires an issued OAuth client_id",
@@ -50,9 +62,8 @@ impl StoredChatgptAuth {
         }
         let account_id = tokens
             .id_token
-            .account_id
-            .clone()
-            .filter(|value| !value.trim().is_empty())
+            .effective_account_id()
+            .map(ToString::to_string)
             .ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -137,10 +148,25 @@ pub struct AuthStore {
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ext_agent_host_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_chatgpt_auth"
+    )]
     pub chatgpt: Option<StoredChatgptAuth>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub google: Option<StoredGoogleAuth>,
+}
+
+/// Treat pre-SIWC ChatGPT grants (missing an issued `client_id`) as logged out so
+/// existing auth stores remain readable without manual file deletion while `google`
+/// and `ext_agent_host_id` stay intact.
+fn deserialize_chatgpt_auth<'de, D>(deserializer: D) -> Result<Option<StoredChatgptAuth>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<StoredChatgptAuth>::deserialize(deserializer)?
+        .filter(StoredChatgptAuth::has_issued_client_id))
 }
 
 #[derive(Debug, Clone)]
@@ -254,9 +280,8 @@ impl AuthStorage {
         let store: AuthStore = serde_json::from_value(value).map_err(|_| invalid())?;
         if let Some(auth) = store.chatgpt
             && (auth.account_id.is_empty()
-                || auth.client_id.trim().is_empty()
-                || auth.client_id == "dynamic_agent_client"
-                || auth.tokens.id_token.account_id.as_deref() != Some(auth.account_id.as_str())
+                || !auth.has_issued_client_id()
+                || auth.tokens.id_token.effective_account_id() != Some(auth.account_id.as_str())
                 || auth.tokens.access_token.is_empty()
                 || auth.tokens.refresh_token.is_empty())
         {
@@ -632,5 +657,52 @@ mod tests {
             storage.load().unwrap().ext_agent_host_id.as_deref(),
             Some(first.as_str())
         );
+    }
+
+    #[test]
+    fn legacy_chatgpt_auth_without_client_id_is_invalidated_while_preserving_google_and_allowing_reauth()
+     {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let path = temp_dir.path().join("auth.json");
+        let storage = AuthStorage::new(path.clone()).expect("storage");
+        let id_token = build_jwt(json!({
+            "email": "user@example.com",
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "acct_legacy"
+            }
+        }));
+        let legacy_json = json!({
+            "version": 1,
+            "chatgpt": {
+                "tokens": {
+                    "id_token": id_token,
+                    "access_token": "legacy-access",
+                    "refresh_token": "legacy-refresh"
+                },
+                "account_id": "acct_legacy",
+                "email": "user@example.com"
+            },
+            "google": {
+                "refresh_token": "g-refresh",
+                "access_token": "g-access"
+            }
+        });
+        fs::write(&path, serde_json::to_string_pretty(&legacy_json).unwrap()).unwrap();
+
+        let loaded = storage.load().expect("legacy store should still load");
+        assert_eq!(loaded.chatgpt, None);
+        assert!(loaded.google.is_some());
+        storage
+            .validate_for_migration()
+            .expect("legacy chatgpt entry should validate without blocking migration");
+
+        let host_id = storage
+            .ensure_ext_agent_host_id()
+            .expect("ensure host id for reauthentication");
+        assert!(host_id.starts_with("urn:uuid:"));
+        assert!(storage.load().unwrap().google.is_some());
+
+        storage.clear_chatgpt().expect("clear obsolete chatgpt");
+        assert!(storage.load().unwrap().google.is_some());
     }
 }

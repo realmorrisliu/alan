@@ -539,6 +539,8 @@ pub fn default_profile_timestamp() -> DateTime<Utc> {
     DateTime::<Utc>::UNIX_EPOCH
 }
 
+const RETIRED_CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+
 pub fn normalize_profile_settings(
     provider: LlmProvider,
     settings: &BTreeMap<String, String>,
@@ -550,6 +552,19 @@ pub fn normalize_profile_settings(
     }
     for (key, value) in settings {
         normalized.insert(key.clone(), value.clone());
+    }
+    if provider == LlmProvider::Chatgpt
+        && normalized.get("base_url").is_some_and(|url| {
+            url.trim()
+                .trim_end_matches('/')
+                .eq_ignore_ascii_case(RETIRED_CHATGPT_CODEX_BASE_URL)
+        })
+        && let Some((_, default_base_url)) = descriptor
+            .default_settings
+            .iter()
+            .find(|(key, _)| *key == "base_url")
+    {
+        normalized.insert("base_url".to_string(), (*default_base_url).to_string());
     }
     normalized
 }
