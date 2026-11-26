@@ -89,6 +89,9 @@ pub(crate) struct Snapshot {
     pub foreground_complete: bool,
     /// A crash left an active interval without a settled elapsed-time record.
     pub recovered_time_upper_bound: bool,
+    /// Number of bounded automatic extensions granted for this task under ConfinedSmart.
+    #[serde(default)]
+    pub auto_extensions_used: u32,
 }
 
 impl Snapshot {
@@ -236,6 +239,7 @@ impl TaskBudget {
             phase: Phase::Paused,
             foreground_complete: false,
             recovered_time_upper_bound: false,
+            auto_extensions_used: 0,
         };
         snapshot.validate()?;
         let mut budget = Self::restore(snapshot, recorder)?;
@@ -486,6 +490,52 @@ impl TaskBudget {
         next.limits.milliseconds()?;
         next.phase = Phase::Paused;
         self.persist(&mut state, next).await
+    }
+
+    /// Grant one bounded automatic extension under `ConfinedSmart` up to `max_auto_extensions`,
+    /// persisting both the added allowance and incremented auto-extension counter atomically.
+    pub(crate) async fn auto_extend(
+        &self,
+        additional: &Extension,
+        max_auto_extensions: u32,
+    ) -> Result<bool> {
+        anyhow::ensure!(
+            additional.execution_seconds > 0
+                || additional.tool_calls > 0
+                || additional.model_calls > 0,
+            "task budget auto-extension must add a positive allowance"
+        );
+        self.validate_ancestry().await?;
+        anyhow::ensure!(
+            !self.process_stop.is_cancelled(),
+            "Agent Process has exited"
+        );
+        let mut state = self.state.lock().await;
+        let mut next = state.observed();
+        if next.phase == Phase::Completed {
+            bail!("completed task budget cannot be extended");
+        }
+        if next.auto_extensions_used >= max_auto_extensions {
+            return Ok(false);
+        }
+        let add = |old: NonZeroU64, more: u64| {
+            old.get()
+                .checked_add(more)
+                .and_then(NonZeroU64::new)
+                .context("task budget extension overflow")
+        };
+        next.limits.execution_seconds =
+            add(next.limits.execution_seconds, additional.execution_seconds)?;
+        next.limits.tool_calls = add(next.limits.tool_calls, additional.tool_calls)?;
+        next.limits.model_calls = add(next.limits.model_calls, additional.model_calls)?;
+        next.limits.milliseconds()?;
+        next.auto_extensions_used = next
+            .auto_extensions_used
+            .checked_add(1)
+            .context("auto_extensions_used overflow")?;
+        next.phase = Phase::Running;
+        self.persist(&mut state, next).await?;
+        Ok(true)
     }
 
     /// Run an admitted operation until the shared time allowance expires. Await

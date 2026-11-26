@@ -418,26 +418,50 @@ fn shift_tab_and_permissions_cycle_trust_posture_and_respect_unsandboxed_and_for
     let mut app = ready_app();
     app.maybe_insert_welcome_header();
 
+    // 3-way Shift+Tab cycle: governed -> smart -> trust -> governed (never HostAccountTrusted).
     let first = app
         .handle_key(key(KeyCode::BackTab, KeyModifiers::SHIFT))
-        .expect("Shift+Tab switches to auto-approve");
+        .expect("Shift+Tab switches from governed to smart");
     assert!(matches!(
         first,
-        FileBackedAction::MachineCtl { ref command, .. } if command == "trust-posture confined-trusted"
+        FileBackedAction::MachineCtl { ref command, .. } if command == "trust-posture confined-smart"
     ));
-    assert_eq!(app.trust_posture_label.as_deref(), Some("auto-approve"));
-    assert!(app.context_line(100).to_string().contains("auto-approve"));
+    assert_eq!(app.trust_posture_label.as_deref(), Some("smart"));
+    assert!(app.context_line(100).to_string().contains("smart"));
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap_or("")
+            .contains("Permissions: smart")
+    );
 
     let second = app
         .handle_key(key(KeyCode::Tab, KeyModifiers::SHIFT))
-        .expect("Shift+Tab switches back to governed");
+        .expect("Shift+Tab switches from smart to trust");
     assert!(matches!(
         second,
+        FileBackedAction::MachineCtl { ref command, .. } if command == "trust-posture confined-trusted"
+    ));
+    assert_eq!(app.trust_posture_label.as_deref(), Some("trust"));
+    assert!(app.context_line(100).to_string().contains("trust"));
+    let trust_notice = app.notice.as_deref().unwrap_or("");
+    assert!(
+        trust_notice.contains("Permissions: trust"),
+        "{trust_notice}"
+    );
+    assert!(!trust_notice.contains("auto-approve"), "{trust_notice}");
+
+    let third = app
+        .handle_key(key(KeyCode::BackTab, KeyModifiers::SHIFT))
+        .expect("Shift+Tab switches from trust back to governed");
+    assert!(matches!(
+        third,
         FileBackedAction::MachineCtl { ref command, .. } if command == "trust-posture governed"
     ));
     assert_eq!(app.trust_posture_label.as_deref(), None);
     let governed_ctx = app.context_line(100).to_string();
-    assert!(!governed_ctx.contains("auto-approve"), "{governed_ctx}");
+    assert!(!governed_ctx.contains("trust"), "{governed_ctx}");
+    assert!(!governed_ctx.contains("smart"), "{governed_ctx}");
     assert!(!governed_ctx.contains("seatbelt"), "{governed_ctx}");
     assert!(
         app.notice
@@ -446,19 +470,36 @@ fn shift_tab_and_permissions_cycle_trust_posture_and_respect_unsandboxed_and_for
             .contains("Permissions: governed")
     );
 
-    // /permissions explicit subcommands work cleanly (including legacy alias).
+    // /permissions explicit subcommands work cleanly.
     assert!(matches!(
-        app.handle_command("/permissions auto-approve"),
+        app.handle_command("/permissions smart"),
+        Some(FileBackedAction::MachineCtl { ref command, .. }) if command == "trust-posture confined-smart"
+    ));
+    assert_eq!(app.trust_posture_label.as_deref(), Some("smart"));
+    assert!(matches!(
+        app.handle_command("/permissions trust"),
         Some(FileBackedAction::MachineCtl { ref command, .. }) if command == "trust-posture confined-trusted"
     ));
+    assert_eq!(app.trust_posture_label.as_deref(), Some("trust"));
     assert!(matches!(
         app.handle_command("/permissions governed"),
         Some(FileBackedAction::MachineCtl { ref command, .. }) if command == "trust-posture governed"
     ));
+    assert_eq!(app.trust_posture_label.as_deref(), None);
     assert!(matches!(
         app.handle_command("/permissions trusted"),
         Some(FileBackedAction::MachineCtl { ref command, .. }) if command == "trust-posture confined-trusted"
     ));
+    assert_eq!(app.trust_posture_label.as_deref(), Some("trust"));
+
+    // Unknown /permissions argument shows usage with governed|smart|trust (never auto-approve).
+    assert!(app.handle_command("/permissions invalid").is_none());
+    let usage = app.notice.as_deref().unwrap_or("");
+    assert!(
+        usage.contains("/permissions [governed|smart|trust]"),
+        "{usage}"
+    );
+    assert!(!usage.contains("auto-approve"), "{usage}");
 
     // --unsafe-host-account blocks runtime posture switching cleanly.
     app.trust_posture_label = Some("unsandboxed".into());

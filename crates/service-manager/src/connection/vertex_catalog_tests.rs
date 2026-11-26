@@ -130,6 +130,7 @@ async fn vertex_live_discovery_publishes_to_connection_and_llmfs_and_supports_cu
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -461,6 +462,7 @@ async fn real_vertex_client_express_and_failed_adc_stay_bundled_until_explicit_r
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -511,6 +513,7 @@ async fn real_vertex_client_express_and_failed_adc_stay_bundled_until_explicit_r
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };

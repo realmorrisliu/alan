@@ -302,6 +302,7 @@ async fn warm_disk_cache_hydrates_immediately_before_network_and_respects_accoun
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: true,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -362,6 +363,7 @@ async fn warm_disk_cache_hydrates_immediately_before_network_and_respects_accoun
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -417,6 +419,7 @@ async fn root_model_selection_persists_across_restarts_while_child_and_restore_d
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: true,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -426,6 +429,7 @@ async fn root_model_selection_persists_across_restarts_while_child_and_restore_d
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -541,6 +545,7 @@ async fn root_model_selection_persists_across_restarts_while_child_and_restore_d
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: true,
         selected_profile: std::sync::Mutex::new(None),
     };
@@ -592,6 +597,7 @@ async fn cold_boot_initial_callable_reconciles_live_catalog_metadata_after_backg
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: true,
         selected_profile: std::sync::Mutex::new(None),
     };

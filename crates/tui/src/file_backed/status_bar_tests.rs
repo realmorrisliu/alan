@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alan_agent_protocol::{
     ReasoningControls, ReasoningEffort, UI_SURFACE_VERSION, UiActivitySnapshot, UiBudgetSnapshot,
     UiModelBinding, UiModelCatalog, UiModelChoice, UiModelControlSource, UiModelSnapshot,
-    UiQueueSnapshot, UiUsageSnapshot,
+    UiQueueSnapshot, UiSystem1Calibration, UiSystem1Snapshot, UiUsageSnapshot,
 };
 use alan_agentfs::{AgentFs, AgentRootFs};
 use alan_ap::InProcessTransport;
@@ -731,4 +731,192 @@ async fn budget_read_and_status_panel_diagnostics_read_live_namespace_files() {
         diag.summary_line.as_deref(),
         Some("rev 7 · generated · recall on")
     );
+}
+
+#[test]
+fn row1_renders_three_way_posture_badges_in_unicode_and_ascii_without_backend_leak() {
+    let mut app = populated_app();
+    let cases = [
+        (ProjectAccess::ReadWrite, None, "rw·gov", "rw/gov"),
+        (ProjectAccess::ReadOnly, None, "ro·gov", "ro/gov"),
+        (
+            ProjectAccess::ReadWrite,
+            Some("smart"),
+            "rw·smart",
+            "rw/smart",
+        ),
+        (
+            ProjectAccess::ReadOnly,
+            Some("smart"),
+            "ro·smart",
+            "ro/smart",
+        ),
+        (
+            ProjectAccess::ReadWrite,
+            Some("trust"),
+            "rw·trust",
+            "rw/trust",
+        ),
+        (
+            ProjectAccess::ReadOnly,
+            Some("trust"),
+            "ro·trust",
+            "ro/trust",
+        ),
+    ];
+
+    for (access, label, expected_unicode, expected_ascii) in cases {
+        app.project.as_mut().unwrap().access = access;
+        app.trust_posture_label = label.map(str::to_string);
+        for backend in ["seatbelt", "landlock"] {
+            app.sandbox_backend = Some(backend.into());
+
+            app.theme = Theme::default();
+            let unicode_row = row1_line(&app, 120).to_string();
+            assert!(
+                unicode_row.contains(expected_unicode),
+                "expected `{expected_unicode}` in `{unicode_row}`"
+            );
+            assert!(
+                !unicode_row.to_lowercase().contains(backend),
+                "backend `{backend}` leaked into `{unicode_row}`"
+            );
+
+            app.theme = Theme::dumb();
+            let ascii_row = row1_line(&app, 120).to_string();
+            assert!(ascii_row.is_ascii(), "non-ASCII row: `{ascii_row}`");
+            assert!(
+                ascii_row.contains(expected_ascii),
+                "expected `{expected_ascii}` in `{ascii_row}`"
+            );
+            assert!(
+                !ascii_row.to_lowercase().contains(backend),
+                "backend `{backend}` leaked into `{ascii_row}`"
+            );
+        }
+    }
+
+    // Without a mounted project, badges still render standalone `smart` / `trust` / `gov`.
+    app.project = None;
+    app.theme = Theme::default();
+    app.trust_posture_label = Some("smart".into());
+    assert!(row1_line(&app, 120).to_string().contains("smart"));
+    app.trust_posture_label = Some("trust".into());
+    assert!(row1_line(&app, 120).to_string().contains("trust"));
+    app.trust_posture_label = None;
+    assert!(row1_line(&app, 120).to_string().contains("gov"));
+}
+
+#[tokio::test]
+async fn system1_projection_reads_agentfs_and_renders_ctrl_t_status_panel_without_secrets() {
+    let procfs = Arc::new(ProcFs::new());
+    let agent_root = Arc::new(AgentRootFs::new_with_process_events(
+        procfs.clone(),
+        procfs.clone(),
+    ));
+    let mount_fs = Arc::new(MountFs::new(Namespace::new()));
+    let live = mount_fs.live_namespace();
+    live.mount("/proc", InProcessTransport::new(procfs), Access::ReadWrite);
+    live.mount(
+        "/agent",
+        InProcessTransport::new(agent_root.clone()),
+        Access::ReadWrite,
+    );
+    let shell = alan_shell::Shell::new(InProcessTransport::new(mount_fs));
+    let pid = shell
+        .spawn(
+            r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation":0,"mounts":[]}}"#,
+        )
+        .await
+        .unwrap();
+    agent_root
+        .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+    let owner = format!("/agent/{pid}");
+
+    let payload = serde_json::json!({
+        "version": UI_SURFACE_VERSION,
+        "allows": 7,
+        "denies": 2,
+        "escalations": 3,
+        "budget_extensions": 1,
+        "evaluator_profile": "smart-eval",
+        "evaluator_model": "magpie-fast",
+        "calibration": "calibrated",
+        "request_id": "req-secret-must-drop",
+        "api_key": "sk-secret-must-drop"
+    });
+    shell
+        .write(
+            &format!("{owner}/machine/ui/system1"),
+            &serde_json::to_vec(&payload).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let observed = crate::file_backed::system1::read_system1(&shell, &owner)
+        .await
+        .expect("system1 projection readable");
+    let serialized = serde_json::to_string(&observed).unwrap();
+    assert!(!serialized.contains("request_id"));
+    assert!(!serialized.contains("sk-secret-must-drop"));
+    assert_eq!(observed.allows, 7);
+    assert_eq!(observed.denies, 2);
+    assert_eq!(observed.escalations, 3);
+    assert_eq!(observed.budget_extensions, 1);
+    assert_eq!(observed.evaluator_profile.as_deref(), Some("smart-eval"));
+    assert_eq!(observed.evaluator_model.as_deref(), Some("magpie-fast"));
+    assert_eq!(observed.calibration, UiSystem1Calibration::Calibrated);
+
+    let mut app = FileBackedApp::new(owner.clone());
+    app.system1.apply(&owner, Some(observed));
+    app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+    assert!(app.modal.active);
+    assert_eq!(app.modal.mode, ModalMode::Status);
+
+    let rendered = status_panel::build_rows(&app)
+        .into_iter()
+        .map(|l| l.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for expected in [
+        "System 1 (Fast Evaluator)",
+        "7 allow · 2 deny · 3 escalate · 1 budget-ext",
+        "smart-eval / magpie-fast",
+        "Calibrated",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "missing `{expected}` in:\n{rendered}"
+        );
+    }
+    assert!(!rendered.contains("request_id"));
+    assert!(!rendered.contains("sk-secret-must-drop"));
+
+    // Uncalibrated & invalid-version rejection paths.
+    let uncal = UiSystem1Snapshot {
+        version: UI_SURFACE_VERSION,
+        allows: 1,
+        denies: 0,
+        escalations: 2,
+        budget_extensions: 0,
+        evaluator_profile: Some("fallback-prof".into()),
+        evaluator_model: None,
+        calibration: UiSystem1Calibration::Uncalibrated,
+    };
+    app.system1.apply(&owner, Some(uncal));
+    let uncal_text = status_panel::build_rows(&app)
+        .into_iter()
+        .map(|l| l.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(uncal_text.contains("fallback-prof"));
+    assert!(uncal_text.contains("Uncalibrated"));
+
+    let invalid = UiSystem1Snapshot {
+        version: UI_SURFACE_VERSION + 99,
+        ..Default::default()
+    };
+    app.system1.apply(&owner, Some(invalid));
+    assert!(app.system1.known().is_none());
 }

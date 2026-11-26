@@ -37,8 +37,8 @@ pub use host_auth::{
 };
 pub use memory::{MemoryFlushAttemptSnapshot, MemoryFlushResult, MemoryFlushSkipReason};
 pub use op::{
-    GovernanceConfig, GovernanceProfile, InputMode, Op, PlanItem, PlanItemStatus, Submission,
-    ToolCapability, TurnContext,
+    ConfinedTrustPosture, GovernanceConfig, GovernanceProfile, InputMode, Op, PlanItem,
+    PlanItemStatus, Submission, ToolCapability, TurnContext,
 };
 pub use process::{
     AGENT_DEFINITION_DESCRIPTOR, AGENT_EXECUTABLE_RESULT_VERSION, AgentExecutablePause,
@@ -62,7 +62,7 @@ pub use ui_models::{
 pub use ui_surface::{
     UI_SURFACE_VERSION, UiActivitySnapshot, UiActivityState, UiBudgetSnapshot, UiEvent,
     UiInputStatus, UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot, UiQueueSnapshot,
-    UiThinkingSnapshot, UiThinkingState, UiUsageSnapshot,
+    UiSystem1Calibration, UiSystem1Snapshot, UiThinkingSnapshot, UiThinkingState, UiUsageSnapshot,
 };
 
 pub use owner_work::{OwnerCandidate, OwnerSourceRange, OwnerWorkControl, OwnerWorkRequest};

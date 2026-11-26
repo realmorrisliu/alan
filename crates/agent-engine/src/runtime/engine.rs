@@ -500,6 +500,7 @@ fn spawn_with_prepared_runtime_environment(
         };
 
         super::task_budget::publish_state(&state).await;
+        super::smart_approval::publish_state_system1(&mut state).await;
         if let Err(error) = super::task_budget::publish_wait(&mut state).await {
             let _ = ready_tx.send(Err(format!("restore task budget wait: {error:#}")));
             return;

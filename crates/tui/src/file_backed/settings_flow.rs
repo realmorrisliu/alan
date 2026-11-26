@@ -21,7 +21,7 @@ const SETTINGS_MENU_ITEMS: [(&str, &str); 6] = [
     ),
     (
         "Trust Posture",
-        "cycle governed vs auto-approve (/permissions)",
+        "cycle governed / smart / trust (/permissions)",
     ),
     ("Release Channel", "select stable or beta updates"),
     (

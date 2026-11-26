@@ -284,6 +284,17 @@ impl NamespaceAgentFiles {
             .write_document(&format!("{}/machine/ui/budget", self.agent_path), &bytes)
             .await
     }
+
+    /// Replace `machine/ui/system1`; AgentFS announces the change as `ui:system1`.
+    pub(crate) async fn write_ui_system1_snapshot(
+        &self,
+        snapshot: &alan_agent_protocol::UiSystem1Snapshot,
+    ) -> Result<()> {
+        let bytes = serde_json::to_vec(snapshot).context("serialize system1 snapshot")?;
+        NamespaceClient::new(self.root.clone())
+            .write_document(&format!("{}/machine/ui/system1", self.agent_path), &bytes)
+            .await
+    }
 }
 
 impl NamespaceTurnRuntime {

@@ -525,6 +525,9 @@ async fn run_child_m6() -> Result<()> {
     if events.contains("interrupt") {
         bail!("idle Esc unexpectedly emitted interrupt event: {events:?}");
     }
+    if !events.contains("ctl:trust-posture confined-smart") {
+        bail!("expected Shift+Tab to emit trust-posture confined-smart: {events:?}");
+    }
     if !events.contains("ctl:trust-posture confined-trusted") {
         bail!("expected Shift+Tab to emit trust-posture confined-trusted: {events:?}");
     }
@@ -723,6 +726,20 @@ fn pty_e2e_tui_startup_modals_ctrl_q_esc_ctrl_c_cjk_and_resize() -> Result<()> {
             s.contains(proj_label) && !s.contains("Select project")
         })?;
 
+        // Shift+Tab cycles rw·gov -> rw·smart -> rw·trust -> rw·gov on the mounted project badge.
+        write_master(&master_write, b"\x1b[Z")?;
+        screen.wait_for("rw·smart badge", Duration::from_secs(3), |s, _| {
+            s.contains("rw·smart")
+        })?;
+        write_master(&master_write, b"\x1b[Z")?;
+        screen.wait_for("rw·trust badge", Duration::from_secs(3), |s, _| {
+            s.contains("rw·trust")
+        })?;
+        write_master(&master_write, b"\x1b[Z")?;
+        screen.wait_for("rw·gov badge", Duration::from_secs(3), |s, _| {
+            s.contains("rw·gov")
+        })?;
+
         // Resize PTY and verify live reflow & continued input responsiveness.
         resize_pty(master_fd, 20, 50)?;
         screen.resize_parser(20, 50);
@@ -834,10 +851,14 @@ fn pty_e2e_m6_help_no_ghost_esc_dismiss_completion_shift_tab_and_login() -> Resu
             !s.contains("Shortcuts & Modals:") && !s.contains("Commands:")
         })?;
 
-        // Shift+Tab cycles trust posture auto-approve <-> governed.
+        // Shift+Tab cycles trust posture governed -> smart -> trust -> governed.
         write_master(&master_write, b"\x1b[Z")?;
-        screen.wait_for("Shift+Tab auto-approve", Duration::from_secs(3), |s, _| {
-            s.contains("auto-approve")
+        screen.wait_for("Shift+Tab smart", Duration::from_secs(3), |s, _| {
+            s.contains("Permissions: smart")
+        })?;
+        write_master(&master_write, b"\x1b[Z")?;
+        screen.wait_for("Shift+Tab trust", Duration::from_secs(3), |s, _| {
+            s.contains("Permissions: trust")
         })?;
         write_master(&master_write, b"\x1b[Z")?;
         screen.wait_for(

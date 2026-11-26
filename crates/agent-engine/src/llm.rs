@@ -73,6 +73,22 @@ impl LlmClient {
     pub fn supports_choice_evaluation(&self) -> bool {
         self.provider.supports_choice_evaluation()
     }
+    /// Whether the captured callable supports typed Decisions (`Predicate`, `Choice`, `Score`).
+    pub fn supports_decisions(&self) -> bool {
+        self.provider.supports_decisions()
+    }
+    /// Baseline decision calibration advertised by this callable, if supported.
+    pub fn decision_calibration(&self) -> Option<alan_llm::CalibrationKind> {
+        self.provider.decision_calibration()
+    }
+    /// Evaluate typed decision questions over untrusted JSON `state` without tools or prose.
+    pub async fn decide(
+        &mut self,
+        request: alan_llm::DecisionRequest,
+    ) -> Result<alan_llm::DecisionResponse> {
+        self.provider.decide(request).await
+    }
+
     /// Evaluate without converting advice to generation or Tool dispatch.
     pub async fn evaluate_choice(
         &mut self,

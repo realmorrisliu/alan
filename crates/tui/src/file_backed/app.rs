@@ -61,6 +61,7 @@ pub(super) struct FileBackedApp {
     pub(super) model: super::model::ModelProjection,
     pub(super) usage: super::usage::UsageProjection,
     pub(super) budget: super::budget::BudgetProjection,
+    pub(super) system1: super::system1::System1Projection,
     pub(super) status_diagnostics: super::status_panel::StatusDiagnostics,
     pub(super) cow_branch_count: usize,
     pub(super) ephemeral: bool,
@@ -172,6 +173,7 @@ impl FileBackedApp {
             model: super::model::ModelProjection::default(),
             usage: super::usage::UsageProjection::default(),
             budget: super::budget::BudgetProjection::default(),
+            system1: super::system1::System1Projection::default(),
             status_diagnostics: super::status_panel::StatusDiagnostics::default(),
             cow_branch_count: 0,
             ephemeral: false,
@@ -546,6 +548,8 @@ impl FileBackedApp {
             | FileBackedEvent::UsageUnavailable { .. }
             | FileBackedEvent::BudgetChanged { .. }
             | FileBackedEvent::BudgetUnavailable { .. }
+            | FileBackedEvent::System1Changed { .. }
+            | FileBackedEvent::System1Unavailable { .. }
             | FileBackedEvent::GitStatusUpdated { .. }
             | FileBackedEvent::FileIndexUpdated { .. }
             | FileBackedEvent::RequestsChanged

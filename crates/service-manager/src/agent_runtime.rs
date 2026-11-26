@@ -401,6 +401,9 @@ impl AgentRuntimeService {
         } else {
             None
         };
+        let effective_core = alan_agent_engine::runtime::effective_core_config_for_runtime(
+            &launch.template.process,
+        )?;
         let mut environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
             root.clone(),
             format!("/agent/{}", pid.0),
@@ -446,10 +449,8 @@ impl AgentRuntimeService {
                 profile: launch.template.llm_connection.clone(),
                 namespace: launch.namespace.clone(),
                 evaluator: evaluator.clone(),
-                guardian_profile: alan_agent_engine::runtime::effective_core_config_for_runtime(
-                    &launch.template.process,
-                )?
-                .guardian_profile,
+                guardian_profile: effective_core.guardian_profile,
+                smart_evaluator_profile: effective_core.smart_evaluator_profile,
                 allow_profile_switch: launch.is_primary_root
                     && launch.template.allow_profile_switch,
                 selected_profile: std::sync::Mutex::new(None),

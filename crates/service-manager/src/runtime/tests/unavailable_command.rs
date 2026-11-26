@@ -326,6 +326,7 @@ async fn unconfigured_boot_reports_none_root_model_and_publishes_no_fake_fallbac
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        smart_evaluator_profile: None,
         allow_profile_switch: false,
         selected_profile: std::sync::Mutex::new(None),
     };

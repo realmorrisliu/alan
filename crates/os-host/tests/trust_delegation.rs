@@ -185,6 +185,18 @@ fn host_boot_config_records_explicit_invocation_trust_postures_without_mutating_
     assert!(!governed.trust_posture().bypasses_action_approvals());
     assert_eq!(governed.trust_posture().tui_badge_label(), None);
 
+    let smart = HostBootConfig::ephemeral(
+        AgentProcessConfig::default(),
+        LlmClient::new(MockLlmProvider::new()),
+        ToolRegistry::new(),
+    )
+    .with_trust_posture(TrustPosture::ConfinedSmart);
+    assert_eq!(smart.trust_posture(), TrustPosture::ConfinedSmart);
+    assert!(smart.trust_posture().uses_os_sandbox());
+    assert!(!smart.trust_posture().bypasses_action_approvals());
+    assert!(smart.trust_posture().offers_tamperproof_confinement());
+    assert_eq!(smart.trust_posture().tui_badge_label(), Some("smart"));
+
     let confined = HostBootConfig::ephemeral(
         AgentProcessConfig::default(),
         LlmClient::new(MockLlmProvider::new()),
@@ -195,10 +207,7 @@ fn host_boot_config_records_explicit_invocation_trust_postures_without_mutating_
     assert!(confined.trust_posture().uses_os_sandbox());
     assert!(confined.trust_posture().bypasses_action_approvals());
     assert!(confined.trust_posture().offers_tamperproof_confinement());
-    assert_eq!(
-        confined.trust_posture().tui_badge_label(),
-        Some("auto-approve")
-    );
+    assert_eq!(confined.trust_posture().tui_badge_label(), Some("trust"));
 
     let host_account = HostBootConfig::ephemeral(
         AgentProcessConfig::default(),

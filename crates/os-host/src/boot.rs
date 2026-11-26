@@ -401,6 +401,20 @@ impl HostBootConfig {
         Ok(self)
     }
 
+    /// Configure a dedicated Connection profile for Smart Approval (`--smart`) evaluation.
+    pub fn with_smart_evaluator_profile(mut self, profile: impl Into<String>) -> Result<Self> {
+        let profile = profile.into();
+        anyhow::ensure!(
+            !profile.trim().is_empty(),
+            "smart evaluator profile must not be empty"
+        );
+        self.service_manager
+            .process
+            .agent_config
+            .set_smart_evaluator_profile_override(Some(profile));
+        Ok(self)
+    }
+
     /// Explicitly restore a specific Root Agent rollout id (`--resume <id>`).
     pub fn with_root_resume_id(mut self, rollout_id: Option<String>) -> Self {
         self.service_manager = self.service_manager.with_resume_rollout_id(rollout_id);

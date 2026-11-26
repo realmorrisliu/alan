@@ -13,8 +13,19 @@ use crate::theme::Theme;
 
 #[test]
 fn trust_posture_badges_render_distinctly_in_context_line_and_welcome_banner() {
+    let mut smart = FileBackedApp::new("/agent/root".to_string());
+    smart.trust_posture_label = Some("smart".to_string());
+    smart.set_effective_model(Some("gpt-5.4".to_string()));
+    let smart_text: String = smart
+        .context_line(80)
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(smart_text.contains("smart"), "{smart_text}");
+
     let mut confined = FileBackedApp::new("/agent/root".to_string());
-    confined.trust_posture_label = Some("auto-approve".to_string());
+    confined.trust_posture_label = Some("trust".to_string());
     confined.set_effective_model(Some("gpt-5.4".to_string()));
     let confined_line = confined.context_line(80);
     let confined_text: String = confined_line
@@ -22,16 +33,13 @@ fn trust_posture_badges_render_distinctly_in_context_line_and_welcome_banner() {
         .iter()
         .map(|s| s.content.as_ref())
         .collect();
-    assert!(confined_text.contains("auto-approve"), "{confined_text}");
+    assert!(confined_text.contains("trust"), "{confined_text}");
     let confined_banner = render_banner_lines(&from_app(&confined), 80, Theme::midnight())
         .into_iter()
         .map(|l| l.to_string())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(
-        confined_banner.contains("auto-approve"),
-        "{confined_banner}"
-    );
+    assert!(confined_banner.contains("trust"), "{confined_banner}");
 
     let mut unsafe_app = FileBackedApp::new("/agent/root".to_string());
     unsafe_app.trust_posture_label = Some("unsandboxed".to_string());

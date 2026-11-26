@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::{DotState, Theme};
 
-use super::app::presentation::is_unsandboxed_posture;
+use super::app::presentation::{TuiTrustPosture, classify_trust_posture};
 use super::{FileBackedApp, ProjectAccess, UiActivityState};
 
 fn truncate_for_theme(value: &str, max_width: usize, is_dumb: bool) -> String {
@@ -109,7 +109,7 @@ pub(in crate::file_backed) fn status_bar_lines(
 }
 
 /// Row 1 (always visible):
-/// Left:  `● <project_or_focus>  <git_branch[*]>  <rw|ro>·<gov|trust>` (or bold red `! unsandboxed`)
+/// Left:  `● <project_or_focus>  <git_branch[*]>  <rw|ro>·<gov|smart|trust>` (or bold red `! unsandboxed`)
 /// Right: `<profile/>model · <effort>`
 pub(in crate::file_backed) fn row1_line(app: &FileBackedApp, width: usize) -> Line<'static> {
     if width == 0 {
@@ -209,7 +209,7 @@ pub(in crate::file_backed) fn row1_line(app: &FileBackedApp, width: usize) -> Li
     if left_width_for(&location, include_git, include_posture) + 2 + right_text.width() > width {
         include_git = false;
     }
-    // 4. Drop non-urgent rw·gov/trust badge (NEVER drop bold red ! unsandboxed here)
+    // 4. Drop non-urgent rw·gov/smart/trust badge (NEVER drop bold red ! unsandboxed here)
     if !urgent_unsandboxed
         && left_width_for(&location, include_git, include_posture) + 2 + right_text.width() > width
     {
@@ -570,9 +570,14 @@ fn row1_posture_segments(app: &FileBackedApp, theme: Theme, mid_dot: &str) -> (V
         ProjectAccess::ReadOnly => "ro",
     });
 
-    if let Some(raw) = app.trust_posture_label.as_deref() {
-        let safe = super::model::safe(raw);
-        if !safe.is_empty() && is_unsandboxed_posture(&safe) {
+    let safe_label = app
+        .trust_posture_label
+        .as_deref()
+        .map(super::model::safe)
+        .filter(|s| !s.is_empty());
+
+    match classify_trust_posture(safe_label.as_deref()) {
+        TuiTrustPosture::Unsandboxed => {
             let mut segs = Vec::new();
             if let Some(acc) = access_short {
                 segs.push(Segment::new(format!("{acc} "), theme.muted_style()));
@@ -581,10 +586,9 @@ fn row1_posture_segments(app: &FileBackedApp, theme: Theme, mid_dot: &str) -> (V
                 "! unsandboxed",
                 theme.bold_if_capable(theme.block_style()),
             ));
-            return (segs, true);
+            (segs, true)
         }
-        if !safe.is_empty() {
-            // Confined trusted posture (`auto-approve` / `trusted`).
+        TuiTrustPosture::Trust => {
             let trust_style = theme.run_style();
             let segs = match access_short {
                 Some(acc) => vec![
@@ -593,18 +597,30 @@ fn row1_posture_segments(app: &FileBackedApp, theme: Theme, mid_dot: &str) -> (V
                 ],
                 None => vec![Segment::new("trust", trust_style)],
             };
-            return (segs, false);
+            (segs, false)
+        }
+        TuiTrustPosture::Smart => {
+            let smart_style = theme.accent_style();
+            let segs = match access_short {
+                Some(acc) => vec![
+                    Segment::new(format!("{acc}{mid_dot}"), theme.muted_style()),
+                    Segment::new("smart", smart_style),
+                ],
+                None => vec![Segment::new("smart", smart_style)],
+            };
+            (segs, false)
+        }
+        TuiTrustPosture::Governed => {
+            let segs = match access_short {
+                Some(acc) => vec![Segment::new(
+                    format!("{acc}{mid_dot}gov"),
+                    theme.muted_style(),
+                )],
+                None => vec![Segment::new("gov", theme.muted_style())],
+            };
+            (segs, false)
         }
     }
-
-    let segs = match access_short {
-        Some(acc) => vec![Segment::new(
-            format!("{acc}{mid_dot}gov"),
-            theme.muted_style(),
-        )],
-        None => vec![Segment::new("gov", theme.muted_style())],
-    };
-    (segs, false)
 }
 
 fn row1_model_variants(

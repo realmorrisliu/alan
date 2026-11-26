@@ -146,8 +146,18 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
     assert!(matches!(reset.op, Op::ResetSession));
 
     for (verb, expected) in [
-        ("trust-posture governed", false),
-        ("trust-posture confined-trusted", true),
+        (
+            "trust-posture governed",
+            alan_agent_protocol::ConfinedTrustPosture::Governed,
+        ),
+        (
+            "trust-posture confined-smart",
+            alan_agent_protocol::ConfinedTrustPosture::ConfinedSmart,
+        ),
+        (
+            "trust-posture confined-trusted",
+            alan_agent_protocol::ConfinedTrustPosture::ConfinedTrusted,
+        ),
     ] {
         shell
             .write("/agent/1/machine/ctl", verb.as_bytes())
@@ -160,24 +170,47 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
             .expect("trust-posture verb should produce a submission");
         assert!(matches!(
             posture.op,
-            Op::SetTrustPosture { confined_trusted } if confined_trusted == expected
+            Op::SetTrustPosture {
+                posture: parsed,
+                confined_trusted,
+            } if alan_agent_protocol::ConfinedTrustPosture::resolve(parsed, confined_trusted)
+                == expected
         ));
     }
 
-    shell
-        .write(
-            "/agent/1/machine/ctl",
-            b"trust-posture host-account-trusted",
-        )
-        .await
-        .unwrap();
-    assert!(
-        agent_files
-            .read_next_runtime_submission()
+    for forged in [
+        "trust-posture host-account-trusted",
+        "trust-posture smart",
+        "trust-posture trust",
+        "trust-posture auto-approve",
+        "trust-posture unsandboxed",
+    ] {
+        shell
+            .write("/agent/1/machine/ctl", forged.as_bytes())
             .await
-            .unwrap()
-            .is_none(),
-        "unsupported trust-posture value must not parse into a submission"
+            .unwrap();
+        assert!(
+            agent_files
+                .read_next_runtime_submission()
+                .await
+                .unwrap()
+                .is_none(),
+            "unsupported trust-posture value `{forged}` must not parse into a submission"
+        );
+    }
+
+    assert_eq!(
+        environment
+            .tool_authorization()
+            .posture_authority_revision(),
+        0
+    );
+    assert_eq!(environment.bump_posture_authority_revision(), 1);
+    assert_eq!(
+        environment
+            .tool_authorization()
+            .posture_authority_revision(),
+        1
     );
 }
 

@@ -683,3 +683,84 @@ async fn guardian_aggregate_timeout_expires_cleanly_without_auto_allow() {
         assert_eq!(main_calls.load(Ordering::SeqCst), 0);
     }
 }
+
+#[tokio::test]
+async fn confined_smart_tracks_posture_authority_revision_and_fails_closed_when_decision_fails() {
+    let rev = Arc::new(AtomicU64::new(1));
+    let main_calls = Arc::new(AtomicUsize::new(0));
+    let (env, mut machine) = setup_env(
+        MockReviewProvider {
+            calls: main_calls.clone(),
+            response: Err("provider error".into()),
+            delay_ms: 0,
+            bump_revision: None,
+            require_no_tools: true,
+        },
+        None,
+        rev,
+    )
+    .await;
+
+    let policy = PolicyEngine::autonomous();
+    let governance = GovernanceConfig {
+        profile: GovernanceProfile::Autonomous,
+        policy_path: None,
+    };
+    let cancel = CancellationToken::new();
+    let args = json!({"command": "cargo test"});
+    let call = NormalizedToolCall {
+        id: "call_smart_wire_1".into(),
+        name: "bash".into(),
+        arguments: args.clone(),
+    };
+    let mut emit = |_event: Event| async {};
+
+    let runtime = ToolAuthorizationRuntime::new(
+        &mut machine,
+        &policy,
+        &governance,
+        env.generation(),
+        env.agent_files(),
+        30,
+    )
+    .with_trust_posture(crate::policy::TrustPosture::ConfinedSmart)
+    .with_authority(env.tool_authorization());
+
+    let pre = AuthoritySnapshot::capture(&runtime);
+    assert_eq!(pre.posture_authority_revision, Some(0));
+    env.bump_posture_authority_revision();
+    let post = AuthoritySnapshot::capture(&runtime);
+    assert_eq!(post.posture_authority_revision, Some(1));
+    assert_ne!(pre, post);
+
+    let outcome = authorize_tool_call(
+        runtime,
+        ToolAuthorizationRequest {
+            explicit_command: false,
+            tool_call: &call,
+            tool_arguments: &args,
+            tool_capability: ToolCapability::Unknown,
+            current_tool_cwd: None,
+            allow_approved_tool_escalation_execution: false,
+            cancel: &cancel,
+        },
+        &mut emit,
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(outcome, ToolAuthorizationOutcome::PauseTurn));
+    let pending = machine
+        .pending_confirmation()
+        .expect("failed-closed smart review must pause for human confirmation");
+    assert_eq!(
+        pending.details["escalation_correlation"]["posture_authority_revision"],
+        json!(1)
+    );
+    if cfg!(target_os = "macos") {
+        assert_eq!(
+            pending.details["smart_approval"]["outcome"],
+            "fail_closed_human"
+        );
+    }
+}

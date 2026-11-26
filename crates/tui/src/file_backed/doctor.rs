@@ -137,7 +137,7 @@ mod tests {
             label: "utopia".to_string(),
             access: ProjectAccess::ReadWrite,
         });
-        app.trust_posture_label = Some("auto-approve".to_string());
+        app.trust_posture_label = Some("trust".to_string());
         app.sandbox_backend = Some("seatbelt".to_string());
         app.model.apply(
             "/agent/42",
@@ -205,7 +205,7 @@ mod tests {
         );
         assert!(rendered.contains("openai-main / gpt-5.4"), "{rendered}");
         assert!(rendered.contains("available"), "{rendered}");
-        assert!(rendered.contains("auto-approve"), "{rendered}");
+        assert!(rendered.contains("trust"), "{rendered}");
         assert!(rendered.contains("seatbelt"), "{rendered}");
         assert!(rendered.contains("ctx 9%"), "{rendered}");
         assert!(rendered.contains("idle"), "{rendered}");

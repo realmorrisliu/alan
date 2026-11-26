@@ -7,17 +7,18 @@ use crate::{
 
 /// Explicit inputs for one Tool policy and approval transition.
 pub(crate) struct ToolAuthorizationRuntime<'a> {
-    pub(super) machine: &'a mut AgentMachine,
-    pub(super) policy_engine: &'a PolicyEngine,
-    pub(super) governance: &'a alan_agent_protocol::GovernanceConfig,
-    pub(super) generation: NamespaceGeneration,
-    pub(super) agent_files: NamespaceAgentFiles,
-    pub(super) llm_request_timeout_secs: u64,
-    pub(super) trust_posture: TrustPosture,
-    pub(super) guardian_profile: Option<&'a str>,
-    pub(super) guardian_config: GuardianConfig,
-    pub(super) authority: Option<NamespaceToolAuthorization>,
-    pub(super) tool_policy_hook: Option<std::sync::Arc<dyn crate::runtime::ToolPolicyHook>>,
+    pub(crate) machine: &'a mut AgentMachine,
+    pub(crate) policy_engine: &'a PolicyEngine,
+    pub(crate) governance: &'a alan_agent_protocol::GovernanceConfig,
+    pub(crate) generation: NamespaceGeneration,
+    pub(crate) agent_files: NamespaceAgentFiles,
+    pub(crate) llm_request_timeout_secs: u64,
+    pub(crate) trust_posture: TrustPosture,
+    pub(crate) guardian_profile: Option<&'a str>,
+    pub(crate) smart_evaluator_profile: Option<&'a str>,
+    pub(crate) guardian_config: GuardianConfig,
+    pub(crate) authority: Option<NamespaceToolAuthorization>,
+    pub(crate) tool_policy_hook: Option<std::sync::Arc<dyn crate::runtime::ToolPolicyHook>>,
 }
 
 impl<'a> ToolAuthorizationRuntime<'a> {
@@ -38,6 +39,7 @@ impl<'a> ToolAuthorizationRuntime<'a> {
             llm_request_timeout_secs,
             trust_posture: TrustPosture::Governed,
             guardian_profile: None,
+            smart_evaluator_profile: None,
             guardian_config: GuardianConfig::default(),
             authority: None,
             tool_policy_hook: None,
@@ -51,6 +53,14 @@ impl<'a> ToolAuthorizationRuntime<'a> {
 
     pub(crate) fn with_guardian_profile(mut self, guardian_profile: Option<&'a str>) -> Self {
         self.guardian_profile = guardian_profile;
+        self
+    }
+
+    pub(crate) fn with_smart_evaluator_profile(
+        mut self,
+        smart_evaluator_profile: Option<&'a str>,
+    ) -> Self {
+        self.smart_evaluator_profile = smart_evaluator_profile;
         self
     }
 

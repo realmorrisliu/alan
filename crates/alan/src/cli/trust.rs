@@ -14,6 +14,9 @@ use clap::Args;
 /// Bare `alan` flags governing invocation trust posture, Guardian profile, grants, and packages.
 #[derive(Args, Debug, Clone, Default)]
 pub struct BareTrustArgs {
+    /// Keep the OS sandbox active with adaptive smart action review.
+    #[arg(long)]
+    pub smart: bool,
     /// Bypass per-action policy and Guardian prompts while keeping the OS sandbox active.
     #[arg(long)]
     pub trust: bool,
@@ -23,6 +26,9 @@ pub struct BareTrustArgs {
     /// Dedicated Connection profile for Guardian escalation reviews.
     #[arg(long, value_name = "PROFILE", value_parser = clap::builder::NonEmptyStringValueParser::new())]
     pub guardian_profile: Option<String>,
+    /// Dedicated Connection profile for Smart Approval (`--smart`) System 1 evaluation.
+    #[arg(long = "smart-profile", value_name = "PROFILE", value_parser = clap::builder::NonEmptyStringValueParser::new())]
+    pub smart_profile: Option<String>,
     /// Explicitly activate saved System Store Host Mount grants by id.
     #[arg(long = "grant", value_name = "GRANT_ID", value_parser = clap::builder::NonEmptyStringValueParser::new())]
     pub grants: Vec<String>,
@@ -39,6 +45,7 @@ pub struct BareTrustArgs {
 pub struct ResolvedBareTrustOptions {
     pub posture: TrustPosture,
     pub guardian_profile: Option<String>,
+    pub smart_profile: Option<String>,
     pub grants: Vec<String>,
     pub explicit_packages: Vec<RootPackageBinding>,
 }
@@ -130,12 +137,16 @@ pub fn parse_resume_arg(raw: Option<&str>, has_subcommand: bool) -> Result<(bool
     }
 }
 
-/// Validate `--trust`, `--unsafe-host-account`, `--guardian-profile`, `--grant`,
+/// Validate `--smart`, `--trust`, `--unsafe-host-account`, `--guardian-profile`, `--grant`,
 /// `--package`, and `--fileserver`.
 pub fn resolve_bare_trust_options(
     args: &BareTrustArgs,
     has_subcommand: bool,
 ) -> Result<ResolvedBareTrustOptions> {
+    anyhow::ensure!(
+        !args.smart || !has_subcommand,
+        "`--smart` only applies to bare `alan`"
+    );
     anyhow::ensure!(
         !args.trust || !has_subcommand,
         "`--trust` only applies to bare `alan`"
@@ -147,6 +158,10 @@ pub fn resolve_bare_trust_options(
     anyhow::ensure!(
         args.guardian_profile.is_none() || !has_subcommand,
         "`--guardian-profile` only applies to bare `alan`"
+    );
+    anyhow::ensure!(
+        args.smart_profile.is_none() || !has_subcommand,
+        "`--smart-profile` only applies to bare `alan`"
     );
     anyhow::ensure!(
         args.grants.is_empty() || !has_subcommand,
@@ -161,7 +176,7 @@ pub fn resolve_bare_trust_options(
         "`--fileserver` only applies to bare `alan`"
     );
 
-    let posture = TrustPosture::from_cli_flags(args.trust, args.unsafe_host_account)?;
+    let posture = TrustPosture::from_cli_posture(args.smart, args.trust, args.unsafe_host_account)?;
     let mut explicit_packages = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     let now = chrono::Utc::now();
@@ -193,6 +208,7 @@ pub fn resolve_bare_trust_options(
     Ok(ResolvedBareTrustOptions {
         posture,
         guardian_profile: args.guardian_profile.clone(),
+        smart_profile: args.smart_profile.clone(),
         grants: args.grants.clone(),
         explicit_packages,
     })
@@ -227,6 +243,9 @@ pub fn apply_boot_trust_options(
     }
     if let Some(guardian_profile) = options.guardian_profile {
         config = config.with_guardian_profile(guardian_profile)?;
+    }
+    if let Some(smart_profile) = options.smart_profile {
+        config = config.with_smart_evaluator_profile(smart_profile)?;
     }
     if !options.grants.is_empty() {
         config = config.with_saved_grants(options.grants);
@@ -286,5 +305,30 @@ mod tests {
             ..Default::default()
         };
         assert!(resolve_bare_trust_options(&dup, false).is_err());
+    }
+
+    #[test]
+    fn resolve_bare_trust_options_handles_smart_and_rejects_conflicts_and_subcommands() {
+        let smart = BareTrustArgs {
+            smart: true,
+            ..Default::default()
+        };
+        let resolved = resolve_bare_trust_options(&smart, false).unwrap();
+        assert_eq!(resolved.posture, TrustPosture::ConfinedSmart);
+        assert!(resolve_bare_trust_options(&smart, true).is_err());
+
+        let smart_and_trust = BareTrustArgs {
+            smart: true,
+            trust: true,
+            ..Default::default()
+        };
+        assert!(resolve_bare_trust_options(&smart_and_trust, false).is_err());
+
+        let smart_and_unsafe = BareTrustArgs {
+            smart: true,
+            unsafe_host_account: true,
+            ..Default::default()
+        };
+        assert!(resolve_bare_trust_options(&smart_and_unsafe, false).is_err());
     }
 }

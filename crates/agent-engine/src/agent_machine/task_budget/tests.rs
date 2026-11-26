@@ -387,6 +387,7 @@ fn config_and_recovery_reject_zero_overflow_or_invalid_evidence() {
         phase: Phase::Paused,
         foreground_complete: false,
         recovered_time_upper_bound: false,
+        auto_extensions_used: 0,
     };
     assert!(TaskBudget::restore(snapshot.clone(), None).is_err());
     let mut overflow = snapshot;

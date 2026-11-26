@@ -1,5 +1,8 @@
 //! Task budget setup, visible pause and explicit allowance extension.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use alan_agent_protocol::{Event, UiBudgetSnapshot, YieldKind};
 use anyhow::{Context, Result};
 
@@ -12,6 +15,9 @@ use super::transition::{NamespaceAgentFiles, RuntimeLoopState};
 use crate::agent_machine::PendingToolReplayBatch;
 use crate::agent_machine::task_budget::waiting::{WAIT_EVENT, Wait};
 use crate::rollout::{EventRecord, RolloutItem};
+
+mod auto_extend;
+pub(crate) use auto_extend::{MAX_SMART_AUTO_EXTENSIONS, try_auto_extend};
 
 mod inherited;
 pub(crate) use inherited::pause_inherited;
@@ -155,12 +161,7 @@ pub(crate) async fn begin(state: &mut RuntimeLoopState) -> Result<()> {
     if let Some(budget) = &mut state.machine.task_budget {
         state.environment.task_budget_binding.bind(budget).await?;
     }
-    publish(
-        &state.agent_files(),
-        state.machine.task_budget.as_ref(),
-        &state.core_config.task_budget,
-    )
-    .await;
+    publish_state(state).await;
     Ok(())
 }
 
@@ -172,17 +173,13 @@ pub(crate) async fn settle_foreground(state: &RuntimeLoopState) -> Result<()> {
             budget.finish_foreground().await?;
         }
     }
-    publish(
-        &state.agent_files(),
-        state.machine.task_budget.as_ref(),
-        &state.core_config.task_budget,
-    )
-    .await;
+    publish_state(state).await;
     Ok(())
 }
 
 pub(crate) fn to_ui_snapshot(
     snapshot: &crate::agent_machine::task_budget::Snapshot,
+    smart_auto_extensions_enabled: bool,
 ) -> UiBudgetSnapshot {
     UiBudgetSnapshot {
         version: alan_agent_protocol::UI_SURFACE_VERSION,
@@ -192,12 +189,16 @@ pub(crate) fn to_ui_snapshot(
         max_tool_calls: snapshot.limits.tool_calls.get(),
         model_calls: snapshot.model_calls,
         max_model_calls: snapshot.limits.model_calls.get(),
-        auto_extensions_used: None,
-        max_auto_extensions: None,
+        auto_extensions_used: smart_auto_extensions_enabled
+            .then_some(snapshot.auto_extensions_used),
+        max_auto_extensions: smart_auto_extensions_enabled.then_some(MAX_SMART_AUTO_EXTENSIONS),
     }
 }
 
-pub(crate) fn default_ui_snapshot(limits: &crate::TaskBudgetLimits) -> UiBudgetSnapshot {
+pub(crate) fn default_ui_snapshot(
+    limits: &crate::TaskBudgetLimits,
+    smart_auto_extensions_enabled: bool,
+) -> UiBudgetSnapshot {
     UiBudgetSnapshot {
         version: alan_agent_protocol::UI_SURFACE_VERSION,
         elapsed_secs: 0,
@@ -206,8 +207,8 @@ pub(crate) fn default_ui_snapshot(limits: &crate::TaskBudgetLimits) -> UiBudgetS
         max_tool_calls: limits.tool_calls.get(),
         model_calls: 0,
         max_model_calls: limits.model_calls.get(),
-        auto_extensions_used: None,
-        max_auto_extensions: None,
+        auto_extensions_used: smart_auto_extensions_enabled.then_some(0),
+        max_auto_extensions: smart_auto_extensions_enabled.then_some(MAX_SMART_AUTO_EXTENSIONS),
     }
 }
 
@@ -216,10 +217,11 @@ pub(crate) async fn publish(
     files: &NamespaceAgentFiles,
     budget: Option<&TaskBudget>,
     limits: &crate::TaskBudgetLimits,
+    smart_auto_extensions_enabled: bool,
 ) {
     let snapshot = match budget {
-        Some(budget) => to_ui_snapshot(&budget.snapshot().await),
-        None => default_ui_snapshot(limits),
+        Some(budget) => to_ui_snapshot(&budget.snapshot().await, smart_auto_extensions_enabled),
+        None => default_ui_snapshot(limits, smart_auto_extensions_enabled),
     };
     if let Err(error) = files.write_ui_budget_snapshot(&snapshot).await {
         tracing::warn!(error = %error, "Failed to publish budget snapshot");
@@ -227,21 +229,28 @@ pub(crate) async fn publish(
 }
 
 /// Advisory publication of the live task budget snapshot when an active budget exists.
-pub(crate) async fn publish_active(files: &NamespaceAgentFiles, budget: Option<&TaskBudget>) {
+pub(crate) async fn publish_active(
+    files: &NamespaceAgentFiles,
+    budget: Option<&TaskBudget>,
+    smart_auto_extensions_enabled: bool,
+) {
     let Some(budget) = budget else {
         return;
     };
-    let snapshot = to_ui_snapshot(&budget.snapshot().await);
+    let snapshot = to_ui_snapshot(&budget.snapshot().await, smart_auto_extensions_enabled);
     if let Err(error) = files.write_ui_budget_snapshot(&snapshot).await {
         tracing::warn!(error = %error, "Failed to publish budget snapshot");
     }
 }
 
 pub(crate) async fn publish_state(state: &RuntimeLoopState) {
+    let smart_enabled =
+        state.runtime_config.trust_posture == crate::policy::TrustPosture::ConfinedSmart;
     publish(
         &state.agent_files(),
         state.machine.task_budget.as_ref(),
         &state.core_config.task_budget,
+        smart_enabled,
     )
     .await;
 }
@@ -251,6 +260,7 @@ pub(crate) struct BudgetObserver {
     files: NamespaceAgentFiles,
     binding: TaskBudgetBinding,
     limits: crate::TaskBudgetLimits,
+    smart_auto_extensions_enabled: Arc<AtomicBool>,
     last: Option<UiBudgetSnapshot>,
 }
 
@@ -260,14 +270,16 @@ impl BudgetObserver {
             files: state.agent_files(),
             binding: state.environment.task_budget_binding.clone(),
             limits: state.core_config.task_budget.clone(),
+            smart_auto_extensions_enabled: state.environment.smart_auto_extensions_enabled(),
             last: None,
         }
     }
 
     pub(crate) async fn observe(&mut self) {
+        let smart_enabled = self.smart_auto_extensions_enabled.load(Ordering::Acquire);
         let snapshot = match self.binding.current() {
-            Some(budget) => to_ui_snapshot(&budget.snapshot().await),
-            None => default_ui_snapshot(&self.limits),
+            Some(budget) => to_ui_snapshot(&budget.snapshot().await, smart_enabled),
+            None => default_ui_snapshot(&self.limits, smart_enabled),
         };
         if self.last.as_ref() == Some(&snapshot) {
             return;
@@ -278,6 +290,53 @@ impl BudgetObserver {
             self.last = Some(snapshot);
         }
     }
+}
+
+pub(crate) async fn handle_tool_batch_exhaustion<E, F>(
+    state: &mut RuntimeLoopState,
+    exhausted: &Exhausted,
+    calls: &[crate::agent_machine::NormalizedToolCall],
+    resume_with_generation: bool,
+    cancel: &tokio_util::sync::CancellationToken,
+    emit: &mut E,
+) -> Result<Option<crate::runtime::tool_batch::ToolBatchOrchestratorOutcome>>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    if state.machine.task_budget_wait.is_some() {
+        return Ok(Some(
+            crate::runtime::tool_batch::ToolBatchOrchestratorOutcome::PauseTurn,
+        ));
+    }
+    let tool_calls = calls
+        .iter()
+        .filter(|call| state.machine.tool_payload_by_call_id(&call.id).is_none())
+        .cloned()
+        .collect::<Vec<_>>();
+    if tool_calls.is_empty() && !resume_with_generation {
+        return Ok(Some(
+            crate::runtime::tool_batch::ToolBatchOrchestratorOutcome::EndTurn {
+                surfaces_refreshed: false,
+            },
+        ));
+    }
+    if resume_with_generation && try_auto_extend(state, exhausted, cancel, emit).await? {
+        return Ok(None);
+    }
+    pause(
+        state,
+        exhausted,
+        Some(PendingToolReplayBatch {
+            tool_calls,
+            resume_with_generation,
+        }),
+        emit,
+    )
+    .await?;
+    Ok(Some(
+        crate::runtime::tool_batch::ToolBatchOrchestratorOutcome::PauseTurn,
+    ))
 }
 
 pub(crate) async fn pause_tool_batch<E, F>(
@@ -320,6 +379,39 @@ where
     Ok(true)
 }
 
+pub(super) fn compute_extension(
+    state: &RuntimeLoopState,
+    snapshot: &crate::agent_machine::task_budget::Snapshot,
+    exhausted: &Exhausted,
+) -> Result<Extension> {
+    let limits = &state.core_config.task_budget;
+    let owner = state
+        .machine
+        .owner_work
+        .as_ref()
+        .filter(|work| work.outcome == crate::agent_machine::owner_work::Outcome::BudgetPaused);
+    let mut additional = extension(snapshot, limits, owner)?;
+    if additional == Extension::default() {
+        // The stop has no allowance left for what it must do; an empty proposal
+        // could not describe it and would leave the operator nothing to answer.
+        additional = match exhausted.dimension {
+            crate::agent_machine::task_budget::Dimension::ModelCalls => Extension {
+                model_calls: limits.model_calls.get(),
+                ..Extension::default()
+            },
+            crate::agent_machine::task_budget::Dimension::ToolCalls => Extension {
+                tool_calls: limits.tool_calls.get(),
+                ..Extension::default()
+            },
+            crate::agent_machine::task_budget::Dimension::Time => Extension {
+                execution_seconds: limits.execution_seconds.get(),
+                ..Extension::default()
+            },
+        };
+    }
+    Ok(additional)
+}
+
 pub(crate) async fn pause<E, F>(
     state: &mut RuntimeLoopState,
     exhausted: &Exhausted,
@@ -341,31 +433,7 @@ where
         .context("missing task budget")?;
     budget.settle(false).await?;
     let snapshot = budget.snapshot().await;
-    let limits = &state.core_config.task_budget;
-    let owner = state
-        .machine
-        .owner_work
-        .as_ref()
-        .filter(|work| work.outcome == crate::agent_machine::owner_work::Outcome::BudgetPaused);
-    let mut additional = extension(&snapshot, limits, owner)?;
-    if additional == Extension::default() {
-        // The stop has no allowance left for what it must do; an empty proposal
-        // could not describe it and would leave the operator nothing to answer.
-        additional = match exhausted.dimension {
-            crate::agent_machine::task_budget::Dimension::ModelCalls => Extension {
-                model_calls: limits.model_calls.get(),
-                ..Extension::default()
-            },
-            crate::agent_machine::task_budget::Dimension::ToolCalls => Extension {
-                tool_calls: limits.tool_calls.get(),
-                ..Extension::default()
-            },
-            crate::agent_machine::task_budget::Dimension::Time => Extension {
-                execution_seconds: limits.execution_seconds.get(),
-                ..Extension::default()
-            },
-        };
-    }
+    let additional = compute_extension(state, &snapshot, exhausted)?;
     let summary = confirmation_summary(
         &format!("Task budget reached: {}", exhausted.dimension),
         &snapshot,
@@ -554,12 +622,7 @@ pub(super) async fn register_wait(
         .machine
         .set_turn_activity(crate::agent_machine::TurnActivityState::Paused);
     super::ui_surfaces::paused(&state.agent_files(), Some(&state.machine)).await?;
-    publish(
-        &state.agent_files(),
-        state.machine.task_budget.as_ref(),
-        &state.core_config.task_budget,
-    )
-    .await;
+    publish_state(state).await;
     Ok(id)
 }
 
@@ -630,13 +693,22 @@ mod ui_budget_tests {
             tool_calls: NonZeroU64::new(256).unwrap(),
             model_calls: NonZeroU64::new(64).unwrap(),
         };
-        let default_snap = default_ui_snapshot(&limits);
+        let default_snap = default_ui_snapshot(&limits, false);
         assert!(default_snap.is_valid());
         assert!(default_snap.has_limits());
         assert_eq!(default_snap.elapsed_secs, 0);
         assert_eq!(default_snap.max_secs, 1800);
         assert_eq!(default_snap.max_tool_calls, 256);
         assert_eq!(default_snap.max_model_calls, 64);
+        assert_eq!(default_snap.auto_extensions_used, None);
+        assert_eq!(default_snap.max_auto_extensions, None);
+
+        let default_smart = default_ui_snapshot(&limits, true);
+        assert_eq!(default_smart.auto_extensions_used, Some(0));
+        assert_eq!(
+            default_smart.max_auto_extensions,
+            Some(MAX_SMART_AUTO_EXTENSIONS)
+        );
 
         let active = crate::agent_machine::task_budget::Snapshot {
             version: 1,
@@ -647,17 +719,27 @@ mod ui_budget_tests {
             elapsed_millis: 1_080_500,
             tool_calls: 84,
             model_calls: 43,
+            auto_extensions_used: 1,
             phase: Phase::Running,
             foreground_complete: false,
             recovered_time_upper_bound: false,
         };
-        let ui = to_ui_snapshot(&active);
+        let ui = to_ui_snapshot(&active, false);
         assert_eq!(ui.elapsed_secs, 1080);
         assert_eq!(ui.tool_calls, 84);
         assert_eq!(ui.model_calls, 43);
         assert_eq!(ui.max_secs, 1800);
         assert_eq!(ui.max_tool_calls, 256);
         assert_eq!(ui.max_model_calls, 64);
+        assert_eq!(ui.auto_extensions_used, None);
+        assert_eq!(ui.max_auto_extensions, None);
+
+        let ui_smart = to_ui_snapshot(&active, true);
+        assert_eq!(ui_smart.auto_extensions_used, Some(1));
+        assert_eq!(
+            ui_smart.max_auto_extensions,
+            Some(MAX_SMART_AUTO_EXTENSIONS)
+        );
     }
 
     #[tokio::test]
@@ -707,13 +789,14 @@ mod ui_budget_tests {
             tool_calls: 3,
             model_calls: 1,
             elapsed_millis: 45_000,
+            auto_extensions_used: 0,
             phase: Phase::Paused,
             foreground_complete: false,
             recovered_time_upper_bound: false,
         };
         let budget = TaskBudget::restore(snapshot, None).unwrap();
 
-        publish(&files, Some(&budget), &limits).await;
+        publish(&files, Some(&budget), &limits, true).await;
 
         let raw = shell
             .cat(&format!("{owner}/machine/ui/budget"))
@@ -727,5 +810,7 @@ mod ui_budget_tests {
         assert_eq!(parsed.max_tool_calls, 120);
         assert_eq!(parsed.model_calls, 1);
         assert_eq!(parsed.max_model_calls, 30);
+        assert_eq!(parsed.auto_extensions_used, Some(0));
+        assert_eq!(parsed.max_auto_extensions, Some(MAX_SMART_AUTO_EXTENSIONS));
     }
 }

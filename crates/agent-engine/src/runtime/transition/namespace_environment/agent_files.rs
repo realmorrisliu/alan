@@ -3,8 +3,8 @@
 use std::sync::atomic::Ordering;
 
 use alan_agent_protocol::{
-    ContentPart, InputMode, Op, Submission, UiActivitySnapshot, UiEvent, UiNoticeSnapshot,
-    UiPlanSnapshot, UiThinkingSnapshot, UserInputRecord,
+    ConfinedTrustPosture, ContentPart, InputMode, Op, Submission, UiActivitySnapshot, UiEvent,
+    UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot, UserInputRecord,
 };
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
@@ -831,12 +831,15 @@ fn machine_control_submission(command: &str) -> Option<Submission> {
         "queue-v1 discard" => Some(Submission::new(Op::DiscardQueue)),
         "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),
         "reset-session" => Some(Submission::new(Op::ResetSession)),
-        "trust-posture governed" => Some(Submission::new(Op::SetTrustPosture {
-            confined_trusted: false,
-        })),
-        "trust-posture confined-trusted" => Some(Submission::new(Op::SetTrustPosture {
-            confined_trusted: true,
-        })),
+        "trust-posture governed" => Some(Submission::new(Op::set_trust_posture(
+            ConfinedTrustPosture::Governed,
+        ))),
+        "trust-posture confined-smart" => Some(Submission::new(Op::set_trust_posture(
+            ConfinedTrustPosture::ConfinedSmart,
+        ))),
+        "trust-posture confined-trusted" => Some(Submission::new(Op::set_trust_posture(
+            ConfinedTrustPosture::ConfinedTrusted,
+        ))),
         // Turn interrupt is agent-runtime control (stop the current turn,
         // keep the agent alive), not kernel process lifecycle:
         // `/proc/<pid>/ctl` interrupt terminates the process, which is the

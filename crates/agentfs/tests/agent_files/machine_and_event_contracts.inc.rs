@@ -30,7 +30,7 @@ async fn machine_ui_subtree_exposes_default_snapshots() {
         entries,
         vec![
             "activity", "budget", "events", "models", "notice", "plan", "queue", "skills",
-            "thinking", "usage"
+            "system1", "thinking", "usage"
         ]
     );
 
@@ -58,6 +58,28 @@ async fn machine_ui_subtree_exposes_default_snapshots() {
             .await
             .contains("\"version\":1")
     );
+    assert!(
+        read_text(&fs, &["machine", "ui", "system1"], Fid(8))
+            .await
+            .contains("\"calibration\":\"unavailable\"")
+    );
+}
+
+#[tokio::test]
+async fn machine_ui_system1_commits_on_clunk_and_announces_invalidation() {
+    let fs = AgentFs::new();
+    let payload = br#"{"version":1,"allows":3,"denies":1,"escalations":0,"budget_extensions":1,"evaluator_profile":"smart-eval","evaluator_model":"magpie-v1","calibration":"calibrated"}"#;
+    write_doc(&fs, &["machine", "ui", "system1"], Fid(1), payload)
+        .await
+        .unwrap();
+    assert_eq!(
+        read_text(&fs, &["machine", "ui", "system1"], Fid(2))
+            .await
+            .as_bytes(),
+        payload
+    );
+    let events = read_text(&fs, &["events"], Fid(3)).await;
+    assert!(events.lines().any(|line| line == "ui:system1"), "{events}");
 }
 
 #[tokio::test]
