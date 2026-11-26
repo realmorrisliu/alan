@@ -36,7 +36,7 @@ struct OpenAiModel {
     #[serde(default)]
     default_reasoning_level: Option<ReasoningEffort>,
     #[serde(default)]
-    supported_reasoning_levels: Vec<ReasoningLevel>,
+    supported_reasoning_levels: Option<Vec<ReasoningLevel>>,
 }
 
 #[derive(Deserialize)]
@@ -97,6 +97,32 @@ fn default_context_window_for_slug(slug: &str) -> u32 {
     }
 }
 
+fn is_openai_reasoning_slug(slug: &str) -> bool {
+    let lower = slug.to_ascii_lowercase();
+    lower.starts_with("gpt-5")
+        || lower.starts_with("gpt-oss-")
+        || lower.starts_with("codex-")
+        || matches!(lower.as_str(), "o1" | "o3" | "o4")
+        || lower.starts_with("o1-")
+        || lower.starts_with("o3-")
+        || lower.starts_with("o4-")
+}
+
+fn default_reasoning_for_slug(slug: &str) -> (Vec<ReasoningEffort>, Option<ReasoningEffort>) {
+    if is_openai_reasoning_slug(slug) {
+        (
+            vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ],
+            Some(ReasoningEffort::Medium),
+        )
+    } else {
+        (Vec::new(), None)
+    }
+}
+
 fn is_non_chat_openai_model(id: &str) -> bool {
     let lower = id.to_ascii_lowercase();
     [
@@ -119,7 +145,7 @@ fn validate_and_push_model(
     slug: String,
     context_window: Option<u32>,
     default_reasoning_level: Option<ReasoningEffort>,
-    supported_reasoning_levels: Vec<ReasoningLevel>,
+    supported_reasoning_levels: Option<Vec<ReasoningLevel>>,
     seen: &mut HashSet<String>,
     models: &mut Vec<ProviderModel>,
 ) -> Result<()> {
@@ -137,21 +163,27 @@ fn validate_and_push_model(
             && seen.insert(slug.to_ascii_lowercase()),
         "Invalid ChatGPT model identity or context window"
     );
-    let efforts: Vec<_> = supported_reasoning_levels
-        .into_iter()
-        .map(|level| level.effort)
-        .collect();
+    let (efforts, resolved_default) = match supported_reasoning_levels {
+        Some(levels) => (
+            levels.into_iter().map(|level| level.effort).collect(),
+            default_reasoning_level,
+        ),
+        None => {
+            let (efforts, fallback_default) = default_reasoning_for_slug(&slug);
+            (efforts, default_reasoning_level.or(fallback_default))
+        }
+    };
     let unique: HashSet<_> = efforts.iter().collect();
     ensure!(
         unique.len() == efforts.len()
-            && default_reasoning_level.is_none_or(|default| efforts.contains(&default)),
+            && resolved_default.is_none_or(|default| efforts.contains(&default)),
         "Invalid ChatGPT model reasoning metadata"
     );
     models.push(ProviderModel {
         slug,
         context_window_tokens: resolved_context_window,
         supported_reasoning_efforts: efforts,
-        default_reasoning_effort: default_reasoning_level,
+        default_reasoning_effort: resolved_default,
     });
     Ok(())
 }
@@ -173,7 +205,7 @@ fn decode_models(bytes: &[u8]) -> Result<Vec<ProviderModel>> {
                 model.slug,
                 model.context_window,
                 model.default_reasoning_level,
-                model.supported_reasoning_levels,
+                Some(model.supported_reasoning_levels),
                 &mut seen,
                 &mut models,
             )?;
@@ -254,16 +286,45 @@ mod tests {
             "data": [
                 {"id": "gpt-5.4"},
                 {"id": "gpt-5-mini"},
+                {"id": "gpt-4.1"},
+                {"id": "gpt-5-chat-latest", "supported_reasoning_levels": []},
                 {"id": "dall-e-3"},
                 {"id": "text-embedding-3-large"}
             ]
         }))
         .unwrap();
         let parsed = decode_models(&raw).unwrap();
-        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed.len(), 4);
         assert_eq!(parsed[0].slug, "gpt-5.4");
         assert_eq!(parsed[0].context_window_tokens, 1_050_000);
+        assert_eq!(
+            parsed[0].supported_reasoning_efforts,
+            vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High
+            ]
+        );
+        assert_eq!(
+            parsed[0].default_reasoning_effort,
+            Some(ReasoningEffort::Medium)
+        );
         assert_eq!(parsed[1].slug, "gpt-5-mini");
         assert_eq!(parsed[1].context_window_tokens, 400_000);
+        assert_eq!(
+            parsed[1].supported_reasoning_efforts,
+            vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High
+            ]
+        );
+        assert_eq!(parsed[2].slug, "gpt-4.1");
+        assert_eq!(parsed[2].context_window_tokens, 1_047_576);
+        assert!(parsed[2].supported_reasoning_efforts.is_empty());
+        assert_eq!(parsed[2].default_reasoning_effort, None);
+        assert_eq!(parsed[3].slug, "gpt-5-chat-latest");
+        assert!(parsed[3].supported_reasoning_efforts.is_empty());
+        assert_eq!(parsed[3].default_reasoning_effort, None);
     }
 }
