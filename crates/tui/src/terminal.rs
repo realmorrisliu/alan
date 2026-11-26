@@ -423,11 +423,13 @@ impl Drop for StdinEchoGuard {
 }
 
 pub struct TerminalSession {
-    terminal: AlanTerminal,
-    viewport_height: u16,
+    pub(crate) terminal: AlanTerminal,
+    pub(crate) viewport_height: u16,
     mouse_capture_enabled: bool,
     hyperlink_host_root: Option<std::path::PathBuf>,
     hyperlinks_enabled: bool,
+    pub(crate) graphics_capability: crate::graphics::GraphicsCapability,
+    pub(crate) theme_mode: crate::theme::ThemeMode,
 }
 
 impl TerminalSession {
@@ -436,6 +438,8 @@ impl TerminalSession {
         TERMINAL_ACTIVE.store(true, Ordering::SeqCst);
         let startup_guard = TerminalStartupGuard::new();
         crossterm_terminal::enable_raw_mode().context("failed to enable raw terminal mode")?;
+        let theme_mode = crate::theme::ThemeMode::from_env();
+        let graphics_capability = crate::graphics::probe_terminal_graphics(theme_mode);
         let mut out = stdout();
         execute!(out, EnableBracketedPaste).context("failed to enable terminal input modes")?;
         let term = std::env::var("TERM").unwrap_or_default();
@@ -455,7 +459,14 @@ impl TerminalSession {
             mouse_capture_enabled: false,
             hyperlink_host_root: None,
             hyperlinks_enabled: !term.eq_ignore_ascii_case("dumb"),
+            graphics_capability,
+            theme_mode,
         })
+    }
+
+    /// Detected terminal inline graphics capability probed at session startup.
+    pub fn graphics_capability(&self) -> crate::graphics::GraphicsCapability {
+        self.graphics_capability
     }
 
     /// Enable or disable SGR mouse capture strictly for open modals/pickers.
@@ -476,22 +487,36 @@ impl TerminalSession {
         self.hyperlink_host_root = host_root;
     }
 
-    /// Publish permanent scrollback and the rebuilt inline viewport as one host update.
-    pub fn draw_inline_frame<F>(
+    /// Publish permanent scrollback lines and the rebuilt inline viewport as one host update.
+    pub fn draw_inline_frame(
         &mut self,
         committed: &[Line<'static>],
         height: u16,
         base_height: u16,
-        draw: F,
-    ) -> Result<()>
-    where
-        F: FnOnce(&mut Frame<'_>),
-    {
+        draw: impl FnOnce(&mut Frame<'_>),
+    ) -> Result<()> {
+        let items = (!committed.is_empty()).then(|| {
+            [crate::graphics_scrollback::ScrollbackItem::Lines(
+                committed.to_vec(),
+            )]
+        });
+        let slice = items.as_ref().map_or(&[][..], |single| single.as_slice());
+        self.draw_inline_frame_items(slice, height, base_height, draw)
+    }
+
+    /// Publish typed permanent scrollback items and the rebuilt inline viewport as one update.
+    pub fn draw_inline_frame_items(
+        &mut self,
+        committed: &[crate::graphics_scrollback::ScrollbackItem],
+        height: u16,
+        base_height: u16,
+        draw: impl FnOnce(&mut Frame<'_>),
+    ) -> Result<()> {
         synchronized_frame(
             self,
             |session, begin| synchronized_boundary(session.terminal.backend_mut(), begin),
             |session| {
-                session.write_scrollback(committed)?;
+                crate::graphics_scrollback::write_scrollback_items(session, committed)?;
                 let screen = session.terminal.size()?.height;
                 let top = session.terminal.get_frame().area().y;
                 let height = anchored_inline_height(base_height, height, screen, top);

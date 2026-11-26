@@ -59,6 +59,32 @@ pub struct WelcomeBanner {
     pub update_notice: Option<String>,
 }
 
+/// Inline image attachment rendered as a calm text badge in live frames and committed atomically
+/// with optional terminal graphics when drained into immutable scrollback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineImageCell {
+    pub bytes: Vec<u8>,
+    pub label: String,
+    pub dimensions: Option<crate::graphics::ImageDimensions>,
+}
+
+impl InlineImageCell {
+    /// Construct an inline image cell, probing container dimensions from `bytes`.
+    pub fn new(bytes: Vec<u8>, label: impl Into<String>) -> Self {
+        let dimensions = crate::graphics::parse_image_dimensions(&bytes);
+        Self {
+            bytes,
+            label: label.into(),
+            dimensions,
+        }
+    }
+
+    /// Format the calm text-only badge (`[image: label · WxH · size]`).
+    pub fn badge_text(&self) -> String {
+        crate::graphics::format_image_badge(&self.label, self.dimensions, self.bytes.len())
+    }
+}
+
 /// Permanent transcript content. Ephemeral activity (running tools, streaming
 /// thinking, transient notices, turn state) is projected by the file-backed transcript owner and is
 /// rendered in the live region rather than committed here.
@@ -120,6 +146,8 @@ pub enum HistoryCell {
     Error(String),
     /// Scrollable empty-session welcome header.
     Welcome(WelcomeBanner),
+    /// An inline image attachment (user-submitted or tool-produced).
+    Image(InlineImageCell),
 }
 
 /// Presentation state belonging to one retained AgentFS Action, not an execution record.
@@ -248,6 +276,7 @@ impl HistoryCell {
                 | Self::InputTail { .. }
                 | Self::Thinking { .. }
                 | Self::Welcome(_)
+                | Self::Image(_)
                 | Self::ConfirmationReceipt { .. }
                 | Self::RoutingReceipt { .. }
         ) {
@@ -304,6 +333,7 @@ impl HistoryCell {
             | Self::Plan { .. }
             | Self::Thinking { .. }
             | Self::Welcome(_)
+            | Self::Image(_)
             | Self::ConfirmationReceipt { .. }
             | Self::RoutingReceipt { .. }
             | Self::User(_)
@@ -345,6 +375,10 @@ impl HistoryCell {
             Self::Welcome(banner) => {
                 crate::file_backed::welcome::render_banner_lines(banner, opts.width, theme)
             }
+            Self::Image(image) => wrap_plain_text(&clean_text(&image.badge_text()), width)
+                .into_iter()
+                .map(|row| Line::styled(row, metadata_style(theme)))
+                .collect(),
             Self::Assistant(text) => markdown::project(text, width, (0, 0), theme)
                 .into_iter()
                 .map(|(line, _)| line)

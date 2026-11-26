@@ -4,6 +4,8 @@ pub mod completion;
 pub mod composer;
 mod file_backed;
 pub mod form;
+pub mod graphics;
+pub mod graphics_scrollback;
 pub mod history;
 pub(crate) mod hyperlink;
 mod reconcile;

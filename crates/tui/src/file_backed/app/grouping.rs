@@ -59,7 +59,7 @@ impl FileBackedApp {
     }
 
     /// Project one standalone transcript cell into styled lines. Shared by both
-    /// [`Self::history_row_projection`] and [`Self::prune_rendered_prefix`] so
+    /// [`Self::history_row_projection`] and [`Self::prune_rendered_prefix_items`] so
     /// scrollback pruning can never drift from rendered row counts.
     pub(super) fn single_cell_rows(&self, index: usize, opts: RenderOpts) -> Vec<Line<'static>> {
         let mut cell_rows = match &self.transcript[index] {

@@ -16,6 +16,7 @@ mod action_projection;
 mod attachment;
 pub(in crate::file_backed) use action_projection::{
     ActionSnapshot, RequestSnapshot, TapeRecordV1, action_snapshot_to_history_cell, action_title,
+    normalize_project_mount_paths,
 };
 
 pub(super) use attachment::{
@@ -857,7 +858,8 @@ pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnap
         if committed && let HistoryCell::Tool { title, .. } = &mut cell {
             title.push_str(" · updated");
         }
-        app.upsert_action_cell(snapshot.id, cell);
+        let images = super::image_render::extract_action_images(&snapshot);
+        app.upsert_action_cell_with_images(snapshot.id, cell, images);
     }
 }
 

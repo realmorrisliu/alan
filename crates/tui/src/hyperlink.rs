@@ -293,6 +293,7 @@ pub(crate) fn collect_buffer_links(
 pub struct HyperlinkBackend<W: Write> {
     inner: CrosstermBackend<W>,
     pending_links: Arc<Mutex<CellLinkMap>>,
+    pending_image: Arc<Mutex<Option<String>>>,
 }
 
 impl<W: Write> HyperlinkBackend<W> {
@@ -300,11 +301,16 @@ impl<W: Write> HyperlinkBackend<W> {
         Self {
             inner: CrosstermBackend::new(writer),
             pending_links: Arc::new(Mutex::new(CellLinkMap::default())),
+            pending_image: Arc::new(Mutex::new(None)),
         }
     }
 
     pub(crate) fn link_sink(&self) -> Arc<Mutex<CellLinkMap>> {
         self.pending_links.clone()
+    }
+
+    pub(crate) fn image_sink(&self) -> Arc<Mutex<Option<String>>> {
+        self.pending_image.clone()
     }
 }
 
@@ -325,6 +331,25 @@ impl<W: Write> Backend for HyperlinkBackend<W> {
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
+        let pending_image = self
+            .pending_image
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.take());
+        if let Some(payload) = pending_image {
+            let mut content = content.peekable();
+            let top_y = content.peek().map(|&(_, y, _)| y);
+            self.inner.draw(content)?;
+            if let Some(image_top_y) = top_y {
+                crate::graphics_scrollback::write_image_escape_at_row(
+                    &mut self.inner,
+                    image_top_y,
+                    &payload,
+                )?;
+            }
+            return Ok(());
+        }
+
         let links = self
             .pending_links
             .lock()
