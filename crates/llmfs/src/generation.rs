@@ -5,15 +5,35 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use alan_ap::{ErrorCode, Stream};
 use alan_llm::{
-    LlmProvider, ProviderCapabilities, ProviderModel, StreamChunk, TokenUsage, ToolCallDelta,
+    CalibrationKind, LlmProvider, ProviderCapabilities, ProviderModel, StreamChunk, TokenUsage,
+    ToolCallDelta,
 };
 use serde::Serialize;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
+mod decisions;
 mod evaluation;
 
 use super::request_wire::WireRequestDocV2;
 use super::{ConnectionLimits, render_json_doc};
+
+/// Kind of operation allocated under a Connection directory.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum OperationKind {
+    Generation,
+    Evaluation,
+    Decision,
+}
+
+impl OperationKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Generation => "generation",
+            Self::Evaluation => "choice.v1",
+            Self::Decision => "decision.v1",
+        }
+    }
+}
 
 #[derive(Serialize)]
 struct WireStreamEventV1 {
@@ -186,11 +206,14 @@ pub(super) struct Connection {
     pub(super) credential_ref: Option<String>,
     pub(super) capabilities: ProviderCapabilities,
     pub(super) choice_evaluation: bool,
+    pub(super) decisions_supported: bool,
+    pub(super) decision_calibration: Option<CalibrationKind>,
     pub(super) generation_supported: bool,
     limits: ConnectionLimits,
     live_models: StdMutex<Option<Vec<ProviderModel>>>,
     models_version: AtomicU32,
     evaluation_starts: AtomicU64,
+    decision_starts: AtomicU64,
     generation_starts: AtomicU64,
     total_tokens: AtomicU64,
     meter_version: AtomicU32,
@@ -205,8 +228,14 @@ impl Connection {
         limits: ConnectionLimits,
         provider: Box<dyn LlmProvider>,
     ) -> Self {
+        let decisions_supported = provider.supports_decisions();
+        let decision_calibration = decisions_supported
+            .then(|| provider.decision_calibration())
+            .flatten();
         Self {
             choice_evaluation: provider.supports_choice_evaluation(),
+            decisions_supported,
+            decision_calibration,
             generation_supported: provider.supports_generation(),
             provider: AsyncMutex::new(provider),
             provider_name,
@@ -217,6 +246,7 @@ impl Connection {
             live_models: StdMutex::new(None),
             models_version: AtomicU32::new(0),
             evaluation_starts: AtomicU64::new(0),
+            decision_starts: AtomicU64::new(0),
             generation_starts: AtomicU64::new(0),
             total_tokens: AtomicU64::new(0),
             meter_version: AtomicU32::new(0),
@@ -236,14 +266,19 @@ impl Connection {
         self.models_version.load(Ordering::Relaxed)
     }
 
-    pub(super) fn try_reserve(&self, evaluation: bool) -> Result<(), ErrorCode> {
-        if (evaluation && !self.choice_evaluation) || (!evaluation && !self.generation_supported) {
+    pub(super) fn try_reserve(&self, kind: OperationKind) -> Result<(), ErrorCode> {
+        let supported = match kind {
+            OperationKind::Generation => self.generation_supported,
+            OperationKind::Evaluation => self.choice_evaluation,
+            OperationKind::Decision => self.decisions_supported,
+        };
+        if !supported {
             return Err(ErrorCode::Unsupported);
         }
-        let (starts, max) = if evaluation {
-            (&self.evaluation_starts, self.limits.max_evaluations)
-        } else {
-            (&self.generation_starts, self.limits.max_generations)
+        let (starts, max) = match kind {
+            OperationKind::Generation => (&self.generation_starts, self.limits.max_generations),
+            OperationKind::Evaluation => (&self.evaluation_starts, self.limits.max_evaluations),
+            OperationKind::Decision => (&self.decision_starts, self.limits.max_decisions),
         };
         starts
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
@@ -277,10 +312,12 @@ impl Connection {
             "limits": {
                 "max_generations": self.limits.max_generations,
                 "max_evaluations": self.limits.max_evaluations,
+                "max_decisions": self.limits.max_decisions,
             },
             "meter": {
                 "generation_starts": self.generation_starts.load(Ordering::Relaxed),
                 "evaluation_starts": self.evaluation_starts.load(Ordering::Relaxed),
+                "decision_starts": self.decision_starts.load(Ordering::Relaxed),
                 "total_tokens": self.total_tokens.load(Ordering::Relaxed),
                 "total_cost_microusd": null,
                 "currency": "USD",
@@ -327,7 +364,7 @@ pub(super) struct Generation {
     /// The connection name, for directory membership under `connections/<conn>`.
     connection_name: String,
     sequence: u64,
-    evaluation: bool,
+    kind: OperationKind,
     events: Stream,
     status: StdMutex<GenStatus>,
     token_usage: StdMutex<Option<TokenUsage>>,
@@ -347,13 +384,13 @@ impl Generation {
         connection: Arc<Connection>,
         connection_name: String,
         sequence: u64,
-        evaluation: bool,
+        kind: OperationKind,
     ) -> Self {
         Self {
             connection,
             connection_name,
             sequence,
-            evaluation,
+            kind,
             events: Stream::new(),
             status: StdMutex::new(GenStatus::Open),
             token_usage: StdMutex::new(None),
@@ -431,8 +468,10 @@ pub(super) async fn commit_request(
     buf: Vec<u8>,
     generation: Arc<Generation>,
 ) -> Result<(), ErrorCode> {
-    if generation.evaluation {
-        return evaluation::commit(buf, generation).await;
+    match generation.kind {
+        OperationKind::Evaluation => return evaluation::commit(buf, generation).await,
+        OperationKind::Decision => return decisions::commit(buf, generation).await,
+        OperationKind::Generation => {}
     }
     // Parse the request first (pure): an empty or invalid document is malformed.
     let doc: Result<WireRequestDocV2, ()> = if buf.is_empty() {
@@ -646,7 +685,7 @@ pub(super) fn generation_status_doc(id: &str, generation: &Generation) -> String
     render_json_doc(serde_json::json!({
         "version": 1,
         "generation": id,
-        "operation": if generation.evaluation { "choice.v1" } else { "generation" },
+        "operation": generation.kind.as_str(),
         "connection": generation.connection_name(),
         "status": status.as_str(),
         "progress": {

@@ -67,16 +67,49 @@ pub trait LlmProvider: Send + Sync {
 
     /// Whether this actual callable supports finite-choice evaluation.
     /// Generation or tool-calling support alone does not imply this capability.
+    /// Defaults to [`Self::supports_decisions`] so decision-capable providers
+    /// automatically support `evaluate_choice` via [`crate::DecisionQuestion::Choice`].
     fn supports_choice_evaluation(&self) -> bool {
-        false
+        self.supports_decisions()
     }
 
     /// Evaluate a finite set without producing assistant prose or dispatching Tools.
+    ///
+    /// When [`Self::supports_decisions`] is true, delegates through [`Self::decide`]
+    /// using a projected [`crate::DecisionQuestion::Choice`] request without duplicating
+    /// provider logic.
     async fn evaluate_choice(
         &mut self,
-        _request: crate::ChoiceEvaluationRequest,
+        request: crate::ChoiceEvaluationRequest,
     ) -> Result<crate::ChoiceEvaluationResponse> {
-        anyhow::bail!("finite-choice evaluation unavailable")
+        if !self.supports_decisions() {
+            anyhow::bail!("finite-choice evaluation unavailable");
+        }
+        let decision_request = request.to_decision_request()?;
+        let response = self.decide(decision_request.clone()).await?;
+        request.response_from_decision(&decision_request, response)
+    }
+
+    /// Whether this actual callable supports first-class typed Decisions (`Predicate`,
+    /// `Choice`, `Score`). Generation or tool-calling support alone does not imply this.
+    fn supports_decisions(&self) -> bool {
+        false
+    }
+
+    /// Baseline calibration advertised by this callable when [`Self::supports_decisions`]
+    /// is true (`Some(Calibrated)` for native calibrated Decisions endpoints,
+    /// `Some(Uncalibrated)` for generation-based fallbacks, `None` when unsupported).
+    fn decision_calibration(&self) -> Option<crate::CalibrationKind> {
+        None
+    }
+
+    /// Evaluate one or more typed decision questions (`Predicate`, `Choice`, `Score`)
+    /// over untrusted JSON `state` without assistant prose or Tool dispatch.
+    async fn decide(
+        &mut self,
+        _request: crate::DecisionRequest,
+    ) -> Result<crate::DecisionResponse> {
+        anyhow::bail!("decision evaluation unavailable")
     }
 
     /// Non-secret account identity fixed when this callable was constructed.
@@ -103,6 +136,8 @@ pub struct SharedLlmProvider {
     provider_name: &'static str,
     supports_generation: bool,
     supports_choice_evaluation: bool,
+    supports_decisions: bool,
+    decision_calibration: Option<crate::CalibrationKind>,
     account_identity: Option<String>,
 }
 
@@ -115,6 +150,8 @@ impl std::fmt::Debug for SharedLlmProvider {
                 "supports_choice_evaluation",
                 &self.supports_choice_evaluation,
             )
+            .field("supports_decisions", &self.supports_decisions)
+            .field("decision_calibration", &self.decision_calibration)
             .finish()
     }
 }
@@ -131,6 +168,8 @@ impl SharedLlmProvider {
             provider_name: provider.provider_name(),
             supports_generation: provider.supports_generation(),
             supports_choice_evaluation: provider.supports_choice_evaluation(),
+            supports_decisions: provider.supports_decisions(),
+            decision_calibration: provider.decision_calibration(),
             account_identity: provider.account_identity().map(str::to_owned),
             inner: std::sync::Arc::new(tokio::sync::Mutex::new(provider)),
         }
@@ -167,6 +206,18 @@ impl LlmProvider for SharedLlmProvider {
         request: crate::ChoiceEvaluationRequest,
     ) -> Result<crate::ChoiceEvaluationResponse> {
         self.inner.lock().await.evaluate_choice(request).await
+    }
+
+    fn supports_decisions(&self) -> bool {
+        self.supports_decisions
+    }
+
+    fn decision_calibration(&self) -> Option<crate::CalibrationKind> {
+        self.decision_calibration
+    }
+
+    async fn decide(&mut self, request: crate::DecisionRequest) -> Result<crate::DecisionResponse> {
+        self.inner.lock().await.decide(request).await
     }
 
     fn account_identity(&self) -> Option<&str> {

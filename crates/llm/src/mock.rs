@@ -4,7 +4,8 @@ use anyhow::Result;
 use tokio::sync::mpsc;
 
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, TokenUsage, ToolCallDelta,
+    CalibrationKind, DecisionRequest, DecisionResponse, GenerationRequest, GenerationResponse,
+    LlmProvider, StreamChunk, TokenUsage, ToolCallDelta,
 };
 
 /// A mock LLM provider for testing
@@ -25,6 +26,10 @@ pub struct MockLlmProvider {
     responses: Arc<std::sync::Mutex<Vec<GenerationResponse>>>,
     recorded_requests: Arc<std::sync::Mutex<Vec<GenerationRequest>>>,
     default_response: GenerationResponse,
+    decision_responses: Arc<std::sync::Mutex<Vec<DecisionResponse>>>,
+    recorded_decision_requests: Arc<std::sync::Mutex<Vec<DecisionRequest>>>,
+    default_decision_response: Option<DecisionResponse>,
+    decision_calibration: Option<CalibrationKind>,
 }
 
 impl MockLlmProvider {
@@ -52,6 +57,10 @@ impl MockLlmProvider {
                 provider_response_status: None,
                 warnings: Vec::new(),
             },
+            decision_responses: Arc::new(std::sync::Mutex::new(Vec::new())),
+            recorded_decision_requests: Arc::new(std::sync::Mutex::new(Vec::new())),
+            default_decision_response: None,
+            decision_calibration: None,
         }
     }
 
@@ -69,6 +78,37 @@ impl MockLlmProvider {
         self
     }
 
+    /// Enable decision support and set a default [`DecisionResponse`].
+    pub fn with_decision_response(mut self, response: DecisionResponse) -> Self {
+        if self.decision_calibration.is_none() {
+            self.decision_calibration = Some(response.calibration);
+        }
+        self.default_decision_response = Some(response);
+        self
+    }
+
+    /// Enable decision support and queue [`DecisionResponse`]s to be returned in FIFO order.
+    pub fn with_decision_responses(mut self, responses: Vec<DecisionResponse>) -> Self {
+        if self.decision_calibration.is_none() {
+            self.decision_calibration = Some(
+                responses
+                    .first()
+                    .map(|response| response.calibration)
+                    .unwrap_or(CalibrationKind::Calibrated),
+            );
+        }
+        if let Ok(mut guard) = self.decision_responses.lock() {
+            *guard = responses;
+        }
+        self
+    }
+
+    /// Explicitly configure the baseline [`CalibrationKind`] advertised by this mock.
+    pub fn with_decision_calibration(mut self, calibration: CalibrationKind) -> Self {
+        self.decision_calibration = Some(calibration);
+        self
+    }
+
     /// Get recorded requests for verification
     pub fn recorded_requests(&self) -> Vec<GenerationRequest> {
         self.recorded_requests
@@ -77,9 +117,21 @@ impl MockLlmProvider {
             .clone()
     }
 
-    /// Clear recorded requests
+    /// Get recorded decision requests for verification.
+    pub fn recorded_decision_requests(&self) -> Vec<DecisionRequest> {
+        self.recorded_decision_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Clear recorded generation and decision requests.
     pub fn clear_recorded(&self) {
         self.recorded_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.recorded_decision_requests
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
@@ -202,6 +254,43 @@ impl LlmProvider for MockLlmProvider {
         });
 
         Ok(rx)
+    }
+
+    fn supports_decisions(&self) -> bool {
+        self.decision_calibration.is_some()
+            || self.default_decision_response.is_some()
+            || !self
+                .decision_responses
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+    }
+
+    fn decision_calibration(&self) -> Option<CalibrationKind> {
+        self.decision_calibration
+    }
+
+    async fn decide(&mut self, request: DecisionRequest) -> Result<DecisionResponse> {
+        if !self.supports_decisions() {
+            anyhow::bail!("decision evaluation unavailable");
+        }
+        request.validate()?;
+        self.recorded_decision_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(request);
+
+        let mut responses = self
+            .decision_responses
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if !responses.is_empty() {
+            Ok(responses.remove(0))
+        } else if let Some(default) = &self.default_decision_response {
+            Ok(default.clone())
+        } else {
+            anyhow::bail!("mock decision responses exhausted")
+        }
     }
 
     fn provider_name(&self) -> &'static str {

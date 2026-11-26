@@ -10,7 +10,12 @@ async fn abort_before_publication_discards_returned_result_and_usage() {
         ConnectionLimits::default(),
         Box::new(alan_llm::mock::MockLlmProvider::new()),
     ));
-    let operation = Arc::new(Generation::new(connection, "test".into(), 0, true));
+    let operation = Arc::new(Generation::new(
+        connection,
+        "test".into(),
+        0,
+        OperationKind::Evaluation,
+    ));
     assert!(operation.claim(GenStatus::Running));
     let request = ChoiceEvaluationRequest {
         input: "original".into(),

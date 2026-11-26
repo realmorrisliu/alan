@@ -8,8 +8,8 @@ use crate::openai_chat_completions::{
     convert_openai_responses_output,
 };
 use crate::{
-    ChatgptSubscriptionLimitError, ChatgptSubscriptionLimitKind, GenerationRequest,
-    GenerationResponse, LlmProvider, StreamChunk,
+    CalibrationKind, ChatgptSubscriptionLimitError, ChatgptSubscriptionLimitKind, DecisionRequest,
+    DecisionResponse, GenerationRequest, GenerationResponse, LlmProvider, StreamChunk,
 };
 use alan_auth::{ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthManager, new_chatgpt_session_id};
 use anyhow::{Context, Result};
@@ -34,6 +34,7 @@ pub struct ChatgptResponsesClient {
     custom_headers: HashMap<String, String>,
     expected_account_id: Option<String>,
     prompt_cache_key: String,
+    decision_fallback: bool,
 }
 
 impl ChatgptResponsesClient {
@@ -59,7 +60,19 @@ impl ChatgptResponsesClient {
             custom_headers,
             expected_account_id,
             prompt_cache_key: new_chatgpt_session_id(),
+            decision_fallback: false,
         })
+    }
+
+    /// Opt in to uncalibrated structured-generation decision fallback via
+    /// [`crate::decide_via_generation`].
+    ///
+    /// Defaults to `false`. When enabled, [`LlmProvider::supports_decisions`]
+    /// returns `true` and [`LlmProvider::decision_calibration`] reports
+    /// [`CalibrationKind::Uncalibrated`] (never [`CalibrationKind::Calibrated`]).
+    pub fn with_decision_fallback(mut self, enabled: bool) -> Self {
+        self.decision_fallback = enabled;
+        self
     }
 
     /// Pin the request-affinity cache key, for a host that keeps one routing key across
@@ -415,6 +428,25 @@ impl LlmProvider for ChatgptResponsesClient {
         Ok(crate::failure::guard_stream(rx, status_rx))
     }
 
+    fn supports_decisions(&self) -> bool {
+        self.decision_fallback
+    }
+
+    fn decision_calibration(&self) -> Option<CalibrationKind> {
+        self.decision_fallback
+            .then_some(CalibrationKind::Uncalibrated)
+    }
+
+    async fn decide(&mut self, request: DecisionRequest) -> Result<DecisionResponse> {
+        anyhow::ensure!(
+            self.decision_fallback,
+            "Provider '{}' does not support typed decisions unless decision fallback is enabled",
+            self.provider_name()
+        );
+        let model = self.model.clone();
+        crate::decide_via_generation(self, &model, request).await
+    }
+
     fn provider_name(&self) -> &'static str {
         "chatgpt"
     }
@@ -448,5 +480,7 @@ async fn check_chatgpt_response_status(response: reqwest::Response) -> Result<re
     Ok(response)
 }
 
+#[cfg(test)]
+mod decisions_tests;
 #[cfg(test)]
 mod tests;

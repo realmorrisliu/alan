@@ -101,6 +101,7 @@ fn test_client(base_url: &str, storage_path: PathBuf) -> ChatgptResponsesClient 
         custom_headers: HashMap::new(),
         expected_account_id: Some("acct_123".to_string()),
         prompt_cache_key: alan_auth::new_chatgpt_session_id(),
+        decision_fallback: false,
     }
 }
 

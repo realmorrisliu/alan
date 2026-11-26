@@ -132,9 +132,21 @@ mod safe_failure_tests;
 #[cfg(test)]
 mod tests;
 
+mod decision;
+pub use decision::{
+    CalibrationKind, DecisionAnswer, DecisionLevel, DecisionOption, DecisionQuestion,
+    DecisionRequest, DecisionResponse, MAX_DECISION_ID_BYTES, MAX_DECISION_MODEL_OVERRIDE_BYTES,
+    MAX_DECISION_OPTIONS, MAX_DECISION_QUESTIONS, MAX_DECISION_REQUEST_BYTES,
+    MalformedDecisionResponse,
+};
+
+mod decision_fallback;
+pub use decision_fallback::{FallbackDecisionEvaluator, decide_via_generation};
+
 mod evaluation;
 pub use evaluation::{
-    ChoiceEvaluationRequest, ChoiceEvaluationResponse, EvaluationCandidate, EvaluationSelection,
+    CHOICE_EVALUATION_NONE_OPTION_ID, CHOICE_EVALUATION_QUESTION_ID, ChoiceEvaluationRequest,
+    ChoiceEvaluationResponse, EvaluationCandidate, EvaluationSelection,
     MalformedEvaluationResponse,
 };
 

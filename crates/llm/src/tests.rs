@@ -383,3 +383,137 @@ async fn chat_trait_forwarding_reaches_both_provider_endpoints() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn test_mock_provider_decisions_and_shared_provider_forwarding() {
+    use std::collections::BTreeMap;
+
+    // Default MockLlmProvider keeps decisions & choice evaluation disabled
+    let mut plain_mock = MockLlmProvider::new();
+    assert!(!plain_mock.supports_decisions());
+    assert_eq!(plain_mock.decision_calibration(), None);
+    assert!(!plain_mock.supports_choice_evaluation());
+
+    let predicate_req = DecisionRequest::new(
+        serde_json::json!({"tool": "read_file"}),
+        BTreeMap::from([(
+            "safe".to_string(),
+            DecisionQuestion::Predicate {
+                prompt: "Safe?".to_string(),
+            },
+        )]),
+    );
+    assert!(plain_mock.decide(predicate_req.clone()).await.is_err());
+
+    let first_resp = DecisionResponse {
+        model: "mock-decision-1".to_string(),
+        provider: "mock".to_string(),
+        calibration: CalibrationKind::Calibrated,
+        answers: BTreeMap::from([(
+            "safe".to_string(),
+            DecisionAnswer::Predicate {
+                yes_probability: 0.99,
+                confidence: 0.99,
+            },
+        )]),
+        usage: Some(TokenUsage {
+            prompt_tokens: 20,
+            completion_tokens: 0,
+            total_tokens: 20,
+            ..Default::default()
+        }),
+    };
+    let second_resp = DecisionResponse {
+        model: "mock-decision-1".to_string(),
+        provider: "mock".to_string(),
+        calibration: CalibrationKind::Calibrated,
+        answers: BTreeMap::from([(
+            "safe".to_string(),
+            DecisionAnswer::Predicate {
+                yes_probability: 0.10,
+                confidence: 0.90,
+            },
+        )]),
+        usage: None,
+    };
+
+    let mock = MockLlmProvider::new()
+        .with_decision_calibration(CalibrationKind::Calibrated)
+        .with_decision_responses(vec![first_resp.clone(), second_resp.clone()]);
+    assert!(mock.supports_decisions());
+    assert!(mock.supports_choice_evaluation());
+    assert_eq!(
+        mock.decision_calibration(),
+        Some(CalibrationKind::Calibrated)
+    );
+
+    let mut shared = SharedLlmProvider::new(mock.clone());
+    assert!(shared.supports_decisions());
+    assert!(shared.supports_choice_evaluation());
+    assert_eq!(
+        shared.decision_calibration(),
+        Some(CalibrationKind::Calibrated)
+    );
+    assert!(format!("{shared:?}").contains("supports_decisions: true"));
+
+    let r1 = shared.decide(predicate_req.clone()).await.unwrap();
+    let r2 = shared.decide(predicate_req.clone()).await.unwrap();
+    assert_eq!(r1, first_resp);
+    assert_eq!(r2, second_resp);
+    assert_eq!(mock.recorded_decision_requests().len(), 2);
+    assert!(shared.decide(predicate_req).await.is_err());
+
+    assert_eq!(mock.recorded_decision_requests().len(), 3);
+    mock.clear_recorded();
+    assert!(mock.recorded_decision_requests().is_empty());
+}
+
+#[tokio::test]
+async fn test_mock_provider_evaluate_choice_delegates_to_decide() {
+    use std::collections::BTreeMap;
+
+    let mut mock = MockLlmProvider::new().with_decision_response(DecisionResponse {
+        model: "mock-decision-1".to_string(),
+        provider: "mock".to_string(),
+        calibration: CalibrationKind::Calibrated,
+        answers: BTreeMap::from([(
+            CHOICE_EVALUATION_QUESTION_ID.to_string(),
+            DecisionAnswer::Choice {
+                choice: "choice_1".to_string(),
+                probabilities: BTreeMap::from([
+                    ("choice_0".to_string(), 0.05),
+                    ("choice_1".to_string(), 0.90),
+                    ("none".to_string(), 0.05),
+                ]),
+                confidence: 0.90,
+            },
+        )]),
+        usage: Some(TokenUsage {
+            prompt_tokens: 30,
+            completion_tokens: 0,
+            total_tokens: 30,
+            ..Default::default()
+        }),
+    });
+
+    let eval_req = ChoiceEvaluationRequest {
+        input: "deploy".to_string(),
+        candidates: vec![
+            EvaluationCandidate {
+                id: "read".to_string(),
+                description: "Read-only".to_string(),
+            },
+            EvaluationCandidate {
+                id: "write".to_string(),
+                description: "Mutating".to_string(),
+            },
+        ],
+    };
+    let eval_resp = mock.evaluate_choice(eval_req).await.unwrap();
+    assert_eq!(
+        eval_resp.selection,
+        EvaluationSelection::Selected("write".to_string())
+    );
+    assert_eq!(eval_resp.usage.unwrap().completion_tokens, 0);
+    assert_eq!(mock.recorded_decision_requests().len(), 1);
+}

@@ -1,7 +1,7 @@
 //! Provider identity, capability, and model introspection documents.
 
 use alan_llm::{
-    CompatibilityTier, ProviderCapabilities, ProviderModel as LiveProviderModel,
+    CalibrationKind, CompatibilityTier, ProviderCapabilities, ProviderModel as LiveProviderModel,
     factory::ProviderType, gemini_catalog,
 };
 
@@ -77,12 +77,22 @@ pub(super) fn provider_capabilities_doc(
     provider: &str,
     capabilities: ProviderCapabilities,
 ) -> String {
+    let provider_type = provider_type_for_name(provider);
+    let decisions_v1 = provider_type.is_some_and(ProviderType::supports_native_decisions);
+    let decision_calibration = provider_type.and_then(ProviderType::default_decision_calibration);
+    let calibrated_decisions = decision_calibration == Some(CalibrationKind::Calibrated);
+    let choice_v1 = provider == "typesafe" || decisions_v1;
     render_json_doc(serde_json::json!({
         "version": 1,
         "provider": provider,
         "capabilities": (provider != "typesafe").then_some(capabilities),
         "generation": provider != "typesafe",
-        "evaluation": {"choice_v1": provider == "typesafe"},
+        "evaluation": {"choice_v1": choice_v1},
+        "decisions": {
+            "v1": decisions_v1,
+            "calibration": decision_calibration,
+        },
+        "calibrated_decisions": calibrated_decisions,
     }))
 }
 
@@ -91,8 +101,12 @@ pub(super) fn connection_capabilities_doc(
     provider: &str,
     capabilities: ProviderCapabilities,
     choice_evaluation: bool,
+    decisions: bool,
+    decision_calibration: Option<CalibrationKind>,
     generation: bool,
 ) -> String {
+    let calibrated_decisions =
+        decisions && decision_calibration == Some(CalibrationKind::Calibrated);
     render_json_doc(serde_json::json!({
         "version": 1,
         "connection": connection,
@@ -100,6 +114,11 @@ pub(super) fn connection_capabilities_doc(
         // These are generation features; evaluation-only callables have none.
         "capabilities": generation.then_some(capabilities),
         "evaluation": { "choice_v1": choice_evaluation },
+        "decisions": {
+            "v1": decisions,
+            "calibration": decision_calibration,
+        },
+        "calibrated_decisions": calibrated_decisions,
         "generation": generation,
     }))
 }

@@ -21,22 +21,22 @@
 //! `events` at the live edge never blocks forever.
 
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream};
-use alan_llm::{LlmProvider, ProviderModel};
+use alan_llm::{CalibrationKind, LlmProvider, ProviderModel};
 use async_trait::async_trait;
 
 mod generation;
 mod provider_catalog;
 mod request_wire;
+mod tree;
 
-use generation::{Connection, Generation, abort_generation, commit_request, generation_status_doc};
-use provider_catalog::{
-    connection_capabilities_doc, connection_models_doc, connection_profile_doc, is_known_provider,
-    known_provider_names, provider_capabilities_doc, provider_capabilities_for_name,
-    provider_models_doc, provider_status_doc,
+use generation::{Connection, Generation, OperationKind, abort_generation, commit_request};
+use provider_catalog::{is_known_provider, provider_capabilities_for_name};
+use tree::{
+    Node, computed_bytes, hash_path, is_readable, is_writable, node_identity, render_json_doc,
+    slice,
 };
 
 /// Cap on a buffered request document, so a hostile writer cannot exhaust the
@@ -72,6 +72,8 @@ pub struct ConnectionLimits {
     pub max_generations: Option<u64>,
     /// Independent lifetime allocation budget for finite-choice evaluations.
     pub max_evaluations: Option<u64>,
+    /// Independent lifetime allocation budget for typed decisions.
+    pub max_decisions: Option<u64>,
 }
 
 impl ConnectionLimits {
@@ -81,31 +83,13 @@ impl ConnectionLimits {
             ..Self::default()
         }
     }
-}
 
-/// What a fid points at within the llmfs tree.
-#[derive(Clone)]
-enum Node {
-    Root,
-    ProvidersDir,
-    Provider(String),
-    ProviderModels(String),
-    ProviderCapabilities(String),
-    ProviderStatus(String),
-    ConnectionsDir,
-    Connection(String),
-    ConnectionProvider(String),
-    ConnectionProfile(String),
-    ConnectionMeter(String),
-    ConnectionCapabilities(String),
-    ConnectionModels(String),
-    Clone(String),
-    Evaluate(String),
-    Gen(String),
-    GenData(String),
-    GenEvents(String),
-    GenCtl(String),
-    GenStatus(String),
+    pub fn max_decisions(max_decisions: u64) -> Self {
+        Self {
+            max_decisions: Some(max_decisions),
+            ..Self::default()
+        }
+    }
 }
 
 struct LlmFid {
@@ -180,7 +164,8 @@ impl State {
             | Node::ProviderCapabilities(_)
             | Node::ProviderStatus(_)
             | Node::Clone(_)
-            | Node::Evaluate(_) => 0,
+            | Node::Evaluate(_)
+            | Node::Decide(_) => 0,
         };
         Qid {
             kind,
@@ -275,6 +260,31 @@ impl LlmFs {
                 .connections
                 .get(name)
                 .is_some_and(|connection| connection.choice_evaluation)
+    }
+
+    /// Whether a visible captured callable supports first-class typed Decisions (`decision.v1`).
+    pub fn supports_decisions(&self, name: &str) -> bool {
+        self.connection_visible(name)
+            && self
+                .state
+                .lock()
+                .unwrap()
+                .connections
+                .get(name)
+                .is_some_and(|connection| connection.decisions_supported)
+    }
+
+    /// Baseline decision calibration advertised by a visible captured callable, if any.
+    pub fn decision_calibration(&self, name: &str) -> Option<CalibrationKind> {
+        if !self.connection_visible(name) {
+            return None;
+        }
+        self.state
+            .lock()
+            .unwrap()
+            .connections
+            .get(name)
+            .and_then(|connection| connection.decision_calibration)
     }
 
     fn connection_visible(&self, name: &str) -> bool {
@@ -480,6 +490,8 @@ impl LlmFs {
                     Ok(Node::Clone(conn.clone()))
                 } else if name == "evaluate" {
                     Ok(Node::Evaluate(conn.clone()))
+                } else if name == "decide" {
+                    Ok(Node::Decide(conn.clone()))
                 } else if name == "provider" {
                     Ok(Node::ConnectionProvider(conn.clone()))
                 } else if name == "profile" {
@@ -570,7 +582,7 @@ impl FileServer for LlmFs {
         // fid back to learn its id, so it requires ReadWrite: a read-only observer
         // can't allocate, and a write-only open can't strand a Generation whose id
         // it could never read.
-        if let Node::Clone(conn) | Node::Evaluate(conn) = &node {
+        if let Node::Clone(conn) | Node::Evaluate(conn) | Node::Decide(conn) = &node {
             if !matches!(mode, OpenMode::ReadWrite) {
                 return Err(ErrorCode::NoAccess);
             }
@@ -579,20 +591,20 @@ impl FileServer for LlmFs {
                 .get(conn)
                 .cloned()
                 .ok_or(ErrorCode::NotFound)?;
-            let evaluation = matches!(&node, Node::Evaluate(_));
-            connection.try_reserve(evaluation)?;
+            let kind = match &node {
+                Node::Clone(_) => OperationKind::Generation,
+                Node::Evaluate(_) => OperationKind::Evaluation,
+                Node::Decide(_) => OperationKind::Decision,
+                _ => unreachable!(),
+            };
+            connection.try_reserve(kind)?;
             let id = format!("g{}", state.next_gen);
             let sequence = state.next_gen;
             state.next_gen += 1;
             state.listing_version += 1;
             state.gens.insert(
                 id.clone(),
-                Arc::new(Generation::new(
-                    connection,
-                    conn.clone(),
-                    sequence,
-                    evaluation,
-                )),
+                Arc::new(Generation::new(connection, conn.clone(), sequence, kind)),
             );
             if let Some(f) = state.fids.get_mut(&fid_key) {
                 f.clone_gen = Some(id);
@@ -808,101 +820,6 @@ enum Len {
     Events(Stream),
 }
 
-/// Render a readable node's bytes from already-locked state (so both `read` and
-/// `stat`'s length use one definition).
-fn computed_bytes(
-    state: &State,
-    node: &Node,
-    allowed_connections: Option<&HashSet<String>>,
-) -> Result<Vec<u8>, ErrorCode> {
-    let bytes = match node {
-        Node::Root => b"connections\nproviders".to_vec(),
-        Node::ProvidersDir => known_provider_names().join("\n").into_bytes(),
-        Node::Provider(_) => b"models\ncapabilities\nstatus".to_vec(),
-        Node::ProviderModels(provider) => provider_models_doc(provider).into_bytes(),
-        Node::ProviderCapabilities(provider) => {
-            provider_capabilities_doc(provider, provider_capabilities_for_name(provider))
-                .into_bytes()
-        }
-        Node::ProviderStatus(provider) => provider_status_doc(provider).into_bytes(),
-        Node::ConnectionsDir => {
-            let mut names: Vec<_> = state
-                .connections
-                .keys()
-                .filter(|name| allowed_connections.is_none_or(|allowed| allowed.contains(*name)))
-                .cloned()
-                .collect();
-            names.sort();
-            names.join("\n").into_bytes()
-        }
-        // A connection lists `clone` plus its allocated Generation ids, so a
-        // permitted observer can discover live/finished Generations as files.
-        Node::Connection(conn) => {
-            let mut names = vec![
-                "clone".to_string(),
-                "evaluate".to_string(),
-                "provider".to_string(),
-                "profile".to_string(),
-                "meter".to_string(),
-                "capabilities".to_string(),
-                "models".to_string(),
-            ];
-            let mut ids: Vec<_> = state
-                .gens
-                .iter()
-                .filter(|(_, g)| &g.connection_name() == conn)
-                .map(|(id, _)| id.clone())
-                .collect();
-            ids.sort();
-            names.extend(ids);
-            names.join("\n").into_bytes()
-        }
-        Node::ConnectionProvider(conn) => {
-            let connection = state.connections.get(conn).ok_or(ErrorCode::NotFound)?;
-            format!("{}\n", connection.provider_name).into_bytes()
-        }
-        Node::ConnectionProfile(conn) => {
-            let connection = state.connections.get(conn).ok_or(ErrorCode::NotFound)?;
-            connection_profile_doc(
-                conn,
-                &connection.provider_name,
-                connection.model.as_deref(),
-                connection.credential_ref.as_deref(),
-            )
-            .into_bytes()
-        }
-        Node::ConnectionMeter(conn) => {
-            let connection = state.connections.get(conn).ok_or(ErrorCode::NotFound)?;
-            connection.meter_doc(conn).into_bytes()
-        }
-        Node::ConnectionCapabilities(conn) => {
-            let connection = state.connections.get(conn).ok_or(ErrorCode::NotFound)?;
-            connection_capabilities_doc(
-                conn,
-                &connection.provider_name,
-                connection.capabilities,
-                connection.choice_evaluation,
-                connection.generation_supported,
-            )
-            .into_bytes()
-        }
-        Node::ConnectionModels(conn) => {
-            let connection = state.connections.get(conn).ok_or(ErrorCode::NotFound)?;
-            let live_models = connection.live_models();
-            connection_models_doc(conn, &connection.provider_name, live_models.as_deref())
-                .into_bytes()
-        }
-        Node::Gen(_) => b"data\nevents\nctl\nstatus".to_vec(),
-        Node::GenStatus(id) => {
-            let g = state.gens.get(id).ok_or(ErrorCode::NotFound)?;
-            generation_status_doc(id, g).into_bytes()
-        }
-        // clone, data, ctl, events are open/write/stream surfaces, not read here.
-        _ => return Err(ErrorCode::Unsupported),
-    };
-    Ok(bytes)
-}
-
 fn reap_terminal_generations(state: &mut State, connection: &str) {
     let mut terminal_generations = state
         .gens
@@ -922,66 +839,4 @@ fn reap_terminal_generations(state: &mut State, connection: &str) {
         state.gens.remove(&id);
         state.listing_version += 1;
     }
-}
-
-/// The kind and a server-unique identity key for a node (so distinct connections
-/// and Generations get distinct qids).
-fn node_identity(node: &Node) -> (FileKind, String) {
-    match node {
-        Node::Root => (FileKind::Dir, "/".to_string()),
-        Node::ProvidersDir => (FileKind::Dir, "providers".to_string()),
-        Node::Provider(provider) => (FileKind::Dir, format!("providers/{provider}")),
-        Node::ProviderModels(provider) => (FileKind::File, format!("providers/{provider}/models")),
-        Node::ProviderCapabilities(provider) => {
-            (FileKind::File, format!("providers/{provider}/capabilities"))
-        }
-        Node::ProviderStatus(provider) => (FileKind::File, format!("providers/{provider}/status")),
-        Node::ConnectionsDir => (FileKind::Dir, "connections".to_string()),
-        Node::Connection(c) => (FileKind::Dir, format!("connections/{c}")),
-        Node::ConnectionProvider(c) => (FileKind::File, format!("connections/{c}/provider")),
-        Node::ConnectionProfile(c) => (FileKind::File, format!("connections/{c}/profile")),
-        Node::ConnectionMeter(c) => (FileKind::File, format!("connections/{c}/meter")),
-        Node::ConnectionCapabilities(c) => {
-            (FileKind::File, format!("connections/{c}/capabilities"))
-        }
-        Node::ConnectionModels(c) => (FileKind::File, format!("connections/{c}/models")),
-        Node::Clone(c) => (FileKind::Clone, format!("connections/{c}/clone")),
-        Node::Evaluate(c) => (FileKind::Clone, format!("connections/{c}/evaluate")),
-        Node::Gen(id) => (FileKind::Dir, format!("gen/{id}")),
-        Node::GenData(id) => (FileKind::File, format!("gen/{id}/data")),
-        Node::GenEvents(id) => (FileKind::Stream, format!("gen/{id}/events")),
-        Node::GenCtl(id) => (FileKind::File, format!("gen/{id}/ctl")),
-        Node::GenStatus(id) => (FileKind::File, format!("gen/{id}/status")),
-    }
-}
-
-fn hash_path(key: &str) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    key.hash(&mut h);
-    h.finish()
-}
-
-fn render_json_doc(value: serde_json::Value) -> String {
-    let mut rendered = serde_json::to_string(&value).expect("serialize llmfs introspection doc");
-    rendered.push('\n');
-    rendered
-}
-
-fn is_writable(node: &Node) -> bool {
-    matches!(
-        node,
-        Node::Clone(_) | Node::Evaluate(_) | Node::GenData(_) | Node::GenCtl(_)
-    )
-}
-
-/// Whether a node has a readable surface. `data` and `ctl` are write-only sinks;
-/// `clone` is readable (the caller reads the allocated id back).
-fn is_readable(node: &Node) -> bool {
-    !matches!(node, Node::GenData(_) | Node::GenCtl(_))
-}
-
-fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {
-    let start = (offset as usize).min(bytes.len());
-    let end = bytes.len().min(start + count as usize);
-    bytes[start..end].to_vec()
 }
