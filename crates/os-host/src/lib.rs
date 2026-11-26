@@ -11,6 +11,7 @@ pub mod host_mounts;
 pub mod installation;
 mod legacy_connections;
 mod local;
+pub mod macos_nfs_reification;
 mod one_shot;
 pub mod paths;
 pub mod reset;
@@ -40,6 +41,10 @@ pub use local::{
     AlanOsHost, AttachedNamespace, HostCommandPlane, HostEndpointPaths, HostProcessReference,
     HostProjectMount, HostReadiness, HostStatus, LocalAttachment, ProjectMountRejected,
     UnsupportedProcesslessAttachment, request_host_stop, run_host_process,
+};
+pub use macos_nfs_reification::{
+    NfsLoopbackServer, NfsServerConfig, NfsService, ReifiedMountGcReport, ReifiedMountHandle,
+    ReifiedMountManager, gc_stale_reified_mounts, mount_nfs_options,
 };
 pub use one_shot::complete_one_shot_prompt;
 pub use paths::{AgentRuntimeStorePaths, HostStorePaths, SystemStorePaths};

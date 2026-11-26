@@ -103,6 +103,17 @@ impl SystemStorePaths {
         Ok(self.workspaces()?.join(instance_id))
     }
 
+    /// Root directory for Host-private reified namespace mounts (`System Store/reified-mounts/`).
+    pub fn reified_mounts(&self) -> Result<PathBuf> {
+        Ok(self.root.join("reified-mounts"))
+    }
+
+    /// Instance-scoped reified namespace mount directory (`System Store/reified-mounts/<instance_id>/`).
+    pub fn instance_reified_mounts(&self, instance_id: &str) -> Result<PathBuf> {
+        validate_store_segment("reified mount instance id", instance_id)?;
+        Ok(self.reified_mounts()?.join(instance_id))
+    }
+
     /// System Store rollout evidence directory for unapplied winning CoW workspace patches.
     pub fn cow_workspace_evidence(&self) -> Result<PathBuf> {
         Ok(self.agent_runtime()?.rollouts.join("cow-evidence"))
@@ -273,5 +284,20 @@ mod tests {
                 .unwrap(),
             store.memory_stores().unwrap().join("project/alan")
         );
+    }
+
+    #[test]
+    fn reified_mounts_paths_validate_instance_segment() {
+        let store = SystemStorePaths::from_data_dir(Path::new("/data")).unwrap();
+        assert_eq!(
+            store.reified_mounts().unwrap(),
+            store.root.join("reified-mounts")
+        );
+        assert_eq!(
+            store.instance_reified_mounts("alan-42").unwrap(),
+            store.root.join("reified-mounts/alan-42")
+        );
+        assert!(store.instance_reified_mounts("../escape").is_err());
+        assert!(store.instance_reified_mounts("").is_err());
     }
 }

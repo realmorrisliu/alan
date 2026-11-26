@@ -266,6 +266,7 @@ pub struct AlanOsHost {
     singleton: SingletonLock,
     service_manager: ServiceManager,
     cow_runtime: Option<crate::CowHostRuntime>,
+    reified_mounts: Option<crate::ReifiedMountManager>,
 }
 
 impl AlanOsHost {
@@ -275,7 +276,8 @@ impl AlanOsHost {
         remove_stale_owned_file(&paths.socket)?;
         remove_stale_owned_file(&paths.status)?;
 
-        let (service_manager, cow_runtime) = config.boot_service_manager_with_cow().await?;
+        let (service_manager, cow_runtime, reified_mounts) =
+            config.boot_service_manager_with_cow().await?;
         let listener = UnixListener::bind(&paths.socket)
             .with_context(|| format!("bind Alan OS attachment {}", paths.socket.display()))?;
         std::fs::set_permissions(&paths.socket, std::fs::Permissions::from_mode(0o600))?;
@@ -298,6 +300,7 @@ impl AlanOsHost {
             singleton,
             service_manager,
             cow_runtime,
+            reified_mounts,
         })
     }
 
@@ -313,6 +316,11 @@ impl AlanOsHost {
     /// Active CoW workspace & `/mnt/branch` runtime for this Host instance, if enabled.
     pub fn cow_runtime(&self) -> Option<&crate::CowHostRuntime> {
         self.cow_runtime.as_ref()
+    }
+
+    /// Active reified NFSv3 mount manager for this Host instance, if enabled.
+    pub fn reified_mounts(&self) -> Option<&crate::ReifiedMountManager> {
+        self.reified_mounts.as_ref()
     }
 
     /// Live [`alan_service_manager::HostMountService`] owned by this Host instance.
@@ -478,6 +486,11 @@ impl AlanOsHost {
             && let Err(error) = cow_runtime.flush_on_exit(Some(&host_mount)).await
         {
             tracing::warn!(%error, "failed to flush CoW workspaces on Host exit");
+        }
+        if let Some(reified_mounts) = self.reified_mounts.take()
+            && let Err(error) = reified_mounts.unmount_all().await
+        {
+            tracing::warn!(%error, "failed to unmount reified NFS mounts on Host exit");
         }
         remove_owned_file(&self.paths.socket);
         remove_owned_file(&self.paths.status);
