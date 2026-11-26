@@ -1,6 +1,70 @@
 use super::*;
 
 impl FileBackedApp {
+    pub(in crate::file_backed) fn set_pending_yield(&mut self, pending: PendingYieldCell) {
+        if self.modal.active {
+            self.modal.active = false;
+            self.modal.generation += 1;
+            self.modal.pending = false;
+        }
+        self.pending_yield = Some(pending.clone());
+        self.sync_form();
+        self.sync_confirmation();
+        self.completion = None;
+        if self.confirmation.is_some() {
+            return;
+        }
+        // The request watcher can fire on `created:<id>` before the runtime has
+        // written kind/prompt/options, so the first sync may insert a sparse
+        // cell; later syncs for the same request must update it in place.
+        if let Some(existing) = self.transcript.iter_mut().find_map(|cell| match cell {
+            HistoryCell::PendingYield(existing) if existing.request_id == pending.request_id => {
+                Some(existing)
+            }
+            _ => None,
+        }) {
+            *existing = pending;
+        } else {
+            self.push_turn_preview_cell(HistoryCell::PendingYield(pending));
+        }
+    }
+
+    pub(in crate::file_backed) fn clear_pending_yield(&mut self) {
+        self.settle_confirmation_on_external_clear();
+        self.pending_yield = None;
+        self.form = None;
+        self.confirmation = None;
+        self.refresh_completion();
+    }
+
+    pub(in crate::file_backed) fn sync_form(&mut self) {
+        match &self.pending_yield {
+            Some(pending)
+                if matches!(pending.kind, YieldKind::StructuredInput)
+                    && pending.questions.len() > 1 =>
+            {
+                // Rebuild when the question set itself changes (e.g. fields
+                // arrived after the request-created event), not just on a new
+                // request id — otherwise the form keeps stale questions.
+                if self.form.as_ref().is_none_or(|form| {
+                    form.request_id != pending.request_id
+                        || form.fields.len() != pending.questions.len()
+                        || form
+                            .fields
+                            .iter()
+                            .zip(pending.questions.iter())
+                            .any(|(field, question)| &field.question != question)
+                }) {
+                    self.form = Some(FormState::new(
+                        pending.request_id.clone(),
+                        pending.questions.clone(),
+                    ));
+                }
+            }
+            _ => self.form = None,
+        }
+    }
+
     pub(in crate::file_backed) fn handle_form_key(
         &mut self,
         key: KeyEvent,

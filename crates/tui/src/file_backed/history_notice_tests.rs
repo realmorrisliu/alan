@@ -209,7 +209,7 @@ fn paused_status_regression() {
     app.composer.set_text("draft 界");
     for width in [40, 60, 73, 80, 120] {
         let (lines, prompt) = live_region_lines_at(&app, width, 5_001);
-        let header = lines[3].to_string().to_lowercase();
+        let header = lines[2].to_string().to_lowercase();
         assert_eq!(header.matches("paused").count(), 1, "{header}");
         let text = lines
             .iter()
@@ -231,9 +231,9 @@ fn paused_status_regression() {
     }
     app.activity = UiActivitySnapshot::running(1);
     let (lines, _) = live_region_lines_at(&app, 120, 5_001);
-    assert!(!lines[3].to_string().contains("Paused"));
+    assert!(!lines[2].to_string().contains("Paused"));
     assert!(
-        lines[3]
+        lines[2]
             .to_string()
             .contains("Working · 5s · Esc interrupt")
     );
@@ -351,8 +351,8 @@ fn paused_status_confirmation_and_form_keep_static_controls() {
             for width in [40, 60, 73, 80, 120] {
                 let (lines, _) = live_region_lines_at(&app, width, 5_001);
                 assert!(
-                    lines[3].to_string().contains(cue)
-                        || lines[3]
+                    lines[2].to_string().contains(cue)
+                        || lines[2]
                             .to_string()
                             .contains(if cue == "waiting for approval" {
                                 "Approval"
@@ -361,13 +361,13 @@ fn paused_status_confirmation_and_form_keep_static_controls() {
                             }),
                     "cue={cue}, lines={lines:?}"
                 );
-                assert!(!lines[3].to_string().contains("interrupt"));
-                assert!(!lines[3].to_string().contains("/continue"), "{lines:?}");
-                assert!(!lines[3].to_string().contains("5s"));
+                assert!(!lines[2].to_string().contains("interrupt"));
+                assert!(!lines[2].to_string().contains("/continue"), "{lines:?}");
+                assert!(!lines[2].to_string().contains("5s"));
                 assert!(
                     !SPINNER
                         .iter()
-                        .any(|glyph| { lines[3].to_string().starts_with(&format!("{glyph} ·")) })
+                        .any(|glyph| { lines[2].to_string().starts_with(&format!("{glyph} ·")) })
                 );
             }
         }

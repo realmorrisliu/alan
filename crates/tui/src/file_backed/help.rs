@@ -59,8 +59,8 @@ const MODAL_ROWS: &[(&str, &str)] = &[
     ("Ctrl+Z / Ctrl+D", "suspend (fg resumes) / exit if empty"),
     ("Ctrl+C / Esc", "interrupt, clear draft, or dismiss notice"),
     (
-        "Ctrl+O",
-        "details modal (↑↓/jk, ←→/[] item, d JSON, p Plans, t Tape, PgUp/PgDn, arrows, Esc)",
+        "Ctrl+T / Ctrl+O",
+        "Status panel / details modal (a Actions, p Plans, t Tape, s Status, d JSON, ↑↓/jk, Esc)",
     ),
 ];
 
@@ -188,8 +188,8 @@ mod tests {
         let rendered: Vec<String> = lines.iter().map(ToString::to_string).collect();
         let ctrl_o_idx = rendered
             .iter()
-            .position(|l| l.starts_with("  Ctrl+O"))
-            .expect("Ctrl+O row present");
+            .position(|l| l.starts_with("  Ctrl+T / Ctrl+O"))
+            .expect("Ctrl+T / Ctrl+O row present");
         let continuation = rendered
             .get(ctrl_o_idx + 1)
             .expect("Ctrl+O wraps onto continuation line at width 80");

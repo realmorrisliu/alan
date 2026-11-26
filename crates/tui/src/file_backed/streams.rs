@@ -10,11 +10,13 @@ use anyhow::Result;
 use ratatui::text::{Line, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(test)]
 use unicode_width::UnicodeWidthStr;
 
 use crate::history::{clean_text, metadata_style, wrap_styled_lines};
 use crate::theme::Theme;
 
+#[cfg(test)]
 use super::FileBackedApp;
 
 const MAX_DISPLAY_STREAMS: usize = 16;
@@ -240,6 +242,7 @@ impl StreamsState {
             })
     }
 
+    #[cfg(test)]
     pub(in crate::file_backed) fn status_badge(&self, width: usize) -> Option<String> {
         let counts = self.effective_counts()?;
         let full = if counts.paused_error > 0 {
@@ -547,6 +550,7 @@ pub(in crate::file_backed) fn format_streams_overview_lines(
 /// Render the single-row footer below the composer, preserving exact legacy hints
 /// when no workstream/inbox badge is active and adding `streams: X active · Y idle · Z inbox`
 /// cleanly across wide and narrow terminal widths.
+#[cfg(test)]
 pub(in crate::file_backed) fn footer_status_line(
     app: &FileBackedApp,
     width: usize,

@@ -27,6 +27,7 @@ mod grouping;
 mod history;
 mod image_paste;
 mod model_control;
+mod mouse;
 mod notice;
 pub(in crate::file_backed) use notice::{Notice, humanize_protocol_message};
 pub(in crate::file_backed) mod presentation;
@@ -59,6 +60,13 @@ pub(super) struct FileBackedApp {
     pub(super) last_summary_revision: Option<u64>,
     pub(super) model: super::model::ModelProjection,
     pub(super) usage: super::usage::UsageProjection,
+    pub(super) budget: super::budget::BudgetProjection,
+    pub(super) status_diagnostics: super::status_panel::StatusDiagnostics,
+    pub(super) cow_branch_count: usize,
+    pub(super) ephemeral: bool,
+    pub(super) no_resume_update: bool,
+    pub(super) last_frame_origin: std::cell::Cell<(u16, u16)>,
+    pub(super) last_menu_origin_y: std::cell::Cell<Option<u16>>,
     pub(super) effective_model: Option<String>,
     pub(super) composer: Composer,
     pub(super) input_intent: InputIntent,
@@ -163,6 +171,13 @@ impl FileBackedApp {
             last_summary_revision: None,
             model: super::model::ModelProjection::default(),
             usage: super::usage::UsageProjection::default(),
+            budget: super::budget::BudgetProjection::default(),
+            status_diagnostics: super::status_panel::StatusDiagnostics::default(),
+            cow_branch_count: 0,
+            ephemeral: false,
+            no_resume_update: false,
+            last_frame_origin: std::cell::Cell::new((0, 0)),
+            last_menu_origin_y: std::cell::Cell::new(None),
             effective_model: None,
             composer: Composer::default(),
             input_intent: InputIntent::Agent,
@@ -265,6 +280,24 @@ impl FileBackedApp {
                     self.modal.rows = rows;
                     self.modal.scroll = 0;
                 }
+                None
+            }
+            FileBackedEvent::StatusPanelLoaded {
+                generation,
+                diagnostics,
+            } => {
+                self.cow_branch_count = diagnostics.cow_branches.len();
+                self.status_diagnostics = diagnostics;
+                if self.modal.active
+                    && self.modal.mode == action_modal::ModalMode::Status
+                    && generation == self.modal.generation
+                {
+                    self.modal.rows = super::status_panel::build_rows(self);
+                }
+                None
+            }
+            FileBackedEvent::CowBranchesUpdated { count } => {
+                self.cow_branch_count = count;
                 None
             }
             FileBackedEvent::ManDetails {
@@ -416,6 +449,9 @@ impl FileBackedApp {
                 self.viewport_size = (cols.max(1), rows.max(1));
                 None
             }
+            FileBackedEvent::Terminal(TerminalEvent::Mouse(mouse)) => {
+                self.handle_mouse(mouse, has_pending_submission)
+            }
             FileBackedEvent::Terminal(_) => None,
             FileBackedEvent::Output(text) => {
                 self.push_output(text);
@@ -508,6 +544,8 @@ impl FileBackedApp {
             | FileBackedEvent::SkillsUnavailable { .. }
             | FileBackedEvent::UsageChanged { .. }
             | FileBackedEvent::UsageUnavailable { .. }
+            | FileBackedEvent::BudgetChanged { .. }
+            | FileBackedEvent::BudgetUnavailable { .. }
             | FileBackedEvent::GitStatusUpdated { .. }
             | FileBackedEvent::FileIndexUpdated { .. }
             | FileBackedEvent::RequestsChanged
@@ -838,70 +876,6 @@ impl FileBackedApp {
             self.input_intent != InputIntent::ForceAgent
                 || state.kind != completion::CompletionKind::Command
         });
-    }
-
-    pub(super) fn set_pending_yield(&mut self, pending: PendingYieldCell) {
-        if self.modal.active {
-            self.modal.active = false;
-            self.modal.generation += 1;
-            self.modal.pending = false;
-        }
-        self.pending_yield = Some(pending.clone());
-        self.sync_form();
-        self.sync_confirmation();
-        self.completion = None;
-        if self.confirmation.is_some() {
-            return;
-        }
-        // The request watcher can fire on `created:<id>` before the runtime has
-        // written kind/prompt/options, so the first sync may insert a sparse
-        // cell; later syncs for the same request must update it in place.
-        if let Some(existing) = self.transcript.iter_mut().find_map(|cell| match cell {
-            HistoryCell::PendingYield(existing) if existing.request_id == pending.request_id => {
-                Some(existing)
-            }
-            _ => None,
-        }) {
-            *existing = pending;
-        } else {
-            self.push_turn_preview_cell(HistoryCell::PendingYield(pending));
-        }
-    }
-
-    pub(super) fn clear_pending_yield(&mut self) {
-        self.settle_confirmation_on_external_clear();
-        self.pending_yield = None;
-        self.form = None;
-        self.confirmation = None;
-        self.refresh_completion();
-    }
-
-    pub(super) fn sync_form(&mut self) {
-        match &self.pending_yield {
-            Some(pending)
-                if matches!(pending.kind, YieldKind::StructuredInput)
-                    && pending.questions.len() > 1 =>
-            {
-                // Rebuild when the question set itself changes (e.g. fields
-                // arrived after the request-created event), not just on a new
-                // request id — otherwise the form keeps stale questions.
-                if self.form.as_ref().is_none_or(|form| {
-                    form.request_id != pending.request_id
-                        || form.fields.len() != pending.questions.len()
-                        || form
-                            .fields
-                            .iter()
-                            .zip(pending.questions.iter())
-                            .any(|(field, question)| &field.question != question)
-                }) {
-                    self.form = Some(FormState::new(
-                        pending.request_id.clone(),
-                        pending.questions.clone(),
-                    ));
-                }
-            }
-            _ => self.form = None,
-        }
     }
 
     pub(super) fn turn_active(&self) -> bool {

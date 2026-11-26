@@ -160,8 +160,11 @@ async fn actual_inline_near_bottom_retained_modal_uses_full_viewport() {
         let hint = (0..width as u16)
             .map(|x| before.cell((x, 1)).unwrap().symbol())
             .collect::<String>();
-        for label in ["↔", "Space/b page", "Esc"] {
+        for label in ["[a:Actions]", "p:Plans", "t:Tape"] {
             assert!(hint.contains(label), "hint clipped at {width}: {hint}");
+        }
+        if width >= 48 {
+            assert!(hint.contains("Esc"), "Esc hint missing at {width}: {hint}");
         }
         for (forward, backward) in [
             (KeyCode::PageDown, KeyCode::PageUp),
@@ -227,13 +230,13 @@ async fn action_file_metadata_and_huge_output_use_compact_rows_with_shared_hint(
                 terminal
                     .backend()
                     .buffer()
-                    .cell((column, 4))
+                    .cell((column, 5))
                     .unwrap()
                     .symbol()
             })
             .collect::<String>();
         assert!(
-            header.contains("Select project · model unknown"),
+            header.contains("Select project") && header.contains("model unknown"),
             "{header}"
         );
         let hint = (0..width as u16)
@@ -247,7 +250,7 @@ async fn action_file_metadata_and_huge_output_use_compact_rows_with_shared_hint(
             })
             .collect::<String>();
         assert!(
-            hint.contains("Ctrl+O details"),
+            hint.contains("^O details") && hint.contains("^T status"),
             "shared hint missing: {hint}"
         );
     }

@@ -144,6 +144,10 @@ impl FileBackedApp {
         None
     }
 
+    pub(in crate::file_backed) fn refresh_model_choice_public(&mut self) {
+        self.refresh_model_choice();
+    }
+
     fn refresh_model_choice(&mut self) {
         let Some(snapshot) = self.model.known() else {
             self.model_chooser.filtered.clear();

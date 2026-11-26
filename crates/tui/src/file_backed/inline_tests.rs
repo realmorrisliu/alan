@@ -277,13 +277,13 @@ fn scrollback_retention_counts_physical_rows_at_narrow_widths() {
 
     assert_eq!(drained.len(), 2);
     assert_eq!(retained.len(), 1);
-    assert_eq!(terminal.backend().cursor_position().y, 5);
+    assert_eq!(terminal.backend().cursor_position().y, 4);
     let prompt = (0..8)
         .map(|column| {
             terminal
                 .backend()
                 .buffer()
-                .cell((column, 5))
+                .cell((column, 4))
                 .unwrap()
                 .symbol()
         })
@@ -378,11 +378,11 @@ fn completed_turn_is_followed_by_the_next_inline_alan_prompt() {
     assert_eq!(line(2), "/workspace/alan");
     assert_eq!(line(3), "");
     assert_eq!(line(4), "─".repeat(80));
-    assert!(line(5).contains("Select project · model unknown"));
-    assert_eq!(line(6), ":");
+    assert_eq!(line(5), ":");
+    assert!(line(6).contains("Select project") && line(6).contains("model unknown"));
     assert_eq!(
         backend.cursor_position(),
-        ratatui::layout::Position::new(2, 6)
+        ratatui::layout::Position::new(2, 5)
     );
 }
 
@@ -393,12 +393,12 @@ fn prompt_shows_the_process_selected_next_model() {
 
     let backend = render(&app);
     let line = (0..80)
-        .map(|column| backend.buffer().cell((column, 2)).unwrap().symbol())
+        .map(|column| backend.buffer().cell((column, 3)).unwrap().symbol())
         .collect::<String>()
         .trim_end()
         .to_string();
 
-    assert!(line.contains("Select project · gpt-6-luna / high"));
+    assert!(line.contains("Select project") && line.contains("gpt-6-luna · high"));
 }
 
 #[test]
@@ -565,7 +565,7 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
             let height = inline_viewport_height(&app, width, 22);
             assert_eq!(
                 height as usize,
-                expected_hint_rows + counter_rows + 4,
+                (expected_hint_rows + counter_rows).max(2) + 3,
                 "{width}: {typed}"
             );
             heights.push(height);
@@ -596,7 +596,7 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
                 assert!(rendered.contains("/login"), "{width}: {typed}: {rendered}");
             }
             let cursor = terminal.backend().cursor_position();
-            assert_eq!((cursor.x, cursor.y), ((2 + typed.len()) as u16, 3));
+            assert_eq!((cursor.x, cursor.y), ((2 + typed.len()) as u16, 2));
             assert!(app.drain_committed_scrollback(width, 22).is_empty());
             assert!(
                 app.transcript.is_empty(),
@@ -607,7 +607,7 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
             heights[0] > heights[1]
                 && heights[1] > heights[2]
                 && heights[2] >= heights[3]
-                && heights[3] > heights[4],
+                && heights[3] >= heights[4],
             "{width}: {heights:?}"
         );
         assert!(heights[4..].iter().all(|h| *h == heights[4]));
@@ -649,16 +649,16 @@ fn completion_candidates_render_below_the_inline_prompt_without_entering_history
             .to_string()
     };
 
-    assert_eq!(line(6), ": /");
-    assert!(line(7).contains("/login"));
-    assert!(line(8).contains("/model"));
-    assert!(line(9).contains("/resume"));
-    assert!(line(10).contains("/new"));
-    assert!(line(11).contains("/fork"));
-    assert!(line(12).contains("/permissions"));
-    assert!(line(13).contains("1-6/"));
+    assert_eq!(line(5), ": /");
+    assert!(line(6).contains("/login"));
+    assert!(line(7).contains("/model"));
+    assert!(line(8).contains("/resume"));
+    assert!(line(9).contains("/new"));
+    assert!(line(10).contains("/fork"));
+    assert!(line(11).contains("/permissions"));
+    assert!(line(12).contains("1-6/"));
     assert_eq!(app.transcript.len(), 2, "candidates are transient UI state");
-    assert_eq!(inline_viewport_height(&app, 80, 14), 14);
+    assert_eq!(inline_viewport_height(&app, 80, 14), 13);
 }
 
 #[test]
@@ -714,7 +714,7 @@ fn wrapped_multiline_prompt_keeps_its_cursor_in_the_inline_viewport() {
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(3, 4)
+        ratatui::layout::Position::new(3, 3)
     );
 }
 
@@ -729,7 +729,7 @@ fn preceding_wrapped_prompt_lines_are_included_in_the_cursor_row() {
 
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(3, 6)
+        ratatui::layout::Position::new(3, 5)
     );
     assert_eq!(height, 8);
 }
@@ -746,7 +746,7 @@ fn word_wrapped_current_prompt_positions_cursor_after_the_rendered_word() {
 
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(8, 4)
+        ratatui::layout::Position::new(8, 3)
     );
 }
 
@@ -762,14 +762,14 @@ fn long_composer_scrolls_its_editable_tail_and_cursor_into_view() {
     assert_eq!(height, 14);
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(3, 12)
+        ratatui::layout::Position::new(3, 11)
     );
     let last_row = (0..10)
         .map(|column| {
             terminal
                 .backend()
                 .buffer()
-                .cell((column, 12))
+                .cell((column, 11))
                 .unwrap()
                 .symbol()
         })
@@ -793,11 +793,11 @@ fn multiline_unicode_paste_stays_inline_and_positions_the_cursor_by_display_widt
             .to_string()
     };
 
-    assert!(line(3).contains("你") && line(3).contains("好"));
-    assert_eq!(line(4), "  x");
+    assert!(line(2).contains("你") && line(2).contains("好"));
+    assert_eq!(line(3), "  x");
     assert_eq!(
         backend.cursor_position(),
-        ratatui::layout::Position::new(3, 4)
+        ratatui::layout::Position::new(3, 3)
     );
 }
 

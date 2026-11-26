@@ -6,6 +6,7 @@ pub(in crate::file_backed) enum ModalMode {
     Actions,
     Plans,
     Tape,
+    Status,
     Man,
 }
 
@@ -48,7 +49,11 @@ impl ActionModal {
 
 impl FileBackedApp {
     pub(super) fn modal_key(&mut self, key: KeyEvent, has_pending_submission: bool) -> bool {
-        if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        let is_ctrl_o =
+            key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL);
+        let is_ctrl_t =
+            key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL);
+        if is_ctrl_o || is_ctrl_t {
             // Approval/form keys keep their existing owner.
             if self.form.is_some()
                 || self.pending_yield.is_some()
@@ -56,10 +61,19 @@ impl FileBackedApp {
             {
                 return true;
             }
-            self.modal.active = !self.modal.active;
-            self.modal
-                .reset_for_mode(ModalMode::Actions, self.modal.active);
-            self.modal.owner_path = self.agent_path.clone();
+            let target_mode = if is_ctrl_t {
+                ModalMode::Status
+            } else {
+                ModalMode::Actions
+            };
+            if self.modal.active && self.modal.mode == target_mode {
+                self.modal.active = false;
+                self.modal.reset_for_mode(target_mode, false);
+                self.modal.owner_path = self.agent_path.clone();
+            } else {
+                self.modal.active = true;
+                self.switch_modal_mode(target_mode);
+            }
             return true;
         }
         if !self.modal.active {
@@ -76,7 +90,7 @@ impl FileBackedApp {
         let item_count = match self.modal.mode {
             ModalMode::Plans => self.modal.plans.len(),
             ModalMode::Actions => self.modal.actions.len(),
-            ModalMode::Tape | ModalMode::Man => 0,
+            ModalMode::Tape | ModalMode::Status | ModalMode::Man => 0,
         };
         match key.code {
             KeyCode::Char('p') if key.modifiers == KeyModifiers::NONE => {
@@ -85,8 +99,7 @@ impl FileBackedApp {
                 } else {
                     ModalMode::Plans
                 };
-                self.modal.reset_for_mode(next, true);
-                self.modal.owner_path = self.agent_path.clone();
+                self.switch_modal_mode(next);
             }
             KeyCode::Char('t') if key.modifiers == KeyModifiers::NONE => {
                 let next = if self.modal.mode == ModalMode::Tape {
@@ -94,17 +107,20 @@ impl FileBackedApp {
                 } else {
                     ModalMode::Tape
                 };
-                self.modal.reset_for_mode(next, true);
-                self.modal.owner_path = self.agent_path.clone();
-                if next == ModalMode::Tape {
-                    self.modal.rows = super::super::tape_view::build_tape_lines_from_app(self);
-                }
+                self.switch_modal_mode(next);
+            }
+            KeyCode::Char('s') if key.modifiers == KeyModifiers::NONE => {
+                let next = if self.modal.mode == ModalMode::Status {
+                    ModalMode::Actions
+                } else {
+                    ModalMode::Status
+                };
+                self.switch_modal_mode(next);
             }
             KeyCode::Char('a')
                 if key.modifiers == KeyModifiers::NONE && self.modal.mode != ModalMode::Actions =>
             {
-                self.modal.reset_for_mode(ModalMode::Actions, true);
-                self.modal.owner_path = self.agent_path.clone();
+                self.switch_modal_mode(ModalMode::Actions);
             }
             KeyCode::Char('d') if key.modifiers == KeyModifiers::NONE => {
                 self.modal.show_raw_json = !self.modal.show_raw_json;

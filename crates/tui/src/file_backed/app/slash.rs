@@ -231,6 +231,7 @@ impl FileBackedApp {
         self.plan_revision = 0;
         self.thinking = UiThinkingSnapshot::idle();
         self.usage = super::super::usage::UsageProjection::default();
+        self.budget = super::super::budget::BudgetProjection::default();
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
         self.clear_late_thinking_latch();

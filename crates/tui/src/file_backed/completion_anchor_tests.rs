@@ -86,7 +86,10 @@ fn actual_inline_first_ready_reserves_selected_row_even_without_spare() {
                         anchor + 1 < pane,
                         "first ready has no below-input row: {width}x{pane}"
                     );
-                    assert!(rows(&terminal)[anchor as usize + 1].trim().is_empty());
+                    assert!(
+                        !rows(&terminal)[anchor as usize + 1].trim().is_empty(),
+                        "status bar occupies reserved row below composer: {width}x{pane}"
+                    );
                     app.handle_key(KeyEvent::new(KeyCode::Char(trigger), KeyModifiers::NONE));
                     for code in [
                         KeyCode::Down,

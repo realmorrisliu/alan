@@ -87,6 +87,23 @@ impl PtyScreen {
 
     #[allow(
         dead_code,
+        reason = "used by pty_e2e suites checking raw terminal escape sequences"
+    )]
+    pub(super) fn raw_len(&self) -> usize {
+        self.shared.0.lock().expect("pty state lock").raw.len()
+    }
+
+    #[allow(
+        dead_code,
+        reason = "used by pty_e2e suites checking raw terminal escape sequences"
+    )]
+    pub(super) fn raw_slice_from(&self, offset: usize) -> Vec<u8> {
+        let guard = self.shared.0.lock().expect("pty state lock");
+        guard.raw.get(offset..).unwrap_or_default().to_vec()
+    }
+
+    #[allow(
+        dead_code,
         reason = "scrollback+screen helper used by multi-stream PTY scrollback tests"
     )]
     pub(super) fn full_contents(&self) -> String {

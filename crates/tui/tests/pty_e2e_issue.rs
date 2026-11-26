@@ -494,7 +494,7 @@ fn pty_e2e_issue_cancel_redaction_and_mounted_githubfs_submission() -> Result<()
     let reader = spawn_reader(master_read, master_write.clone(), screen.clone());
 
     screen.wait_for("startup ready", Duration::from_secs(6), |s| {
-        s.contains("gpt-5.4") && s.contains("auto-approve") && s.contains("Auth error")
+        s.contains("gpt-5.4") && s.contains("trust") && s.contains("Auth error")
     })?;
 
     // 1. Open /issue with title, inspect redacted diagnostics, then cancel via Esc.

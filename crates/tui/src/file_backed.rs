@@ -74,6 +74,8 @@ pub use streams::{
     WorkstreamCountsDto, WorkstreamEntryDto, WorkstreamFocusTarget, WorkstreamInboxEntryDto,
     WorkstreamOverviewDto, WorkstreamPersistenceKind, WorkstreamStatusKind,
 };
+mod budget;
+mod modal_view;
 #[cfg(test)]
 mod skill_descriptor_tests;
 #[cfg(test)]
@@ -81,6 +83,8 @@ mod skill_review_tests;
 #[cfg(test)]
 mod skill_tests;
 mod skills;
+mod status_bar;
+mod status_panel;
 mod summary_view;
 mod tape_view;
 mod usage;
@@ -216,6 +220,10 @@ pub struct FileBackedRunConfig {
     pub workstream_control: Option<WorkstreamControlHandler>,
     /// Initial read-only workstream and inbox overview hydrated on frame 1.
     pub initial_workstream_overview: Option<WorkstreamOverviewDto>,
+    /// Whether this invocation runs with `--ephemeral` (no persistent rollout/summary).
+    pub ephemeral: bool,
+    /// Whether this invocation runs with `--no-resume-update`.
+    pub no_resume_update: bool,
 }
 
 impl FileBackedRunConfig {
@@ -245,6 +253,8 @@ impl FileBackedRunConfig {
             release_channel: None,
             workstream_control: None,
             initial_workstream_overview: None,
+            ephemeral: false,
+            no_resume_update: false,
         }
     }
 }
@@ -270,6 +280,8 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     app.connection_configured = config.connection_configured;
     app.update_notice = config.update_notice.clone();
     app.release_channel = config.release_channel.clone();
+    app.ephemeral = config.ephemeral;
+    app.no_resume_update = config.no_resume_update;
     if let Some(overview) = config.initial_workstream_overview.clone() {
         app.streams.apply_overview(overview);
     }
@@ -295,6 +307,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let initial_follows_root = config.agent_path == "/agent/root";
     let mut pending_root_agent_turns = VecDeque::<PendingRootAgentTurn>::new();
     let mut terminal = Some(TerminalSession::enter()?);
+    if let Some(active_terminal) = terminal.as_mut() {
+        active_terminal.set_hyperlink_context(!app.theme.is_dumb, app.project_host_root.clone());
+    }
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
     app.maybe_insert_welcome_header();
 
@@ -327,12 +342,20 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let mut last_drawn_second = None;
 
     let mut jobs = tokio::task::JoinSet::new();
-    let model_reads = observation_io::start(shell.clone(), true, tx.clone(), &mut jobs);
-    let skill_reads = observation_io::start(shell.clone(), false, tx.clone(), &mut jobs);
-    let usage_reads = observation_io::start_usage(shell.clone(), tx.clone(), &mut jobs);
+    let observation_readers = observation_io::Readers::start(shell.clone(), tx.clone(), &mut jobs);
     if let Some(host_root) = app.project_host_root.clone() {
         git_status::spawn_refresh(host_root, &mut jobs, &tx);
     }
+    let cow_shell = shell.clone();
+    let cow_tx = tx.clone();
+    jobs.spawn(async move {
+        let count = status_panel::read_cow_branch_count(&cow_shell).await;
+        if count > 0 {
+            let _ = cow_tx
+                .send(FileBackedEvent::CowBranchesUpdated { count })
+                .await;
+        }
+    });
     let mut grant_tick = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut grant_read_pending = false;
     let mut active_login_task: Option<(u64, tokio::task::AbortHandle)> = None;
@@ -406,43 +429,16 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     | FileBackedEvent::QueueUnavailable { .. }) => {
                         queue::dispatch_queue_event(&shell, &mut app, &pending_root_agent_turns, event).await;
                     }
-                    FileBackedEvent::ModelChanged { owner } => {
-                        if owner == app.model.owner { observation_io::request(&model_reads, owner); }
-                    }
-                    FileBackedEvent::ModelUnavailable { owner } => {
-                        if owner == app.model.owner {
-                            observation_io::request(&model_reads, String::new());
-                            app.model.apply(&owner, None);
-                            app.reconcile_model_chooser();
-                        }
-                    }
-                    FileBackedEvent::SkillsChanged { owner } => {
-                        if owner == app.skills.owner { observation_io::request(&skill_reads, owner); }
-                    }
-                    FileBackedEvent::SkillsUnavailable { owner } => {
-                        if owner == app.skills.owner {
-                            observation_io::request(&skill_reads, String::new());
-                            app.apply_skills(&owner, None);
-                        }
-                    }
-                    FileBackedEvent::UsageChanged { owner } => {
-                        if owner == app.usage.owner {
-                            observation_io::request(&usage_reads, owner);
-                        }
-                    }
-                    FileBackedEvent::UsageUnavailable { owner } => {
-                        if owner == app.usage.owner {
-                            observation_io::request(&usage_reads, String::new());
-                            app.usage.apply(&owner, None);
-                        }
-                    }
-                    FileBackedEvent::ObservationRead { revision, owner, snapshot } => {
-                        let request = match &snapshot {
-                            observation_io::Snapshot::Model(_) => &model_reads,
-                            observation_io::Snapshot::Skills(_) => &skill_reads,
-                            observation_io::Snapshot::Usage(_) => &usage_reads,
-                        };
-                        observation_io::apply(&mut app, request, revision, &owner, snapshot);
+                    event @ (FileBackedEvent::ModelChanged { .. }
+                    | FileBackedEvent::ModelUnavailable { .. }
+                    | FileBackedEvent::SkillsChanged { .. }
+                    | FileBackedEvent::SkillsUnavailable { .. }
+                    | FileBackedEvent::UsageChanged { .. }
+                    | FileBackedEvent::UsageUnavailable { .. }
+                    | FileBackedEvent::BudgetChanged { .. }
+                    | FileBackedEvent::BudgetUnavailable { .. }
+                    | FileBackedEvent::ObservationRead { .. }) => {
+                        observation_readers.handle_event(&mut app, event);
                     }
                     FileBackedEvent::HistorySwitchCompleted { rollout_id, result } => {
                         match result {
@@ -473,7 +469,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                 owner,
                                 connected_profile,
                                 connected_model,
-                                model_reads.clone(),
+                                observation_readers.model.clone(),
                             );
                         }
                     }
@@ -492,7 +488,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             &mut active_settings_task,
                             &mut active_login_task,
                             &mut pending_root_agent_turns,
-                            &model_reads,
+                            &observation_readers.model,
                         );
                     }
                     FileBackedEvent::IssueDrafted { generation, result } => {
@@ -559,9 +555,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             &mut rx,
                             &mut pending_root_agent_turns,
                             &tx,
-                            &model_reads,
-                            &skill_reads,
-                            &usage_reads,
+                            &observation_readers,
                             requested_name,
                             result,
                         )
@@ -793,9 +787,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         &mut rx,
                                         &mut pending_root_agent_turns,
                                         &tx,
-                                        &model_reads,
-                                        &skill_reads,
-                                        &usage_reads,
+                                        &observation_readers,
                                         &root_agent_pid_retry,
                                         action,
                                     )
@@ -875,6 +867,13 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 if last_osc_title.as_ref() != Some(&osc_title) {
                     crate::terminal::set_terminal_title(&osc_title);
                     last_osc_title = Some(osc_title);
+                }
+                if let Some(active_terminal) = terminal.as_mut() {
+                    let _ = active_terminal.set_mouse_capture(app.modal_mouse_capture_wanted());
+                    active_terminal.set_hyperlink_context(
+                        !app.theme.is_dumb,
+                        app.project_host_root.clone(),
+                    );
                 }
                 dirty = true;
             }

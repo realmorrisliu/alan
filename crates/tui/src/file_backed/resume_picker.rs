@@ -512,6 +512,55 @@ pub(in crate::file_backed) fn render_lines(
     rows
 }
 
+pub(in crate::file_backed) fn row_to_item_index(
+    app: &FileBackedApp,
+    rel_row: usize,
+) -> Option<usize> {
+    let picker = &app.resume_picker;
+    let total = picker.total_rows();
+    if picker.loading || total == 0 {
+        return None;
+    }
+    let width = app.viewport_size.0.max(1) as usize;
+    let height = app.viewport_size.1.max(1) as usize;
+    let lines = render_lines(app, width);
+    let skip = if lines.len() <= height {
+        0
+    } else {
+        let approx_selected_row = 2 + picker.selected.saturating_mul(2);
+        approx_selected_row
+            .saturating_add(3)
+            .saturating_sub(height)
+            .min(lines.len().saturating_sub(height))
+    };
+    let abs_row = skip + rel_row;
+    let mut header_rows = 2usize;
+    if picker.error.is_some() {
+        header_rows += 1;
+    }
+    if let Some(catalog) = picker.catalog.as_ref() {
+        if catalog.excluded_cross_project_count > 0 {
+            header_rows += 1;
+        }
+        header_rows += catalog.diagnostics.len().min(3);
+        if !picker.query.is_empty() && picker.filtered.is_empty() {
+            header_rows += 1;
+        }
+    }
+    if abs_row < header_rows {
+        return None;
+    }
+    let body_row = abs_row - header_rows;
+    let rollout_rows = picker.filtered.len().saturating_mul(2);
+    if body_row < rollout_rows {
+        Some(body_row / 2)
+    } else if body_row == rollout_rows {
+        Some(picker.filtered.len())
+    } else {
+        None
+    }
+}
+
 pub(in crate::file_backed) fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
     let area = frame.area();
     let lines = render_lines(app, area.width as usize);

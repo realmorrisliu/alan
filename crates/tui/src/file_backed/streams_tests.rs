@@ -401,9 +401,7 @@ async fn focus_and_root_switch_over_agent_pids_preserves_coherent_scrollback_wit
     let mut watchers = AgentWatchers::start(tails, "/agent/root", tx.clone());
     let mut pending_turns = VecDeque::new();
     let mut jobs = tokio::task::JoinSet::new();
-    let model_reads = observation_io::start(shell.clone(), true, tx.clone(), &mut jobs);
-    let skill_reads = observation_io::start(shell.clone(), false, tx.clone(), &mut jobs);
-    let usage_reads = observation_io::start_usage(shell.clone(), tx.clone(), &mut jobs);
+    let readers = observation_io::Readers::start(shell.clone(), tx.clone(), &mut jobs);
 
     // Switch to child stream.
     let switched_to_child = switch_agent_target(
@@ -413,9 +411,7 @@ async fn focus_and_root_switch_over_agent_pids_preserves_coherent_scrollback_wit
         &mut rx,
         &mut pending_turns,
         &tx,
-        &model_reads,
-        &skill_reads,
-        &usage_reads,
+        &readers,
         Some("worker".to_string()),
         child_agent.clone(),
         Some(child_pid.parse().unwrap()),
@@ -443,9 +439,7 @@ async fn focus_and_root_switch_over_agent_pids_preserves_coherent_scrollback_wit
         &mut rx,
         &mut pending_turns,
         &tx,
-        &model_reads,
-        &skill_reads,
-        &usage_reads,
+        &readers,
         None,
         "/agent/root".to_string(),
         None,

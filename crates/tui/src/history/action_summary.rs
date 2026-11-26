@@ -97,14 +97,20 @@ pub(crate) fn action_summary_with_theme(
             if *truncated { " · truncated" } else { "" }
         ),
         Some(ToolResultPresentation::PlainText { body }) => bounded(body, 256),
-        Some(ToolResultPresentation::Listing { rows }) => format!(
-            "{} rows · {}",
-            rows.len(),
-            rows.first().map_or(String::new(), |v| bounded(v, 256))
-        ),
+        Some(ToolResultPresentation::Listing { rows }) => {
+            if rows.is_empty() {
+                "0 rows".to_string()
+            } else {
+                format!(
+                    "{} rows · {}",
+                    rows.len(),
+                    rows.first().map_or(String::new(), |v| bounded(v, 256))
+                )
+            }
+        }
         None => preview
             .as_deref()
-            .map_or(String::new(), |v| bounded(v, 256)),
+            .map_or(String::new(), |v| compact_fallback_preview(title, v)),
     };
     let mut rows = vec![header_line];
     if !child.trim().is_empty() {
@@ -345,6 +351,32 @@ pub(crate) fn bounded(text: &str, bytes: usize) -> String {
     text.lines()
         .find(|line| !clean_text(line).trim().is_empty())
         .map_or_else(String::new, |line| clamp_bytes(line, bytes))
+}
+
+fn compact_fallback_preview(title: &str, preview: &str) -> String {
+    let trimmed = preview.trim();
+    if trimmed.starts_with('{')
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
+        && value.get("error").is_none_or(serde_json::Value::is_null)
+    {
+        let lower_title = title.to_ascii_lowercase();
+        let is_search_or_list = lower_title.starts_with("grep")
+            || lower_title.starts_with("glob")
+            || lower_title.starts_with("list");
+        let empty_matches = value
+            .get("matches")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(Vec::is_empty);
+        let empty_entries = is_search_or_list
+            && value
+                .get("entries")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty);
+        if empty_matches || empty_entries {
+            return "0 rows".to_string();
+        }
+    }
+    bounded(preview, 256)
 }
 
 fn bounded_command_preview(text: &str, bytes: usize) -> String {
@@ -617,5 +649,57 @@ mod tests {
             }),
         };
         assert_eq!(action_summary_with_theme(&completed, 120, theme).len(), 2);
+    }
+
+    #[test]
+    fn zero_match_grep_glob_and_list_render_compact_zero_rows() {
+        let theme = Theme::default();
+
+        // 1. Explicit empty Listing presentation renders "0 rows" without trailing dot.
+        let empty_listing = HistoryCell::Tool {
+            action: None,
+            title: "Grep \"missing\"".into(),
+            status: ToolStatus::Complete,
+            preview: None,
+            presentation: Some(ToolResultPresentation::Listing { rows: vec![] }),
+        };
+        let rows = action_summary_with_theme(&empty_listing, 100, theme);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows[1].to_string().trim(), "0 rows");
+
+        // 2. Fallback JSON preview from 0-match grep (when tool_presentation returns None) renders "0 rows".
+        let grep_fallback = HistoryCell::Tool {
+            action: None,
+            title: "Grep \"missing\"".into(),
+            status: ToolStatus::Complete,
+            preview: Some(r#"{"matches":[],"total":0,"truncated":false}"#.into()),
+            presentation: None,
+        };
+        let rows = action_summary_with_theme(&grep_fallback, 100, theme);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows[1].to_string().trim(), "0 rows");
+
+        // 3. Fallback JSON preview from empty list_dir renders "0 rows".
+        let list_fallback = HistoryCell::Tool {
+            action: None,
+            title: "List empty_dir".into(),
+            status: ToolStatus::Complete,
+            preview: Some(r#"{"entries":[]}"#.into()),
+            presentation: None,
+        };
+        let rows = action_summary_with_theme(&list_fallback, 100, theme);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows[1].to_string().trim(), "0 rows");
+
+        // 4. Non-null error JSON must not be collapsed into "0 rows".
+        let grep_err = HistoryCell::Tool {
+            action: None,
+            title: "Grep \"[\"".into(),
+            status: ToolStatus::Failed,
+            preview: Some(r#"{"error":"invalid regex","matches":[]}"#.into()),
+            presentation: None,
+        };
+        let rows = action_summary_with_theme(&grep_err, 100, theme);
+        assert!(rows[1].to_string().contains("invalid regex"), "{rows:?}");
     }
 }

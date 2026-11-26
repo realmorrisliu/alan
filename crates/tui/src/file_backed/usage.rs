@@ -26,46 +26,67 @@ impl UsageProjection {
         })
     }
 
+    pub fn ctx_pct(&self) -> Option<u64> {
+        let u = self.active_snapshot()?;
+        let ctx = ctx_tokens(u);
+        (u.context_window > 0 && ctx > 0).then(|| ctx_pct(ctx, u.context_window))
+    }
+
+    pub fn ctx_segment(&self, detailed: bool) -> Option<String> {
+        let u = self.active_snapshot()?;
+        let ctx = ctx_tokens(u);
+        if u.context_window > 0 && ctx > 0 {
+            let pct = ctx_pct(ctx, u.context_window);
+            if detailed {
+                Some(format!(
+                    "ctx {pct}% ({}/{})",
+                    format_compact_tokens(ctx),
+                    format_compact_tokens(u.context_window)
+                ))
+            } else {
+                Some(format!("ctx {pct}%"))
+            }
+        } else {
+            let total = u.session_input_tokens + u.session_output_tokens;
+            Some(format!("{} tok", format_compact_tokens(total)))
+        }
+    }
+
+    pub fn cache_hit_segment(&self) -> Option<String> {
+        let u = self.active_snapshot()?;
+        let (cached, input) = if u.input_tokens > 0 {
+            (u.cached_input_tokens, u.input_tokens)
+        } else {
+            (u.session_cached_input_tokens, u.session_input_tokens)
+        };
+        cache_hit_pct(cached, input).map(|pct| format!("{pct}% hit"))
+    }
+
+    pub fn cost_segment(&self) -> Option<String> {
+        let u = self.active_snapshot()?;
+        u.session_cost_usd
+            .or(u.cost_usd)
+            .filter(|&cost| cost > 0.0)
+            .map(|cost| format!("${cost:.4}"))
+    }
+
     pub fn prompt_label(&self) -> Option<String> {
         self.prompt_parts(true)
     }
 
+    #[cfg(test)]
     pub fn short_prompt_label(&self) -> Option<String> {
         self.prompt_parts(false)
     }
 
     fn prompt_parts(&self, include_details: bool) -> Option<String> {
-        let u = self.active_snapshot()?;
-        let mut parts = Vec::new();
-        let ctx = ctx_tokens(u);
-        if u.context_window > 0 && ctx > 0 {
-            let pct = ctx_pct(ctx, u.context_window);
-            if include_details {
-                parts.push(format!(
-                    "ctx {pct}% ({}/{})",
-                    format_compact_tokens(ctx),
-                    format_compact_tokens(u.context_window)
-                ));
-            } else {
-                parts.push(format!("ctx {pct}%"));
-            }
-        } else {
-            let total = u.session_input_tokens + u.session_output_tokens;
-            parts.push(format!("{} tok", format_compact_tokens(total)));
-        }
+        let mut parts = vec![self.ctx_segment(include_details)?];
         if include_details {
-            let (cached, input) = if u.input_tokens > 0 {
-                (u.cached_input_tokens, u.input_tokens)
-            } else {
-                (u.session_cached_input_tokens, u.session_input_tokens)
-            };
-            if let Some(cache_pct) = cache_hit_pct(cached, input) {
-                parts.push(format!("cache {cache_pct}%"));
+            if let Some(hit) = self.cache_hit_segment() {
+                parts.push(hit);
             }
-            if let Some(cost) = u.session_cost_usd.or(u.cost_usd)
-                && cost > 0.0
-            {
-                parts.push(format!("${cost:.4}"));
+            if let Some(cost) = self.cost_segment() {
+                parts.push(cost);
             }
         }
         Some(parts.join(" · "))

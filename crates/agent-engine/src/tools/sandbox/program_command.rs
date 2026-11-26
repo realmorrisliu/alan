@@ -168,6 +168,7 @@ impl Sandbox {
         };
         command.current_dir(cwd);
         self.maybe_apply_gh_config_dir_override(&mut command, cwd, backend);
+        self.maybe_sanitize_cargo_target_dir(&mut command, cwd, backend);
         Ok(command)
     }
 
@@ -233,6 +234,56 @@ impl Sandbox {
             select_non_denied_nonexistent_gh_config_dir(env.tmpdir, &self.spec.read_denylist)
         {
             command.env("GH_CONFIG_DIR", empty_dir);
+        }
+    }
+
+    fn maybe_sanitize_cargo_target_dir(
+        &self,
+        command: &mut tokio::process::Command,
+        cwd: &Path,
+        backend: SandboxBackendKind,
+    ) {
+        self.sanitize_cargo_target_dir_with_env(
+            command,
+            cwd,
+            backend,
+            std::env::var_os("CARGO_TARGET_DIR").as_deref(),
+        );
+    }
+
+    pub(crate) fn sanitize_cargo_target_dir_with_env(
+        &self,
+        command: &mut tokio::process::Command,
+        cwd: &Path,
+        backend: SandboxBackendKind,
+        cargo_target_dir: Option<&OsStr>,
+    ) {
+        if self.trust_posture.is_unsandboxed_host_account()
+            || !matches!(
+                backend,
+                SandboxBackendKind::Seatbelt | SandboxBackendKind::Landlock
+            )
+        {
+            return;
+        }
+        let Some(raw) = cargo_target_dir.filter(|val| !val.is_empty()) else {
+            return;
+        };
+        let target_path = Path::new(raw);
+        let resolved = if target_path.is_absolute() {
+            super::lexically_normalize_path(target_path)
+        } else {
+            super::lexically_normalize_path(&cwd.join(target_path))
+        };
+        if self.is_writable(&resolved) {
+            return;
+        }
+        if self.is_writable(cwd) {
+            command.env_remove("CARGO_TARGET_DIR");
+        } else if let Some(writable_root) = self.spec.writable_roots.first() {
+            command.env("CARGO_TARGET_DIR", writable_root.join("target"));
+        } else {
+            command.env_remove("CARGO_TARGET_DIR");
         }
     }
 }
@@ -476,5 +527,115 @@ mod tests {
         );
         let chosen = PathBuf::from(configured_gh_config_dir(&fallback_cmd).unwrap());
         assert!(!chosen.exists());
+    }
+
+    fn configured_env_var(
+        cmd: &tokio::process::Command,
+        key: &str,
+    ) -> Option<Option<std::ffi::OsString>> {
+        cmd.as_std()
+            .get_envs()
+            .find(|(k, _)| *k == OsStr::new(key))
+            .map(|(_, v)| v.map(std::ffi::OsStr::to_os_string))
+    }
+
+    #[test]
+    fn sanitize_cargo_target_dir_removes_or_rewrites_out_of_mount_targets() {
+        let project = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let in_mount_target = project.path().join("custom-target");
+        let outside_target = outside.path().join("shared-target");
+
+        let sandbox = Sandbox::from_spec(SandboxSpec {
+            host_mounts: Vec::new(),
+            readable_roots: vec![project.path().to_path_buf()],
+            writable_roots: vec![project.path().to_path_buf()],
+            read_denylist: Vec::new(),
+            network: super::super::NetworkPosture::Deny,
+        });
+
+        // 1. Out-of-mount absolute CARGO_TARGET_DIR under Seatbelt with writable cwd -> removed.
+        let mut cmd = tokio::process::Command::new("cargo");
+        sandbox.sanitize_cargo_target_dir_with_env(
+            &mut cmd,
+            project.path(),
+            SandboxBackendKind::Seatbelt,
+            Some(outside_target.as_os_str()),
+        );
+        assert_eq!(
+            configured_env_var(&cmd, "CARGO_TARGET_DIR"),
+            Some(None),
+            "expected CARGO_TARGET_DIR to be removed when cwd is writable"
+        );
+
+        // 2. Out-of-mount relative CARGO_TARGET_DIR under Landlock -> removed.
+        let mut rel_cmd = tokio::process::Command::new("cargo");
+        sandbox.sanitize_cargo_target_dir_with_env(
+            &mut rel_cmd,
+            project.path(),
+            SandboxBackendKind::Landlock,
+            Some(OsStr::new("../escaped-target")),
+        );
+        assert_eq!(
+            configured_env_var(&rel_cmd, "CARGO_TARGET_DIR"),
+            Some(None),
+            "expected relative out-of-mount CARGO_TARGET_DIR to be removed"
+        );
+
+        // 3. In-mount writable CARGO_TARGET_DIR -> preserved (no override).
+        let mut inside_cmd = tokio::process::Command::new("cargo");
+        sandbox.sanitize_cargo_target_dir_with_env(
+            &mut inside_cmd,
+            project.path(),
+            SandboxBackendKind::Seatbelt,
+            Some(in_mount_target.as_os_str()),
+        );
+        assert_eq!(
+            configured_env_var(&inside_cmd, "CARGO_TARGET_DIR"),
+            None,
+            "in-mount writable CARGO_TARGET_DIR must be left untouched"
+        );
+
+        // 4. Out-of-mount CARGO_TARGET_DIR when cwd is read-only -> redirected to writable_root/target.
+        let ro_dir = tempfile::tempdir().unwrap();
+        let mut ro_cmd = tokio::process::Command::new("cargo");
+        sandbox.sanitize_cargo_target_dir_with_env(
+            &mut ro_cmd,
+            ro_dir.path(),
+            SandboxBackendKind::Seatbelt,
+            Some(outside_target.as_os_str()),
+        );
+        assert_eq!(
+            configured_env_var(&ro_cmd, "CARGO_TARGET_DIR"),
+            Some(Some(project.path().join("target").into_os_string())),
+            "expected fallback to writable_root/target when cwd is read-only"
+        );
+
+        // 5. Unsandboxed HostAccountTrusted or HostMountPathGuard -> preserved untouched.
+        let mut no_sb_cmd = tokio::process::Command::new("cargo");
+        sandbox.sanitize_cargo_target_dir_with_env(
+            &mut no_sb_cmd,
+            project.path(),
+            SandboxBackendKind::HostMountPathGuard,
+            Some(outside_target.as_os_str()),
+        );
+        assert_eq!(configured_env_var(&no_sb_cmd, "CARGO_TARGET_DIR"), None);
+
+        let host_sandbox = Sandbox::from_spec(SandboxSpec {
+            host_mounts: Vec::new(),
+            readable_roots: vec![project.path().to_path_buf()],
+            writable_roots: vec![project.path().to_path_buf()],
+            read_denylist: Vec::new(),
+            network: super::super::NetworkPosture::Allow,
+        })
+        .with_trust_posture(crate::policy::TrustPosture::HostAccountTrusted);
+        let mut host_cmd = tokio::process::Command::new("cargo");
+        host_sandbox.sanitize_cargo_target_dir_with_env(
+            &mut host_cmd,
+            project.path(),
+            SandboxBackendKind::Seatbelt,
+            Some(outside_target.as_os_str()),
+        );
+        assert_eq!(configured_env_var(&host_cmd, "CARGO_TARGET_DIR"), None);
     }
 }

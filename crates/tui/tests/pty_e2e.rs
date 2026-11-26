@@ -809,7 +809,7 @@ fn pty_e2e_m6_help_no_ghost_esc_dismiss_completion_shift_tab_and_login() -> Resu
             screen.wait_for("/help rendered cleanly", Duration::from_secs(3), |s, _| {
                 s.contains("Commands:")
                     && s.contains("Shortcuts & Modals:")
-                    && s.contains("arrows, Esc)")
+                    && s.contains("↑↓/jk, Esc)")
             })?;
         assert!(
             !help_screen.contains("=(o.o)="),
@@ -821,7 +821,7 @@ fn pty_e2e_m6_help_no_ghost_esc_dismiss_completion_shift_tab_and_login() -> Resu
         );
         let continuation_line = help_screen
             .lines()
-            .find(|line| line.contains("arrows, Esc)"))
+            .find(|line| line.contains("Esc)"))
             .expect("wrapped Ctrl+O continuation line");
         assert!(
             continuation_line.starts_with("   "),

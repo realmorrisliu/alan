@@ -5,6 +5,7 @@ pub mod composer;
 mod file_backed;
 pub mod form;
 pub mod history;
+pub(crate) mod hyperlink;
 mod reconcile;
 pub mod terminal;
 pub mod theme;

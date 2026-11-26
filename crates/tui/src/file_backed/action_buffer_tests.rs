@@ -173,7 +173,7 @@ fn modal_keys_and_paste_preserve_composer_intent_completion_and_inline() {
     app.composer.set_text("/help");
     app.handle_submit();
     let help = app.notice.unwrap();
-    for key in ["Ctrl+O", "arrows", "PgUp/PgDn", "Esc"] {
-        assert!(help.contains(key));
+    for key in ["Ctrl+T", "Ctrl+O", "s Status", "Esc"] {
+        assert!(help.contains(key), "missing {key} in help: {help}");
     }
 }

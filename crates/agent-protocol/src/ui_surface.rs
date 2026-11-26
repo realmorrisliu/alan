@@ -242,6 +242,48 @@ impl UiUsageSnapshot {
     }
 }
 
+/// Read-only live task budget projection published at `machine/ui/budget`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct UiBudgetSnapshot {
+    pub version: u16,
+    #[serde(default)]
+    pub elapsed_secs: u64,
+    #[serde(default)]
+    pub max_secs: u64,
+    #[serde(default)]
+    pub tool_calls: u64,
+    #[serde(default)]
+    pub max_tool_calls: u64,
+    #[serde(default)]
+    pub model_calls: u64,
+    #[serde(default)]
+    pub max_model_calls: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_extensions_used: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_auto_extensions: Option<u32>,
+}
+
+impl UiBudgetSnapshot {
+    /// Empty budget snapshot with no limits reported yet.
+    pub fn empty() -> Self {
+        Self {
+            version: UI_SURFACE_VERSION,
+            ..Self::default()
+        }
+    }
+
+    /// Whether the document is a version this crate understands.
+    pub fn is_valid(&self) -> bool {
+        self.version == UI_SURFACE_VERSION
+    }
+
+    /// Whether at least one finite budget limit is present.
+    pub fn has_limits(&self) -> bool {
+        self.max_secs > 0 || self.max_tool_calls > 0 || self.max_model_calls > 0
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UiNoticeKind {
