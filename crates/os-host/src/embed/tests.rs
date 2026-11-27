@@ -649,3 +649,104 @@ async fn embedded_builtin_file_tools_work_on_app_mount_and_memory_and_block_syst
 
     app.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn embedded_alan_root_and_sessions_enforce_client_actor_view() {
+    use alan_ap::{ErrorCode, Fid, OpenMode, Request, Response};
+
+    let provider = MockLlmProvider::new()
+        .with_responses(vec![mock_response("root ok"), mock_response("session ok")]);
+    let app = EmbeddedAlan::boot(EmbeddedConfig::ephemeral(LlmSource::Client(
+        LlmClient::new(provider),
+    )))
+    .await
+    .unwrap();
+    let session = app.open_session(SessionOptions::default()).await.unwrap();
+    let child_session = app
+        .spawn_child_session(session.pid(), SessionOptions::default())
+        .await
+        .unwrap();
+
+    let handles = [
+        ("root", app.root_transport(), "/agent/root".to_string()),
+        (
+            "session",
+            session.transport(),
+            session.agent_path().to_string(),
+        ),
+        (
+            "child_session",
+            child_session.transport(),
+            child_session.agent_path().to_string(),
+        ),
+    ];
+
+    for (label, transport, prefix) in handles {
+        for (idx, rel) in [
+            "io/output",
+            "machine/tape",
+            "machine/ui/activity",
+            "machine/ui/events",
+            "requests/clone",
+            "actions/clone",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let path = format!("{prefix}/{rel}");
+            let fid = Fid(900 + idx as u64);
+            let names: Vec<String> = path
+                .split('/')
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect();
+            transport
+                .call(Request::Walk {
+                    fid: Fid::ROOT,
+                    newfid: fid,
+                    names,
+                })
+                .await
+                .unwrap();
+            let Response::Stat { stat } = transport.call(Request::Stat { fid }).await.unwrap()
+            else {
+                panic!("expected Stat for {path}");
+            };
+            assert!(
+                !stat.writable,
+                "{label}: {path} must report stat.writable == false"
+            );
+            for mode in [
+                OpenMode::Write,
+                OpenMode::WriteExclusive,
+                OpenMode::ReadWrite,
+            ] {
+                assert_eq!(
+                    transport.call(Request::Open { fid, mode }).await,
+                    Err(ErrorCode::NoAccess),
+                    "{label}: {path} open({mode:?}) must fail with NoAccess"
+                );
+            }
+            transport.call(Request::Clunk { fid }).await.unwrap();
+        }
+    }
+
+    // Client-writable `io/input` continues to work on root and opened session.
+    let mut root_stream = app.root_agent().event_stream().await.unwrap();
+    let s_root = app.root_agent().submit_text("ping root").await.unwrap();
+    assert_eq!(
+        collect_text(&read_until_submission(&mut root_stream, &s_root).await),
+        "root ok"
+    );
+
+    let mut session_stream = session.event_stream().await.unwrap();
+    let s_sess = session.submit_text("ping session").await.unwrap();
+    assert_eq!(
+        collect_text(&read_until_submission(&mut session_stream, &s_sess).await),
+        "session ok"
+    );
+
+    child_session.close().await.unwrap();
+    session.close().await.unwrap();
+    app.shutdown().await.unwrap();
+}

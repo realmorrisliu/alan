@@ -9,6 +9,27 @@ use std::{
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid};
 
 use super::{NEXT_BACKING_FID, Node};
+use crate::actor_view::ResolvedTarget;
+
+pub(super) fn resolved_target_of(node: Node) -> ResolvedTarget {
+    match node {
+        Node::Root => ResolvedTarget::Root,
+        Node::AgentRoot { pid, .. } => ResolvedTarget::AgentRoot { pid },
+        Node::AgentChildren { pid } => ResolvedTarget::AgentChildren { pid },
+        Node::AgentFile {
+            is_history: true,
+            names,
+            ..
+        } => ResolvedTarget::History { names },
+        Node::AgentFile {
+            is_history: false,
+            pid,
+            names,
+            ..
+        } => ResolvedTarget::AgentSurface { pid, names },
+        Node::ProcFile { pid, names, .. } => ResolvedTarget::ProcSurface { pid, names },
+    }
+}
 
 pub(super) async fn rollback_created_fid(server: &Arc<dyn FileServer>, fid: Fid) {
     if server.remove(fid).await.is_err() {

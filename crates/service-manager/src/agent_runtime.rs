@@ -360,6 +360,20 @@ impl AgentRuntimeService {
         if launch.is_primary_root {
             self.agent_root.set_root_process(pid.0.to_string()).await;
         }
+        let actor_view = if launch.request.is_some() || launch.parent_for_host_mounts.is_some() {
+            alan_agentfs::AgentActorView::Child {
+                self_pid: pid.0.to_string(),
+            }
+        } else {
+            alan_agentfs::AgentActorView::Engine {
+                self_pid: pid.0.to_string(),
+            }
+        };
+        launch.namespace.replace_mount(
+            "/agent",
+            InProcessTransport::new(self.agent_root.actor_view(actor_view)),
+            Access::ReadWrite,
+        );
 
         let runtime_procfs = self.procfs.clone().with_runner(self.process_runner());
         runtime_procfs

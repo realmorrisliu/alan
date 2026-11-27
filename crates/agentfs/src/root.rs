@@ -27,11 +27,14 @@ use alan_ap::{
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::AgentFs;
+use crate::{
+    AgentFs,
+    actor_view::{ResolvedTarget, is_write_intent},
+};
 use namespace::{
     agent_children_qid, is_agent_overlay_reserved_name, is_proc_overlay_name, namespace_agent_qid,
-    proc_child_names, read_file_text, read_listing, release_node, rollback_created_fid, root_qid,
-    slice,
+    proc_child_names, read_file_text, read_listing, release_node, resolved_target_of,
+    rollback_created_fid, root_qid, slice,
 };
 use process_event_bridge::{
     agent_event_sink, input_event_sink, io_event_sink, output_event_sink, process_event_sink,
@@ -60,6 +63,8 @@ enum Node {
         pid: String,
         backing: Arc<dyn FileServer>,
         backing_fid: Fid,
+        names: Vec<String>,
+        is_history: bool,
     },
     ProcFile {
         proc: Arc<dyn FileServer>,
@@ -71,6 +76,26 @@ enum Node {
 
 struct Entry {
     node: Node,
+}
+
+struct AgentBase {
+    pid: String,
+    backing: Arc<dyn FileServer>,
+    fid: Fid,
+    names: Vec<String>,
+    is_history: bool,
+}
+
+impl AgentBase {
+    fn root(pid: String, backing: Arc<dyn FileServer>) -> Self {
+        Self {
+            pid,
+            backing,
+            fid: Fid::ROOT,
+            names: Vec::new(),
+            is_history: false,
+        }
+    }
 }
 
 struct ProcCreateDir {
@@ -392,15 +417,20 @@ impl AgentRootFs {
     async fn bind_agent_walk(
         &self,
         newfid: Fid,
-        pid: String,
-        backing: Arc<dyn FileServer>,
-        base_fid: Fid,
+        base: AgentBase,
         names: &[String],
     ) -> Result<Node, ErrorCode> {
-        if names.is_empty() && base_fid == Fid::ROOT {
+        let AgentBase {
+            pid,
+            backing,
+            fid: base_fid,
+            names: mut full_names,
+            is_history,
+        } = base;
+        if names.is_empty() && base_fid == Fid::ROOT && !is_history {
             return Ok(Node::AgentRoot { pid, backing });
         }
-        if base_fid == Fid::ROOT {
+        if base_fid == Fid::ROOT && !is_history {
             if names.first().is_some_and(|name| name == "children") {
                 return self.bind_agent_child_walk(newfid, &pid, &names[1..]).await;
             }
@@ -409,14 +439,15 @@ impl AgentRootFs {
             }
         }
         let backing_fid = Fid(NEXT_BACKING_FID.fetch_add(1, Ordering::Relaxed));
-        match backing.walk(base_fid, backing_fid, names).await {
-            Ok(_) => Ok(Node::AgentFile {
-                pid,
-                backing,
-                backing_fid,
-            }),
-            Err(e) => Err(e),
-        }
+        backing.walk(base_fid, backing_fid, names).await?;
+        full_names.extend_from_slice(names);
+        Ok(Node::AgentFile {
+            pid,
+            backing,
+            backing_fid,
+            names: full_names,
+            is_history,
+        })
     }
 
     async fn bind_agent_child_walk(
@@ -438,7 +469,7 @@ impl AgentRootFs {
         if !self.proc_parent_matches(&pid, parent_pid).await? {
             return Err(ErrorCode::NotFound);
         }
-        Box::pin(self.bind_agent_walk(newfid, pid, backing, Fid::ROOT, &names[1..])).await
+        Box::pin(self.bind_agent_walk(newfid, AgentBase::root(pid, backing), &names[1..])).await
     }
 
     async fn bind_proc_walk(
@@ -545,13 +576,18 @@ impl AgentRootFs {
     async fn create_agent_file(
         &self,
         newfid: Fid,
-        pid: String,
-        backing: Arc<dyn FileServer>,
-        dir_fid: Fid,
+        base: AgentBase,
         name: &str,
         kind: FileKind,
     ) -> Result<Qid, ErrorCode> {
-        if dir_fid == Fid::ROOT && is_agent_overlay_reserved_name(name) {
+        let AgentBase {
+            pid,
+            backing,
+            fid: dir_fid,
+            names: dir_names,
+            is_history,
+        } = base;
+        if dir_fid == Fid::ROOT && !is_history && is_agent_overlay_reserved_name(name) {
             return Err(ErrorCode::BadRequest);
         }
         let backing_fid = Fid(NEXT_BACKING_FID.fetch_add(1, Ordering::Relaxed));
@@ -569,6 +605,8 @@ impl AgentRootFs {
                     pid: pid.clone(),
                     backing: backing.clone(),
                     backing_fid,
+                    names: proc_child_names(dir_names, name),
+                    is_history,
                 },
             )
             .await
@@ -646,25 +684,35 @@ impl FileServer for AgentRootFs {
                         pid: "history".to_string(),
                         backing: history,
                         backing_fid,
+                        names: names[1..].to_vec(),
+                        is_history: true,
                     }
                 } else {
                     let (pid, backing) = self.entry_for_name(&names[0]).await?;
-                    self.bind_agent_walk(newfid, pid, backing, Fid::ROOT, &names[1..])
+                    self.bind_agent_walk(newfid, AgentBase::root(pid, backing), &names[1..])
                         .await?
                 }
             }
             Node::AgentRoot { pid, backing } => {
-                self.bind_agent_walk(newfid, pid, backing, Fid::ROOT, names)
+                self.bind_agent_walk(newfid, AgentBase::root(pid, backing), names)
                     .await?
             }
             Node::AgentChildren { pid } => self.bind_agent_child_walk(newfid, &pid, names).await?,
             Node::AgentFile {
                 pid,
                 backing,
-                backing_fid,
+                backing_fid: fid,
+                names: base_names,
+                is_history,
             } => {
-                self.bind_agent_walk(newfid, pid, backing, backing_fid, names)
-                    .await?
+                let base = AgentBase {
+                    pid,
+                    backing,
+                    fid,
+                    names: base_names,
+                    is_history,
+                };
+                self.bind_agent_walk(newfid, base, names).await?
             }
             Node::ProcFile {
                 proc,
@@ -693,14 +741,14 @@ impl FileServer for AgentRootFs {
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
         match self.node(fid).await? {
             Node::Root => {
-                if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+                if is_write_intent(mode) {
                     return Err(ErrorCode::NoAccess);
                 }
                 let listing = self.root_listing().await?;
                 Ok(root_qid(&listing))
             }
             Node::AgentChildren { pid } => {
-                if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+                if is_write_intent(mode) {
                     return Err(ErrorCode::NoAccess);
                 }
                 let listing = self.agent_child_listing(&pid).await?;
@@ -828,17 +876,24 @@ impl FileServer for AgentRootFs {
             Node::Root => Err(ErrorCode::Unsupported),
             Node::AgentChildren { .. } => Err(ErrorCode::Unsupported),
             Node::AgentRoot { pid, backing } => {
-                self.create_agent_file(newfid, pid, backing, Fid::ROOT, name, kind)
+                self.create_agent_file(newfid, AgentBase::root(pid, backing), name, kind)
                     .await
             }
             Node::AgentFile {
                 pid,
                 backing,
-                backing_fid,
-                ..
+                backing_fid: fid,
+                names,
+                is_history,
             } => {
-                self.create_agent_file(newfid, pid, backing, backing_fid, name, kind)
-                    .await
+                let base = AgentBase {
+                    pid,
+                    backing,
+                    fid,
+                    names,
+                    is_history,
+                };
+                self.create_agent_file(newfid, base, name, kind).await
             }
             Node::ProcFile {
                 proc,
@@ -895,6 +950,10 @@ impl FileServer for AgentRootFs {
 }
 
 impl AgentRootFs {
+    pub(crate) async fn target_of(&self, fid: Fid) -> Result<ResolvedTarget, ErrorCode> {
+        Ok(resolved_target_of(self.node(fid).await?))
+    }
+
     async fn node(&self, fid: Fid) -> Result<Node, ErrorCode> {
         let state = self.state.lock().await;
         Self::node_of(&state, fid)

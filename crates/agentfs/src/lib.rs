@@ -31,11 +31,13 @@
 //! servers: it derives visible pids from `/proc` and forwards `/agent/<pid>` or
 //! `/agent/root` to the corresponding [`AgentFs`] backing tree.
 
+mod actor_view;
 mod conformance;
 mod machine_projection;
 mod request_control;
 mod root;
 mod surface_state;
+use actor_view::is_write_intent;
 use surface_state::node_identity;
 
 use std::collections::{BTreeMap, HashMap};
@@ -49,6 +51,7 @@ use alan_knowledge::{ContentHash, KnowledgeError, KnowledgeStore, RetentionPolic
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
+pub use actor_view::{AgentActorView, AgentFsView, AgentRootView};
 pub use conformance::{AgentConformanceChecker, ConformanceIssue, ConformanceReport};
 pub use root::AgentRootFs;
 
@@ -410,7 +413,7 @@ impl FileServer for AgentFs {
         if fid == Fid::ROOT {
             // The root is a read-only directory: a write-intent open is denied
             // here rather than slipping through the fast-path.
-            if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+            if is_write_intent(mode) {
                 return Err(ErrorCode::NoAccess);
             }
             return Ok(qid_v0(&Node::Root));
@@ -422,9 +425,7 @@ impl FileServer for AgentFs {
         let node = state.node_of(fid)?;
         // Dial-time access check: a write-intent open on a read-only node fails at
         // open, not later as Unsupported on write.
-        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite)
-            && !surface_state::is_writable(&node)
-        {
+        if is_write_intent(mode) && !surface_state::is_writable(&node) {
             return Err(ErrorCode::NoAccess);
         }
         // Exclusive-write lease on machine/tape (agent-file-layout-contract): while
@@ -434,8 +435,7 @@ impl FileServer for AgentFs {
         // is the M2 in-server form of the GENERATING lease (the generator is the
         // single tape writer); promotion to an aP-layer mode is owned by the future
         // external-writers work, for writers that bypass this server.
-        let is_tape_write =
-            matches!(node, Node::Tape) && matches!(mode, OpenMode::Write | OpenMode::ReadWrite);
+        let is_tape_write = matches!(node, Node::Tape) && is_write_intent(mode);
         if is_tape_write && state.tape_writer.is_some() {
             return Err(ErrorCode::NoAccess);
         }
@@ -598,7 +598,7 @@ impl FileServer for AgentFs {
         let has_write = state
             .fids
             .get(&fid)
-            .is_some_and(|f| matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)));
+            .is_some_and(|f| f.mode.is_some_and(is_write_intent));
         if !has_write {
             return Err(ErrorCode::NoAccess);
         }
