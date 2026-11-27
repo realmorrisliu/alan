@@ -621,3 +621,30 @@ async fn tier2_malformed_diagnostics_surface_finish_reason_without_leaking_secre
         }
     }
 }
+
+#[test]
+fn guardian_default_timeout_and_native_deadline_leave_tier2_headroom() {
+    use crate::runtime::smart_approval::tier2_fallback::{
+        MAX_NATIVE_DECISION_DEADLINE_MS, remaining_native_decision_ms,
+    };
+
+    let cfg = GuardianConfig::default();
+    assert_eq!(cfg.timeout_secs, 60);
+
+    let full_deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(cfg.timeout_secs);
+    let native_ms = remaining_native_decision_ms(full_deadline).expect("non-zero native deadline");
+    assert!(
+        native_ms <= MAX_NATIVE_DECISION_DEADLINE_MS,
+        "native deadline {native_ms} must stay capped at {MAX_NATIVE_DECISION_DEADLINE_MS}"
+    );
+    assert!(
+        (cfg.timeout_secs * 1000) - native_ms >= 45_000,
+        "Tier 2 must keep at least 45s headroom after a capped Tier 1 timeout"
+    );
+
+    let short_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    let short_native_ms =
+        remaining_native_decision_ms(short_deadline).expect("non-zero short deadline");
+    assert!(short_native_ms <= 3_000);
+}

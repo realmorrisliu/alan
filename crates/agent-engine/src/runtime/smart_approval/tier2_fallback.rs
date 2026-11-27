@@ -20,6 +20,9 @@ use crate::runtime::transition::{
 };
 
 pub(crate) const MAX_DECISION_DEADLINE_MS: u64 = 30_000;
+/// Cap Tier 1 native `decide()` so an unavailable/slow decisions endpoint cannot
+/// consume the entire aggregate Guardian budget needed for Tier 2 structured fallback.
+pub(crate) const MAX_NATIVE_DECISION_DEADLINE_MS: u64 = 15_000;
 
 pub(crate) enum DecisionAttempt {
     Success(DecisionResponse),
@@ -53,6 +56,12 @@ pub(crate) fn remaining_decision_ms(deadline: Instant) -> Option<u64> {
     if ms == 0 { None } else { Some(ms) }
 }
 
+pub(crate) fn remaining_native_decision_ms(deadline: Instant) -> Option<u64> {
+    let remaining = remaining_duration(deadline)?;
+    let ms = (remaining.as_millis() as u64).min(MAX_NATIVE_DECISION_DEADLINE_MS);
+    if ms == 0 { None } else { Some(ms) }
+}
+
 /// Attempt Tier 1 native `decide()` on one captured Connection.
 pub(crate) async fn try_native_decision(
     connection: &NamespaceDecisionConnection,
@@ -64,7 +73,7 @@ pub(crate) async fn try_native_decision(
     if cancel.is_cancelled() {
         return DecisionAttempt::FailClosed(format!("{label} cancelled"));
     }
-    let Some(deadline_ms) = remaining_decision_ms(deadline) else {
+    let Some(deadline_ms) = remaining_native_decision_ms(deadline) else {
         return DecisionAttempt::FailClosed(format!("{label} aggregate deadline expired"));
     };
     classify_decision_result(
