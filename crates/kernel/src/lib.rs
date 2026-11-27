@@ -13,6 +13,7 @@
 //! storage-backed file servers, never of the kernel.
 
 mod bootstrap;
+mod lease;
 mod mountfs;
 mod namespace;
 mod process;

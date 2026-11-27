@@ -1,11 +1,14 @@
 //! aP file-server adapter for the synthetic /proc tree.
 
+use std::sync::Arc;
+
 use super::{Node, ProcFid, ProcFidKey, ProcFs, ProcessInvocation, State, parse_pid};
 use crate::{ExecSpec, LiveNamespace, Pid, Status};
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, ProcessEvent, Qid, Stat, Stream,
 };
 use async_trait::async_trait;
+use tokio::sync::Mutex;
 
 const MAX_EXEC_SPEC_BYTES: usize = 1 << 16; // 64 KiB
 const MAX_PROCESS_INPUT_BYTES: usize = 1 << 20; // 1 MiB
@@ -198,6 +201,7 @@ impl State {
 enum ProcStreamWrite {
     Output {
         pid: Pid,
+        io_lock: Arc<Mutex<()>>,
         stream: Stream,
         events: Stream,
     },
@@ -234,6 +238,9 @@ impl FileServer for ProcFs {
         let fid_key = self.fid_key(fid);
         let node = state.node_of(fid_key, &self.root_node)?;
         if fid == Fid::ROOT && !matches!(node, Node::Clone) {
+            if is_write_intent(mode) {
+                return Err(ErrorCode::NoAccess);
+            }
             return Ok(state.qid(&node, self.view_id, &self.spawn_context.namespace));
         }
         // Reopening a live fid before clunk is rejected, so a retried open cannot
@@ -241,11 +248,17 @@ impl FileServer for ProcFs {
         if state.fids.get(&fid_key).is_some_and(|f| f.mode.is_some()) {
             return Err(ErrorCode::BadRequest);
         }
+        // Dial-time access check: reject any write-intent open on read-only
+        // `/proc` nodes (including `io/events`, `status`, `exit`, `parent`,
+        // `credentials`, `namespace`, `descriptors`, and directories).
+        if is_write_intent(mode) && !is_writable(&node) {
+            return Err(ErrorCode::NoAccess);
+        }
         // Clone-via-open: spawning requires write intent (you write the exec
         // spec), so a read-only open cannot allocate an uncommittable — and thus
         // leaked — pending slot.
         if matches!(node, Node::Clone) {
-            if !matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+            if !is_write_intent(mode) {
                 return Err(ErrorCode::NoAccess);
             }
             let parent = self.spawn_context.parent;
@@ -321,7 +334,8 @@ impl FileServer for ProcFs {
             let has_write_intent = state
                 .fids
                 .get(&fid_key)
-                .is_some_and(|f| matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)));
+                .and_then(|f| f.mode)
+                .is_some_and(is_write_intent);
             match node {
                 // Exec-spec document for a clone fid: buffer at the given offset until
                 // clunk (commit-on-clunk; honor offsets, bound size, reject overflow).
@@ -366,18 +380,26 @@ impl FileServer for ProcFs {
                     if !has_write_intent {
                         return Err(ErrorCode::NoAccess);
                     }
+                    let stream = state
+                        .outputs
+                        .get(&pid)
+                        .cloned()
+                        .ok_or(ErrorCode::NotFound)?;
+                    let events = state
+                        .io_events
+                        .get(&pid)
+                        .cloned()
+                        .ok_or(ErrorCode::NotFound)?;
+                    let io_lock = state
+                        .io_locks
+                        .entry(pid)
+                        .or_insert_with(|| Arc::new(Mutex::new(())))
+                        .clone();
                     ProcStreamWrite::Output {
                         pid,
-                        stream: state
-                            .outputs
-                            .get(&pid)
-                            .cloned()
-                            .ok_or(ErrorCode::NotFound)?,
-                        events: state
-                            .io_events
-                            .get(&pid)
-                            .cloned()
-                            .ok_or(ErrorCode::NotFound)?,
+                        io_lock,
+                        stream,
+                        events,
                     }
                 }
                 _ => return Err(ErrorCode::Unsupported),
@@ -387,12 +409,11 @@ impl FileServer for ProcFs {
         match stream_write {
             ProcStreamWrite::Output {
                 pid,
+                io_lock,
                 stream,
                 events,
             } => {
-                stream.append(data).await;
-                append_io_event(&events, "output", count).await;
-                self.publish_process_event(pid, ProcessEvent::Output { count })
+                self.commit_io_output(pid, io_lock, stream, events, data, count)
                     .await;
             }
             ProcStreamWrite::Status { pid } => {
@@ -414,18 +435,9 @@ impl FileServer for ProcFs {
         // Report the readable byte length so clients can size reads; write-only
         // surfaces (clone/ctl) are 0, and a process output is its retained length.
         let length = match &node {
-            Node::Input(pid) => match state.inputs.get(pid) {
-                Some(stream) => stream.len().await,
-                None => 0,
-            },
-            Node::Output(pid) => match state.outputs.get(pid) {
-                Some(stream) => stream.len().await,
-                None => 0,
-            },
-            Node::IoEvents(pid) => match state.io_events.get(pid) {
-                Some(stream) => stream.len().await,
-                None => 0,
-            },
+            Node::Input(pid) => state.inputs.get(pid).map_or(0, Stream::len_sync),
+            Node::Output(pid) => state.outputs.get(pid).map_or(0, Stream::len_sync),
+            Node::IoEvents(pid) => state.io_events.get(pid).map_or(0, Stream::len_sync),
             Node::Clone | Node::Ctl(_) => 0,
             other => state
                 .file_bytes(
@@ -532,14 +544,15 @@ impl FileServer for ProcFs {
                         let input = Stream::new();
                         let output = Stream::new();
                         let io_events = Stream::new();
+                        let io_lock = Arc::new(Mutex::new(()));
                         state.inputs.insert(committed, input);
                         state.outputs.insert(committed, output.clone());
                         state.io_events.insert(committed, io_events.clone());
+                        state.io_locks.insert(committed, io_lock.clone());
                         state.event_history.insert(committed, Vec::new());
-                        let runner_launch = self
-                            .runner
-                            .clone()
-                            .map(|runner| (runner, output, io_events, invocation, self.clone()));
+                        let runner_launch = self.runner.clone().map(|runner| {
+                            (runner, io_lock, output, io_events, invocation, self.clone())
+                        });
                         (Some((committed, runner_launch)), None)
                     }
                     Err(_) => {
@@ -558,18 +571,21 @@ impl FileServer for ProcFs {
                     .get(&pid)
                     .cloned()
                     .ok_or(ErrorCode::NotFound)?;
+                let io_lock = state
+                    .io_locks
+                    .entry(pid)
+                    .or_insert_with(|| Arc::new(Mutex::new(())))
+                    .clone();
                 let count = f.write_buf.len() as u32;
                 let mut framed = format!("{}\n", f.write_buf.len()).into_bytes();
                 framed.extend_from_slice(&f.write_buf);
-                (None, Some((pid, stream, events, framed, count)))
+                (None, Some((pid, io_lock, stream, events, framed, count)))
             } else {
                 (None, None)
             }
         };
-        if let Some((pid, stream, events, framed, count)) = committed_input {
-            stream.append(&framed).await;
-            append_io_event(&events, "input", count).await;
-            self.publish_process_event(pid, ProcessEvent::Input { count })
+        if let Some((pid, io_lock, stream, events, framed, count)) = committed_input {
+            self.commit_io_input(pid, io_lock, stream, events, &framed, count)
                 .await;
         }
         if let Some((committed, runner_launch)) = committed_process {
@@ -580,7 +596,7 @@ impl FileServer for ProcFs {
                 },
             )
             .await;
-            if let Some((runner, output, io_events, invocation, events)) = runner_launch {
+            if let Some((runner, io_lock, output, io_events, invocation, events)) = runner_launch {
                 let state = self.state.clone();
                 let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
                 let task = tokio::spawn(async move {
@@ -588,10 +604,15 @@ impl FileServer for ProcFs {
                     let outcome = runner.run(invocation.clone()).await;
                     if !outcome.output.is_empty() {
                         let count = outcome.output.len() as u32;
-                        output.append(&outcome.output).await;
-                        append_io_event(&io_events, "output", count).await;
                         events
-                            .publish_process_event(invocation.pid, ProcessEvent::Output { count })
+                            .commit_io_output(
+                                invocation.pid,
+                                io_lock,
+                                output,
+                                io_events,
+                                &outcome.output,
+                                count,
+                            )
                             .await;
                     }
                     {
@@ -673,6 +694,13 @@ fn is_writable(node: &Node) -> bool {
     )
 }
 
+fn is_write_intent(mode: OpenMode) -> bool {
+    matches!(
+        mode,
+        OpenMode::Write | OpenMode::WriteExclusive | OpenMode::ReadWrite
+    )
+}
+
 fn valid_descriptor_path(path: &str) -> bool {
     path.starts_with('/')
         && !path
@@ -684,9 +712,4 @@ fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {
     let start = (offset as usize).min(bytes.len());
     let end = bytes.len().min(start + count as usize);
     bytes[start..end].to_vec()
-}
-
-async fn append_io_event(events: &Stream, kind: &str, count: u32) {
-    let record = format!("{kind}:{count}\n");
-    events.append(record.as_bytes()).await;
 }

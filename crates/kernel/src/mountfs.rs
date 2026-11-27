@@ -26,6 +26,7 @@ use alan_ap::{
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
+use crate::lease::{ExclusiveLeaseTable, LeaseGuard};
 use crate::namespace::{Namespace, Resolved};
 
 #[cfg(test)]
@@ -75,6 +76,9 @@ struct Entry {
     path: Vec<String>,
     /// `Some` when the path is at/below a mount; `None` for a synthetic directory.
     backing: Option<Backing>,
+    /// Active kernel write lease held by this open fid; released on `clunk`,
+    /// `remove`, `clunk_all`, or `MountFs` drop.
+    lease: Option<LeaseGuard>,
     /// Temporarily reserves a caller-visible fid while a backing create is in
     /// flight. Normal operations cannot use it until the backing tree succeeds and
     /// this entry is replaced with a real backing fid.
@@ -90,6 +94,7 @@ struct State {
 /// The namespace-as-`FileServer`.
 pub struct MountFs {
     ns: LiveNamespace,
+    leases: Arc<ExclusiveLeaseTable>,
     read_only_prefixes: Vec<Vec<String>>,
     state: Arc<Mutex<State>>,
 }
@@ -102,6 +107,7 @@ pub struct MountFs {
 #[derive(Clone)]
 pub struct LiveNamespace {
     ns: Arc<RwLock<Namespace>>,
+    leases: Arc<ExclusiveLeaseTable>,
     generation: Arc<AtomicU32>,
 }
 
@@ -116,8 +122,10 @@ impl std::fmt::Debug for LiveNamespace {
 impl LiveNamespace {
     /// Create a live handle around an assembled namespace.
     pub fn new(ns: Namespace) -> Self {
+        let leases = ns.leases();
         Self {
             ns: Arc::new(RwLock::new(ns)),
+            leases,
             generation: Arc::new(AtomicU32::new(0)),
         }
     }
@@ -183,6 +191,10 @@ impl LiveNamespace {
         self.read().resolve_candidates(path)
     }
 
+    pub(crate) fn leases(&self) -> Arc<ExclusiveLeaseTable> {
+        Arc::clone(&self.leases)
+    }
+
     fn bump_generation(&self) {
         self.generation.fetch_add(1, Ordering::Relaxed);
     }
@@ -204,6 +216,7 @@ impl MountFs {
 
     /// Wrap a live namespace mount handle as a single aP file server.
     pub fn from_live_namespace(ns: LiveNamespace) -> Self {
+        let leases = ns.leases();
         let mut fids = HashMap::new();
         // The root fid is the namespace root: the synthetic directory at `/`.
         fids.insert(
@@ -211,12 +224,14 @@ impl MountFs {
             Entry {
                 path: Vec::new(),
                 backing: None,
+                lease: None,
                 reserved: false,
                 walk_cancel: None,
             },
         );
         Self {
             ns,
+            leases,
             read_only_prefixes: Vec::new(),
             state: Arc::new(Mutex::new(State { fids })),
         }
@@ -277,11 +292,11 @@ impl MountFs {
                 .filter_map(|entry| {
                     entry
                         .backing
-                        .map(|backing| (backing.resolved, backing.backing_fid))
+                        .map(|backing| (backing.resolved, backing.backing_fid, entry.lease))
                 })
                 .collect::<Vec<_>>()
         };
-        for (resolved, fid) in backings {
+        for (resolved, fid, _lease) in backings {
             let _ = resolved.call(Request::Clunk { fid }).await;
         }
     }
@@ -431,6 +446,7 @@ impl FileServer for MountFs {
                     Entry {
                         path,
                         backing: None,
+                        lease: None,
                         reserved: false,
                         walk_cancel: None,
                     },
@@ -448,6 +464,7 @@ impl FileServer for MountFs {
                         backing_fid,
                         is_dir: false,
                     }),
+                    lease: None,
                     reserved: true,
                     walk_cancel: Some(cancel),
                 },
@@ -521,6 +538,7 @@ impl FileServer for MountFs {
                             backing_fid,
                             is_dir: qid.kind == FileKind::Dir,
                         }),
+                        lease: None,
                         reserved: false,
                         walk_cancel: None,
                     },
@@ -557,6 +575,7 @@ impl FileServer for MountFs {
                 Entry {
                     path,
                     backing: None,
+                    lease: None,
                     reserved: false,
                     walk_cancel: None,
                 },
@@ -582,20 +601,38 @@ impl FileServer for MountFs {
                 backing_fid,
                 ..
             } => {
-                match resolved
+                if !resolved.access.allows(mode) {
+                    return Err(ErrorCode::NoAccess);
+                }
+                let canonical = resolved.canonical_target_path();
+                let lease = self.leases.acquire(&canonical, mode)?;
+                let qid = match resolved
                     .call(Request::Open {
                         fid: backing_fid,
                         mode,
                     })
                     .await?
                 {
-                    Response::Open { qid } => Ok(qid),
-                    _ => Err(ErrorCode::Io),
+                    Response::Open { qid } => qid,
+                    _ => return Err(ErrorCode::Io),
+                };
+                if let Some(lease) = lease {
+                    let mut state = self.state.lock().await;
+                    if let Some(entry) = state.fids.get_mut(&fid).filter(|entry| {
+                        !entry.reserved
+                            && entry
+                                .backing
+                                .as_ref()
+                                .is_some_and(|backing| backing.backing_fid == backing_fid)
+                    }) {
+                        entry.lease = Some(lease);
+                    }
                 }
+                Ok(qid)
             }
-            // A synthetic directory is read-only; a write intent is refused.
+            // A synthetic directory is read-only; any write intent is refused.
             Target::Synthetic(path) => {
-                if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+                if !crate::Access::ReadOnly.allows(mode) {
                     return Err(ErrorCode::NoAccess);
                 }
                 Ok(synthetic_qid(&path, self.ns.generation()))
@@ -726,6 +763,7 @@ impl FileServer for MountFs {
                 Entry {
                     path: path.clone(),
                     backing: None,
+                    lease: None,
                     reserved: true,
                     walk_cancel: None,
                 },
@@ -762,10 +800,11 @@ impl FileServer for MountFs {
                     Entry {
                         path,
                         backing: Some(Backing {
-                            resolved: resolved.clone(),
+                            resolved: resolved.with_child(name),
                             backing_fid: backing_newfid,
                             is_dir: qid.kind == FileKind::Dir,
                         }),
+                        lease: None,
                         reserved: false,
                         walk_cancel: None,
                     },
@@ -793,13 +832,14 @@ impl FileServer for MountFs {
             return Err(ErrorCode::Unsupported);
         }
         // Drop the entry under the lock, then forward without it held.
-        let backing = {
+        let (backing, _lease) = {
             let mut state = self.state.lock().await;
             let entry = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
             if entry.reserved {
                 return Err(ErrorCode::BadRequest);
             }
-            state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?.backing
+            let entry = state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
+            (entry.backing, entry.lease)
         };
         match backing {
             Some(b) => {
@@ -819,7 +859,9 @@ impl FileServer for MountFs {
         }
         // Drop the entry under the lock, then forward the backing clunk without the
         // lock held (a commit-on-clunk commit must not serialize the namespace).
-        let (backing, pending_walk) = {
+        // Keep `_lease` alive across the backing clunk so another caller cannot
+        // observe a released kernel lease before the backing server finishes clunking.
+        let (backing, _lease, pending_walk) = {
             let mut state = self.state.lock().await;
             let Some(entry) = state.fids.get(&fid) else {
                 return Err(ErrorCode::NotFound);
@@ -835,7 +877,7 @@ impl FileServer for MountFs {
             if let Some(cancel) = entry.walk_cancel {
                 let _ = cancel.send(());
             }
-            (entry.backing, pending_walk)
+            (entry.backing, entry.lease, pending_walk)
         };
         if let Some(b) = backing {
             // The MountFs fid is already dropped (no leak even on error). Propagate
