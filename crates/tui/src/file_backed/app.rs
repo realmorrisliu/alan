@@ -627,6 +627,10 @@ impl FileBackedApp {
         if self.project_selection.is_some() {
             return self.handle_project_key(key);
         }
+        let plain_enter = key.code == KeyCode::Enter
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
         if pending_input
             || self.input_intent == InputIntent::Command
             || (self.input_intent == InputIntent::ForceAgent
@@ -636,13 +640,27 @@ impl FileBackedApp {
                     .is_some_and(|state| state.kind == completion::CompletionKind::Command))
         {
             self.completion = None;
-        } else if key.code == KeyCode::Enter
+        } else if plain_enter
+            && self.confirmation.is_none()
+            && self.exact_slash_command_match().is_some_and(|exact| {
+                self.completion.as_ref().is_none_or(|state| {
+                    state.kind != completion::CompletionKind::Command
+                        || state
+                            .selected_candidate()
+                            .is_some_and(|candidate| candidate.value == exact)
+                })
+            })
+        {
+            self.completion = None;
+            return self.handle_submit();
+        } else if plain_enter
+            && self.confirmation.is_none()
             && self
                 .completion
                 .as_ref()
                 .is_some_and(|state| state.kind == completion::CompletionKind::Command)
         {
-            self.accept_completion();
+            self.accept_command_completion_for_submit();
             return self.handle_submit();
         } else if self.completion.is_some()
             && ((key.code == KeyCode::Esc
@@ -848,7 +866,11 @@ impl FileBackedApp {
                 self.accept_completion();
                 true
             }
-            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+            KeyCode::Enter
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+            {
                 self.accept_completion();
                 true
             }

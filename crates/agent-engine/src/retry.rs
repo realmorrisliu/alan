@@ -40,7 +40,7 @@ impl GenerationCause {
     }
 
     fn retryable(&self) -> bool {
-        // Unknown and parse retain the existing stream-error compatibility.
+        // Unknown, parse, and stochastic model finish glitches retain retry compatibility.
         !matches!(
             self.0,
             "stream_error:authentication"
@@ -52,13 +52,25 @@ impl GenerationCause {
                 | "stream_error:http"
                 | "stream_error:safety"
                 | "stream_error:recitation"
+                | "stream_error:blocklist"
+                | "stream_error:prohibited_content"
+                | "stream_error:spii"
+                | "stream_error:image_safety"
         )
     }
 }
 
 impl std::fmt::Display for GenerationCause {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "llmfs generation failed: {}", self.0)
+        if self.0 == "stream_error:payload_too_large" {
+            write!(
+                f,
+                "llmfs generation failed: {} (request exceeds maximum payload size; run /compact to shrink conversation context and retry)",
+                self.0
+            )
+        } else {
+            write!(f, "llmfs generation failed: {}", self.0)
+        }
     }
 }
 

@@ -191,11 +191,25 @@ pub(crate) fn fuzzy_score(candidate: &str, query: &str) -> Option<i32> {
 
 /// Apply a chosen candidate, returning the new text and cursor position.
 pub fn apply(text: &str, state: &CompletionState, value: &str) -> (String, usize) {
+    apply_with_trailing_space(text, state, value, true)
+}
+
+/// Apply a chosen candidate, optionally appending a trailing space.
+pub fn apply_with_trailing_space(
+    text: &str,
+    state: &CompletionState,
+    value: &str,
+    trailing_space: bool,
+) -> (String, usize) {
     let trigger = state.kind.trigger();
     let prefix = &text[..state.token_start.min(text.len())];
     let suffix_start = state.token_start + trigger.len_utf8() + state.query.len();
     let suffix = text.get(suffix_start.min(text.len())..).unwrap_or("");
-    let inserted = format!("{trigger}{value} ");
+    let inserted = if trailing_space {
+        format!("{trigger}{value} ")
+    } else {
+        format!("{trigger}{value}")
+    };
     let new_cursor = prefix.len() + inserted.len();
     (format!("{prefix}{inserted}{suffix}"), new_cursor)
 }
@@ -272,6 +286,15 @@ mod tests {
         let state = detect(text, 6, &sources()).unwrap();
         let (new_text, _) = apply(text, &state, "src/main.rs");
         assert_eq!(new_text, "a @src/main.rs  end");
+    }
+
+    #[test]
+    fn apply_without_trailing_space_omits_space() {
+        let text = "/co";
+        let state = detect(text, text.len(), &sources()).unwrap();
+        let (new_text, cursor) = apply_with_trailing_space(text, &state, "compact", false);
+        assert_eq!(new_text, "/compact");
+        assert_eq!(cursor, new_text.len());
     }
 
     #[test]

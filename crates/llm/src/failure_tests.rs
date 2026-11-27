@@ -219,3 +219,51 @@ fn http_status_failures_preserve_transient_and_permanent_categories() {
         "stream_error:usage_limit"
     );
 }
+
+#[test]
+fn vertex_finish_reasons_map_to_explicit_safe_diagnostics() {
+    for (raw, expected) in [
+        (
+            "MALFORMED_FUNCTION_CALL",
+            "stream_error:malformed_function_call",
+        ),
+        (
+            "stream_error:malformed_function_call",
+            "stream_error:malformed_function_call",
+        ),
+        ("UNEXPECTED_TOOL_CALL", "stream_error:unexpected_tool_call"),
+        (
+            "stream_error:unexpected_tool_call",
+            "stream_error:unexpected_tool_call",
+        ),
+        ("BLOCKLIST", "stream_error:blocklist"),
+        ("stream_error:blocklist", "stream_error:blocklist"),
+        (
+            "stream_error:prompt_blocked:blocklist",
+            "stream_error:blocklist",
+        ),
+        ("PROHIBITED_CONTENT", "stream_error:prohibited_content"),
+        (
+            "stream_error:prohibited_content",
+            "stream_error:prohibited_content",
+        ),
+        (
+            "stream_error:prompt_blocked:prohibited_content",
+            "stream_error:prohibited_content",
+        ),
+        ("SPII", "stream_error:spii"),
+        ("stream_error:spii", "stream_error:spii"),
+        ("stream_error:prompt_blocked:spii", "stream_error:spii"),
+        ("IMAGE_SAFETY", "stream_error:image_safety"),
+        ("stream_error:image_safety", "stream_error:image_safety"),
+        (
+            "stream_error:prompt_blocked:image_safety",
+            "stream_error:image_safety",
+        ),
+        ("OTHER", "stream_error:other"),
+        ("stream_error:other", "stream_error:other"),
+        ("stream_error:prompt_blocked:other", "stream_error:other"),
+    ] {
+        assert_eq!(safe_finish_reason(raw), expected, "{raw}");
+    }
+}

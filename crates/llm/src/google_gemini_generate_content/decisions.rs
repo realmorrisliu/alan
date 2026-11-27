@@ -33,7 +33,7 @@ impl GoogleGeminiGenerateContentClient {
             .model_override
             .as_deref()
             .or(self.decision_model.as_deref())
-            .unwrap_or(&self.model)
+            .unwrap_or(DEFAULT_GEMINI_DECISION_MODEL)
     }
 
     pub(super) async fn decide_gemini(&self, request: DecisionRequest) -> Result<DecisionResponse> {

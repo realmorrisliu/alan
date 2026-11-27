@@ -31,10 +31,10 @@ use turn_execution::run_turn_with_writer;
 pub(super) use namespace_environment::NamespaceRequestRecord;
 pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
-    NamespaceGeneration, NamespaceHostMountRequests, NamespaceOperationCleanup,
-    NamespaceOperationUncertainty, NamespaceProcessFiles, NamespaceTapeWriter,
-    NamespaceToolActionEvidence, NamespaceToolAuthorization, NamespaceToolExecution,
-    NamespaceToolProcessError, PendingActionPublication,
+    NamespaceDecisionConnection, NamespaceGeneration, NamespaceHostMountRequests,
+    NamespaceOperationCleanup, NamespaceOperationUncertainty, NamespaceProcessFiles,
+    NamespaceTapeWriter, NamespaceToolActionEvidence, NamespaceToolAuthorization,
+    NamespaceToolExecution, NamespaceToolProcessError, PendingActionPublication,
 };
 pub use namespace_environment::{
     NamespaceActionRecord, NamespaceDecision, NamespaceDecisionFailure,

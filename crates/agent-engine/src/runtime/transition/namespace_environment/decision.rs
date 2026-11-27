@@ -69,6 +69,17 @@ impl NamespaceDecisionConnection {
         &self.llm_connection
     }
 
+    /// Convert this decision handle into an unmetered generation handle for the same Connection
+    /// (used for bounded Tier 2 `Uncalibrated` structured-generation rubric fallback).
+    pub(crate) fn as_unmetered_generation(&self) -> NamespaceGeneration {
+        NamespaceGeneration {
+            root: self.root.clone(),
+            llm_connection: self.llm_connection.clone(),
+            budget: None,
+            operation_cleanup: self.operation_cleanup.clone(),
+        }
+    }
+
     /// Execute one bounded `decision.v1` request against `/mnt/llm/connections/<conn>/decide`.
     pub(crate) async fn decide(
         &self,

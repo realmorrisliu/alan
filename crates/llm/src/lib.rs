@@ -141,7 +141,10 @@ pub use decision::{
 };
 
 mod decision_fallback;
-pub use decision_fallback::{FallbackDecisionEvaluator, decide_via_generation};
+pub use decision_fallback::{
+    FallbackDecisionEvaluator, build_fallback_generation_request, decide_via_generation,
+    decode_fallback_generation_response,
+};
 
 mod evaluation;
 pub use evaluation::{

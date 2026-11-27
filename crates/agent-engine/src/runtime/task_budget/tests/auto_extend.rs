@@ -24,9 +24,15 @@ use crate::runtime::task_budget::auto_extend::{
 };
 use crate::runtime::transition::NamespaceRuntimeEnvironment;
 
+type CapturedSchemas = Arc<std::sync::Mutex<Vec<Option<serde_json::Value>>>>;
+
 struct MockBudgetDecisionProvider {
+    supports_decisions_flag: bool,
     responses: Mutex<Vec<anyhow::Result<DecisionResponse>>>,
+    generate_responses: Mutex<Vec<anyhow::Result<String>>>,
     calls: Arc<AtomicUsize>,
+    generate_calls: Arc<AtomicUsize>,
+    captured_response_schemas: CapturedSchemas,
 }
 
 impl MockBudgetDecisionProvider {
@@ -34,29 +40,70 @@ impl MockBudgetDecisionProvider {
         let calls = Arc::new(AtomicUsize::new(0));
         (
             Self {
+                supports_decisions_flag: true,
                 responses: Mutex::new(responses),
+                generate_responses: Mutex::new(Vec::new()),
                 calls: Arc::clone(&calls),
+                generate_calls: Arc::new(AtomicUsize::new(0)),
+                captured_response_schemas: Arc::new(std::sync::Mutex::new(Vec::new())),
             },
             calls,
         )
+    }
+
+    fn with_tier2(
+        mut self,
+        supports_decisions: bool,
+        generate_responses: Vec<anyhow::Result<String>>,
+    ) -> (Self, Arc<AtomicUsize>, CapturedSchemas) {
+        self.supports_decisions_flag = supports_decisions;
+        self.generate_responses = Mutex::new(generate_responses);
+        let gen_calls = Arc::clone(&self.generate_calls);
+        let schemas = Arc::clone(&self.captured_response_schemas);
+        (self, gen_calls, schemas)
     }
 }
 
 #[async_trait::async_trait]
 impl LlmProvider for MockBudgetDecisionProvider {
     fn supports_decisions(&self) -> bool {
-        true
+        self.supports_decisions_flag
     }
 
     fn decision_calibration(&self) -> Option<CalibrationKind> {
-        Some(CalibrationKind::Calibrated)
+        self.supports_decisions_flag
+            .then_some(CalibrationKind::Calibrated)
     }
 
-    async fn generate(
-        &mut self,
-        _request: GenerationRequest,
-    ) -> anyhow::Result<GenerationResponse> {
-        anyhow::bail!("unexpected generate() call during System 1 budget auto-extend test")
+    async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        self.generate_calls.fetch_add(1, Ordering::SeqCst);
+        assert!(
+            request.tools.is_empty(),
+            "Tier 2 budget structured rubric must carry zero tools"
+        );
+        self.captured_response_schemas
+            .lock()
+            .unwrap()
+            .push(request.response_schema.clone());
+        let content = {
+            let mut guard = self.generate_responses.lock().await;
+            if guard.is_empty() {
+                anyhow::bail!("unexpected generate() call during System 1 budget auto-extend test")
+            }
+            guard.remove(0)?
+        };
+        Ok(GenerationResponse {
+            content,
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: None,
+            finish_reason: None,
+            warnings: Vec::new(),
+            provider_response_id: None,
+            provider_response_status: None,
+        })
     }
 
     async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
@@ -65,9 +112,26 @@ impl LlmProvider for MockBudgetDecisionProvider {
 
     async fn generate_stream(
         &mut self,
-        _request: GenerationRequest,
+        request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        anyhow::bail!("unused")
+        let resp = self.generate(request).await?;
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let _ = tx
+            .send(StreamChunk {
+                text: Some(resp.content),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: None,
+                usage: None,
+                provider_response_id: None,
+                provider_response_status: None,
+                sequence_number: None,
+                tool_call_delta: None,
+                is_finished: true,
+                finish_reason: Some("stop".into()),
+            })
+            .await;
+        Ok(rx)
     }
 
     async fn decide(&mut self, request: DecisionRequest) -> anyhow::Result<DecisionResponse> {
@@ -470,4 +534,181 @@ async fn budget_observer_updates_auto_extension_cap_when_posture_toggles() {
     .unwrap();
     assert_eq!(smart.auto_extensions_used, Some(0));
     assert_eq!(smart.max_auto_extensions, Some(MAX_SMART_AUTO_EXTENSIONS));
+}
+
+fn tier2_budget_json(
+    converging: (f64, f64),
+    choice: &str,
+    extend_prob: f64,
+    escalate_prob: f64,
+    verdict_conf: f64,
+) -> String {
+    serde_json::json!({
+        "answers": {
+            BUDGET_Q_CONVERGING_HEALTHY: {
+                "yes_probability": converging.0,
+                "confidence": converging.1,
+            },
+            BUDGET_Q_VERDICT: {
+                "choice": choice,
+                "probabilities": {
+                    BUDGET_VERDICT_EXTEND: extend_prob,
+                    BUDGET_VERDICT_ESCALATE: escalate_prob,
+                },
+                "confidence": verdict_conf,
+            },
+        }
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn tier2_uncalibrated_fallback_auto_extends_on_unavailable_and_records_uncalibrated() {
+    let (provider, decide_calls) = MockBudgetDecisionProvider::new(vec![Err(anyhow::anyhow!(
+        "native decide endpoint unavailable"
+    ))]);
+    let (provider, gen_calls, schemas) = provider.with_tier2(
+        true,
+        vec![Ok(tier2_budget_json(
+            (0.95, 0.92),
+            BUDGET_VERDICT_EXTEND,
+            0.95,
+            0.05,
+            0.92,
+        ))],
+    );
+    let (mut state, shell, owner) =
+        setup_smart_budget_state(TrustPosture::ConfinedSmart, provider).await;
+    let cancel = CancellationToken::new();
+    let mut events = Vec::new();
+    let exhausted = Exhausted {
+        dimension: Dimension::ModelCalls,
+    };
+
+    let extended = try_auto_extend(&mut state, &exhausted, &cancel, &mut |ev| {
+        events.push(ev);
+        async {}
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        extended,
+        "high-confidence Tier 2 Uncalibrated fallback should auto-extend once"
+    );
+    assert_eq!(decide_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(gen_calls.load(Ordering::SeqCst), 1);
+    {
+        let recorded = schemas.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert!(
+            recorded[0].is_some(),
+            "Tier 2 budget rubric must attach a strict JSON Schema"
+        );
+    }
+
+    let budget_snap = state.machine.task_budget.as_ref().unwrap().snapshot().await;
+    assert_eq!(budget_snap.limits.model_calls.get(), 2);
+    assert_eq!(budget_snap.auto_extensions_used, 1);
+
+    let ui_sys1: UiSystem1Snapshot = serde_json::from_slice(
+        &shell
+            .cat(&format!("{owner}/machine/ui/system1"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ui_sys1.budget_extensions, 1);
+    assert_eq!(ui_sys1.escalations, 0);
+    assert_eq!(ui_sys1.calibration, UiSystem1Calibration::Uncalibrated);
+    assert_eq!(ui_sys1.evaluator_profile.as_deref(), Some("default"));
+    assert_eq!(ui_sys1.evaluator_model.as_deref(), Some("magpie-small"));
+    assert!(events.iter().any(|ev| matches!(
+        ev,
+        Event::Warning { message } if message.contains("auto-extended task budget (1/1)")
+    )));
+}
+
+#[tokio::test]
+async fn tier2_uncalibrated_fallback_enforces_stricter_threshold_and_fails_closed_on_malformed() {
+    let cancel = CancellationToken::new();
+    let exhausted = Exhausted {
+        dimension: Dimension::ModelCalls,
+    };
+
+    // 1. Generation-only provider with moderate scores (would pass Calibrated 0.80/0.75,
+    //    must escalate under stricter Uncalibrated 0.90/0.85 thresholds).
+    let (provider, decide_calls) = MockBudgetDecisionProvider::new(vec![]);
+    let (provider, gen_calls, _) = provider.with_tier2(
+        false,
+        vec![Ok(tier2_budget_json(
+            (0.84, 0.80),
+            BUDGET_VERDICT_EXTEND,
+            0.84,
+            0.16,
+            0.80,
+        ))],
+    );
+    let (mut state, shell, owner) =
+        setup_smart_budget_state(TrustPosture::ConfinedSmart, provider).await;
+    let extended = try_auto_extend(&mut state, &exhausted, &cancel, &mut |_| async {})
+        .await
+        .unwrap();
+    assert!(!extended);
+    assert_eq!(decide_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(gen_calls.load(Ordering::SeqCst), 1);
+    let snap = state.machine.task_budget.as_ref().unwrap().snapshot().await;
+    assert_eq!(snap.limits.model_calls.get(), 1);
+    assert_eq!(snap.auto_extensions_used, 0);
+    let ui_sys1: UiSystem1Snapshot = serde_json::from_slice(
+        &shell
+            .cat(&format!("{owner}/machine/ui/system1"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ui_sys1.budget_extensions, 0);
+    assert_eq!(ui_sys1.escalations, 1);
+    assert_eq!(ui_sys1.calibration, UiSystem1Calibration::Uncalibrated);
+
+    // 2. Double failure: native Unavailable + malformed Tier 2 JSON fails closed to human.
+    let (bad_provider, bad_decide_calls) =
+        MockBudgetDecisionProvider::new(vec![Err(anyhow::anyhow!("native decide unavailable"))]);
+    let (bad_provider, bad_gen_calls, _) =
+        bad_provider.with_tier2(true, vec![Ok("extend please".to_string())]);
+    let (mut bad_state, bad_shell, bad_owner) =
+        setup_smart_budget_state(TrustPosture::ConfinedSmart, bad_provider).await;
+    let mut bad_events = Vec::new();
+    let bad_extended = try_auto_extend(&mut bad_state, &exhausted, &cancel, &mut |ev| {
+        bad_events.push(ev);
+        async {}
+    })
+    .await
+    .unwrap();
+    assert!(!bad_extended);
+    assert_eq!(bad_decide_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(bad_gen_calls.load(Ordering::SeqCst), 1);
+    let bad_snap = bad_state
+        .machine
+        .task_budget
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .await;
+    assert_eq!(bad_snap.limits.model_calls.get(), 1);
+    assert_eq!(bad_snap.auto_extensions_used, 0);
+    let bad_sys1: UiSystem1Snapshot = serde_json::from_slice(
+        &bad_shell
+            .cat(&format!("{bad_owner}/machine/ui/system1"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(bad_sys1.budget_extensions, 0);
+    assert_eq!(bad_sys1.escalations, 1);
+    assert_eq!(bad_sys1.calibration, UiSystem1Calibration::Unavailable);
+    assert!(bad_events.iter().any(|ev| matches!(
+        ev,
+        Event::Warning { message } if message.contains("failed closed") && message.contains("malformed")
+    )));
 }

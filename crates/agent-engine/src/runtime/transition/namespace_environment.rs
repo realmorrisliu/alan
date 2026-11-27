@@ -15,6 +15,7 @@ mod client;
 mod decision;
 mod evaluation;
 mod evidence_read;
+pub(crate) use decision::NamespaceDecisionConnection;
 pub use decision::{NamespaceDecision, NamespaceDecisionFailure, NamespaceDecisionUncertainty};
 pub(crate) use evidence_read::read_action_evidence;
 mod generation;

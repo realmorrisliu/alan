@@ -32,15 +32,19 @@ mod provider_catalog;
 mod request_wire;
 mod tree;
 
-use generation::{Connection, Generation, OperationKind, abort_generation, commit_request};
+use generation::{
+    Connection, Generation, OperationKind, abort_generation, commit_request, fail_oversized_request,
+};
 use provider_catalog::{is_known_provider, provider_capabilities_for_name};
 use tree::{
     Node, computed_bytes, hash_path, is_readable, is_writable, node_identity, render_json_doc,
     slice,
 };
 
-/// Cap on a buffered request document, so a hostile writer cannot exhaust the
-/// server before the commit-time validation runs.
+/// Cap on a buffered Generation request document (`OperationKind::Generation`).
+pub const MAX_GENERATION_DOC_BYTES: usize = 16 << 20; // 16 MiB
+/// Cap on a buffered Decision, Evaluation, or control request document, so a
+/// hostile writer cannot exhaust the server before commit-time validation runs.
 const MAX_DOC_BYTES: usize = 1 << 20; // 1 MiB
 const RETAIN_TERMINAL_GENERATIONS_PER_CONNECTION: usize = 16;
 
@@ -103,6 +107,9 @@ struct LlmFid {
     clone_gen: Option<String>,
     /// Buffered request document for a `data` fid (commit-on-clunk).
     write_buf: Vec<u8>,
+    /// Set when any write on a `data` fid exceeded its document cap, so clunk
+    /// fails closed instead of committing a truncated prefix.
+    write_overflowed: bool,
 }
 
 impl LlmFid {
@@ -113,6 +120,7 @@ impl LlmFid {
             events: None,
             clone_gen: None,
             write_buf: Vec::new(),
+            write_overflowed: false,
         }
     }
 }
@@ -678,17 +686,25 @@ impl FileServer for LlmFs {
             match f.node.clone() {
                 // Request document: buffer at the caller's offset until clunk
                 // (commit-on-clunk), honoring out-of-order/retried writes.
-                Node::GenData(_) => {
+                Node::GenData(id) => {
+                    let max_doc_bytes = match state.gens.get(&id).map(|g| g.kind()) {
+                        Some(OperationKind::Generation) => MAX_GENERATION_DOC_BYTES,
+                        _ => MAX_DOC_BYTES,
+                    };
                     let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
                     let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-                    if end > MAX_DOC_BYTES {
+                    if end > max_doc_bytes {
+                        if let Some(f) = state.fids.get_mut(&fid) {
+                            f.write_overflowed = true;
+                            f.write_buf.clear();
+                        }
                         return Err(ErrorCode::BadRequest);
                     }
-                    let buf = &mut state
-                        .fids
-                        .get_mut(&fid)
-                        .ok_or(ErrorCode::NotFound)?
-                        .write_buf;
+                    let fid_entry = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
+                    if fid_entry.write_overflowed {
+                        return Err(ErrorCode::BadRequest);
+                    }
+                    let buf = &mut fid_entry.write_buf;
                     if buf.len() < end {
                         buf.resize(end, 0);
                     }
@@ -696,6 +712,9 @@ impl FileServer for LlmFs {
                     return Ok(data.len() as u32);
                 }
                 Node::GenCtl(id) => {
+                    if data.len() > MAX_DOC_BYTES {
+                        return Err(ErrorCode::BadRequest);
+                    }
                     // Accept newline-terminated commands (`echo abort > ctl`).
                     if String::from_utf8_lossy(data).trim() != "abort" {
                         return Err(ErrorCode::BadRequest);
@@ -792,15 +811,19 @@ impl FileServer for LlmFs {
                     if matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) =>
                 {
                     let generation = state.gens.get(&id).cloned().ok_or(ErrorCode::BadRequest)?;
-                    Some((f.write_buf, generation))
+                    Some((f.write_buf, f.write_overflowed, generation))
                 }
                 _ => None,
             }
         };
 
-        let Some((buf, generation)) = commit else {
+        let Some((buf, write_overflowed, generation)) = commit else {
             return Ok(());
         };
+
+        if write_overflowed {
+            return fail_oversized_request(generation).await;
+        }
 
         commit_request(buf, generation).await
     }

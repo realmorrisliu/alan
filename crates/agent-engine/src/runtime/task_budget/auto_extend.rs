@@ -25,8 +25,12 @@ use crate::policy::TrustPosture;
 use crate::runtime::guardian::build_transcript;
 use crate::runtime::smart_approval::{
     map_calibration, profile_name_from_source, publish_system1_snapshot,
+    tier2_fallback::{
+        DecisionAttempt, Tier2Attempt, evaluate_tier2_structured_rubric, remaining_decision_ms,
+        remaining_duration, try_decision_with_tier2, try_native_decision,
+    },
 };
-use crate::runtime::transition::{NamespaceDecisionFailure, RuntimeLoopState};
+use crate::runtime::transition::{NamespaceGeneration, RuntimeLoopState};
 
 /// Maximum number of automatic budget extensions permitted per task under `ConfinedSmart`.
 pub(crate) const MAX_SMART_AUTO_EXTENSIONS: u32 = 1;
@@ -37,7 +41,6 @@ pub(crate) const BUDGET_Q_VERDICT: &str = "verdict";
 pub(crate) const BUDGET_VERDICT_EXTEND: &str = "extend";
 pub(crate) const BUDGET_VERDICT_ESCALATE: &str = "escalate";
 
-const MAX_DECISION_DEADLINE_MS: u64 = 30_000;
 const MAX_PROGRESS_SUMMARY_BYTES: usize = 4_096;
 
 const PROGRESS_RUBRIC_INSTRUCTIONS: &str = "\
@@ -112,12 +115,6 @@ enum ProgressSystem1Outcome {
         reason: String,
         source: String,
     },
-}
-
-enum DecisionAttempt {
-    Success(DecisionResponse),
-    RetryNext(String),
-    FailClosed(String),
 }
 
 /// Build the bounded zero-tool System 1 progress-health [`DecisionRequest`].
@@ -427,6 +424,7 @@ async fn evaluate_progress_system1(
     deadline: Instant,
     cancel: &CancellationToken,
 ) -> ProgressSystem1Outcome {
+    const LABEL: &str = "smart budget evaluation";
     if cancel.is_cancelled() {
         return ProgressSystem1Outcome::FailedClosed {
             reason: "smart budget evaluation cancelled".to_string(),
@@ -439,6 +437,7 @@ async fn evaluate_progress_system1(
     let guardian_profile = state.runtime_config.guardian_profile.clone();
     let used_dedicated = smart_profile.is_some() || guardian_profile.is_some();
     let mut last_unavailable: Option<(String, String)> = None;
+    let mut smart_fallback: Option<(String, NamespaceGeneration)> = None;
 
     if let Some(profile) = smart_profile.as_deref() {
         let source = format!("smart_evaluator_profile:{profile}");
@@ -449,7 +448,15 @@ async fn evaluate_progress_system1(
             DecisionAttempt::FailClosed(reason) => {
                 return ProgressSystem1Outcome::FailedClosed { reason, source };
             }
-            DecisionAttempt::RetryNext(reason) => last_unavailable = Some((source, reason)),
+            DecisionAttempt::RetryNext {
+                reason,
+                fallback_generation,
+            } => {
+                if let Some(generation) = fallback_generation {
+                    smart_fallback = Some((source.clone(), generation));
+                }
+                last_unavailable = Some((source, reason));
+            }
         }
     }
 
@@ -471,7 +478,67 @@ async fn evaluate_progress_system1(
             DecisionAttempt::FailClosed(reason) => {
                 return ProgressSystem1Outcome::FailedClosed { reason, source };
             }
-            DecisionAttempt::RetryNext(reason) => last_unavailable = Some((source, reason)),
+            DecisionAttempt::RetryNext {
+                reason,
+                fallback_generation,
+            } => {
+                if let Some(generation) = fallback_generation {
+                    tracing::debug!(
+                        profile,
+                        %reason,
+                        "Guardian native decide() unavailable; falling back to Tier 2 uncalibrated structured budget rubric"
+                    );
+                    match evaluate_tier2_structured_rubric(
+                        &generation,
+                        &request,
+                        deadline,
+                        cancel,
+                        LABEL,
+                    )
+                    .await
+                    {
+                        Tier2Attempt::Success(resp) => {
+                            return finalize_progress_response(resp, source);
+                        }
+                        Tier2Attempt::FailClosed(t2_reason) => {
+                            return ProgressSystem1Outcome::FailedClosed {
+                                reason: t2_reason,
+                                source,
+                            };
+                        }
+                        Tier2Attempt::Unavailable(t2_reason) => {
+                            last_unavailable = Some((source, format!("{reason}; {t2_reason}")));
+                        }
+                    }
+                } else {
+                    last_unavailable = Some((source, reason));
+                }
+            }
+        }
+    }
+
+    if let Some((smart_source, smart_generation)) = smart_fallback {
+        tracing::debug!(
+            source = %smart_source,
+            "Smart evaluator native decide() unavailable; trying Tier 2 uncalibrated structured budget rubric"
+        );
+        match evaluate_tier2_structured_rubric(&smart_generation, &request, deadline, cancel, LABEL)
+            .await
+        {
+            Tier2Attempt::Success(resp) => return finalize_progress_response(resp, smart_source),
+            Tier2Attempt::FailClosed(t2_reason) => {
+                return ProgressSystem1Outcome::FailedClosed {
+                    reason: t2_reason,
+                    source: smart_source,
+                };
+            }
+            Tier2Attempt::Unavailable(t2_reason) => {
+                let reason = match last_unavailable {
+                    Some((_, prev)) => format!("{prev}; {t2_reason}"),
+                    None => t2_reason,
+                };
+                last_unavailable = Some((smart_source, reason));
+            }
         }
     }
 
@@ -501,18 +568,9 @@ async fn evaluate_progress_system1(
 
     let main_conn = state.namespace_generation().as_decision_connection();
     let source = format!("main_connection:{}", main_conn.connection_name());
-    let attempt = if cancel.is_cancelled() {
-        DecisionAttempt::FailClosed("smart budget evaluation cancelled".to_string())
-    } else if let Some(deadline_ms) = remaining_decision_ms(deadline) {
-        classify_decision_result(main_conn.decide(request, deadline_ms, cancel).await)
-    } else {
-        DecisionAttempt::FailClosed(
-            "smart budget evaluation aggregate deadline expired".to_string(),
-        )
-    };
-    match attempt {
+    match try_decision_with_tier2(&main_conn, request, deadline, cancel, LABEL).await {
         DecisionAttempt::Success(resp) => finalize_progress_response(resp, source),
-        DecisionAttempt::RetryNext(reason) | DecisionAttempt::FailClosed(reason) => {
+        DecisionAttempt::RetryNext { reason, .. } | DecisionAttempt::FailClosed(reason) => {
             ProgressSystem1Outcome::FailedClosed { reason, source }
         }
     }
@@ -546,21 +604,23 @@ async fn try_dedicated_decision(
     let connection = match tokio::time::timeout(remaining, capture_fut).await {
         Ok(Ok(conn)) => conn,
         Ok(Err(error)) => {
-            return DecisionAttempt::RetryNext(format!("profile capture failed: {error:#}"));
+            return DecisionAttempt::RetryNext {
+                reason: format!("profile capture failed: {error:#}"),
+                fallback_generation: None,
+            };
         }
         Err(_) => {
             return DecisionAttempt::FailClosed("profile capture timed out".to_string());
         }
     };
-    if cancel.is_cancelled() {
-        return DecisionAttempt::FailClosed("smart budget evaluation cancelled".to_string());
-    }
-    let Some(deadline_ms) = remaining_decision_ms(deadline) else {
-        return DecisionAttempt::FailClosed(
-            "smart budget evaluation aggregate deadline expired".to_string(),
-        );
-    };
-    classify_decision_result(connection.decide(request, deadline_ms, cancel).await)
+    try_native_decision(
+        &connection,
+        request,
+        deadline,
+        cancel,
+        "smart budget evaluation",
+    )
+    .await
 }
 
 fn finalize_progress_response(
@@ -574,41 +634,6 @@ fn finalize_progress_response(
             source,
         },
     }
-}
-
-fn classify_decision_result(result: Result<DecisionResponse>) -> DecisionAttempt {
-    match result {
-        Ok(response) => DecisionAttempt::Success(response),
-        Err(error) => match error.downcast_ref::<NamespaceDecisionFailure>() {
-            Some(NamespaceDecisionFailure::Cancelled) => {
-                DecisionAttempt::FailClosed("smart budget evaluation cancelled".to_string())
-            }
-            Some(NamespaceDecisionFailure::TimedOut) => {
-                DecisionAttempt::FailClosed("smart budget evaluation timed out".to_string())
-            }
-            Some(NamespaceDecisionFailure::Malformed) => DecisionAttempt::FailClosed(
-                "smart budget evaluation returned malformed output".to_string(),
-            ),
-            Some(NamespaceDecisionFailure::Unavailable) | None => {
-                DecisionAttempt::RetryNext(format!("decision call unavailable: {error:#}"))
-            }
-        },
-    }
-}
-
-fn remaining_duration(deadline: Instant) -> Option<std::time::Duration> {
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-        None
-    } else {
-        Some(remaining)
-    }
-}
-
-fn remaining_decision_ms(deadline: Instant) -> Option<u64> {
-    let remaining = remaining_duration(deadline)?;
-    let ms = (remaining.as_millis() as u64).min(MAX_DECISION_DEADLINE_MS);
-    if ms == 0 { None } else { Some(ms) }
 }
 
 async fn emit_inline_notice<E, F>(

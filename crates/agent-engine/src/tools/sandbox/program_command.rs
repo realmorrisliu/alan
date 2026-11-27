@@ -266,25 +266,45 @@ impl Sandbox {
         {
             return;
         }
-        let Some(raw) = cargo_target_dir.filter(|val| !val.is_empty()) else {
-            return;
-        };
-        let target_path = Path::new(raw);
-        let resolved = if target_path.is_absolute() {
-            super::lexically_normalize_path(target_path)
-        } else {
-            super::lexically_normalize_path(&cwd.join(target_path))
-        };
-        if self.is_writable(&resolved) {
-            return;
-        }
+        let has_configured_target =
+            if let Some(raw) = cargo_target_dir.filter(|val| !val.is_empty()) {
+                let target_path = Path::new(raw);
+                let resolved = if target_path.is_absolute() {
+                    super::lexically_normalize_path(target_path)
+                } else {
+                    super::lexically_normalize_path(&cwd.join(target_path))
+                };
+                if self.is_writable(&resolved) {
+                    return;
+                }
+                true
+            } else {
+                if !self.is_in_mounted_cargo_workspace(cwd) {
+                    return;
+                }
+                false
+            };
+
         if self.is_writable(cwd) {
-            command.env_remove("CARGO_TARGET_DIR");
+            command.env("CARGO_TARGET_DIR", cwd.join("target"));
         } else if let Some(writable_root) = self.spec.writable_roots.first() {
             command.env("CARGO_TARGET_DIR", writable_root.join("target"));
-        } else {
+        } else if has_configured_target {
             command.env_remove("CARGO_TARGET_DIR");
         }
+    }
+
+    fn is_in_mounted_cargo_workspace(&self, cwd: &Path) -> bool {
+        let normalized_cwd = super::lexically_normalize_path(cwd);
+        for ancestor in normalized_cwd.ancestors() {
+            if !self.is_readable(ancestor) && !self.is_writable(ancestor) {
+                break;
+            }
+            if ancestor.join("Cargo.toml").is_file() {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -540,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_cargo_target_dir_removes_or_rewrites_out_of_mount_targets() {
+    fn sanitize_cargo_target_dir_pins_in_mount_targets_for_out_of_mount_or_cargo_workspaces() {
         let project = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         let in_mount_target = project.path().join("custom-target");
@@ -554,7 +574,7 @@ mod tests {
             network: super::super::NetworkPosture::Deny,
         });
 
-        // 1. Out-of-mount absolute CARGO_TARGET_DIR under Seatbelt with writable cwd -> removed.
+        // 1. Out-of-mount absolute CARGO_TARGET_DIR under Seatbelt with writable cwd -> pinned to cwd/target.
         let mut cmd = tokio::process::Command::new("cargo");
         sandbox.sanitize_cargo_target_dir_with_env(
             &mut cmd,
@@ -564,11 +584,11 @@ mod tests {
         );
         assert_eq!(
             configured_env_var(&cmd, "CARGO_TARGET_DIR"),
-            Some(None),
-            "expected CARGO_TARGET_DIR to be removed when cwd is writable"
+            Some(Some(project.path().join("target").into_os_string())),
+            "expected CARGO_TARGET_DIR to be pinned to cwd/target when cwd is writable"
         );
 
-        // 2. Out-of-mount relative CARGO_TARGET_DIR under Landlock -> removed.
+        // 2. Out-of-mount relative CARGO_TARGET_DIR under Landlock -> pinned to cwd/target.
         let mut rel_cmd = tokio::process::Command::new("cargo");
         sandbox.sanitize_cargo_target_dir_with_env(
             &mut rel_cmd,
@@ -578,8 +598,8 @@ mod tests {
         );
         assert_eq!(
             configured_env_var(&rel_cmd, "CARGO_TARGET_DIR"),
-            Some(None),
-            "expected relative out-of-mount CARGO_TARGET_DIR to be removed"
+            Some(Some(project.path().join("target").into_os_string())),
+            "expected relative out-of-mount CARGO_TARGET_DIR to be pinned to cwd/target"
         );
 
         // 3. In-mount writable CARGO_TARGET_DIR -> preserved (no override).
@@ -611,7 +631,105 @@ mod tests {
             "expected fallback to writable_root/target when cwd is read-only"
         );
 
-        // 5. Unsandboxed HostAccountTrusted or HostMountPathGuard -> preserved untouched.
+        // 5. Unset CARGO_TARGET_DIR outside a Cargo workspace -> untouched.
+        let mut non_cargo_cmd = tokio::process::Command::new("cargo");
+        sandbox.sanitize_cargo_target_dir_with_env(
+            &mut non_cargo_cmd,
+            project.path(),
+            SandboxBackendKind::Seatbelt,
+            None,
+        );
+        assert_eq!(
+            configured_env_var(&non_cargo_cmd, "CARGO_TARGET_DIR"),
+            None,
+            "unset CARGO_TARGET_DIR outside a Cargo workspace must be left untouched"
+        );
+
+        // 6. Unset CARGO_TARGET_DIR in a Cargo workspace (at cwd or ancestor in mounted roots)
+        //    -> explicitly pinned to cwd/target when cwd is writable.
+        std::fs::write(project.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        let member_dir = project.path().join("crates/member");
+        std::fs::create_dir_all(&member_dir).unwrap();
+
+        let mut ws_root_cmd = tokio::process::Command::new("cargo");
+        sandbox.sanitize_cargo_target_dir_with_env(
+            &mut ws_root_cmd,
+            project.path(),
+            SandboxBackendKind::Seatbelt,
+            None,
+        );
+        assert_eq!(
+            configured_env_var(&ws_root_cmd, "CARGO_TARGET_DIR"),
+            Some(Some(project.path().join("target").into_os_string())),
+            "expected unset CARGO_TARGET_DIR at Cargo workspace root to pin cwd/target"
+        );
+
+        let mut ws_member_cmd = tokio::process::Command::new("cargo");
+        sandbox.sanitize_cargo_target_dir_with_env(
+            &mut ws_member_cmd,
+            &member_dir,
+            SandboxBackendKind::Landlock,
+            None,
+        );
+        assert_eq!(
+            configured_env_var(&ws_member_cmd, "CARGO_TARGET_DIR"),
+            Some(Some(member_dir.join("target").into_os_string())),
+            "expected unset CARGO_TARGET_DIR in Cargo workspace subdir to pin cwd/target"
+        );
+
+        // 7. Unset CARGO_TARGET_DIR in a read-only mounted Cargo workspace -> pinned to writable_root/target.
+        let ro_ws = tempfile::tempdir().unwrap();
+        std::fs::write(
+            ro_ws.path().join("Cargo.toml"),
+            "[package]\nname = \"ro\"\n",
+        )
+        .unwrap();
+        let ro_ws_sandbox = Sandbox::from_spec(SandboxSpec {
+            host_mounts: Vec::new(),
+            readable_roots: vec![ro_ws.path().to_path_buf(), project.path().to_path_buf()],
+            writable_roots: vec![project.path().to_path_buf()],
+            read_denylist: Vec::new(),
+            network: super::super::NetworkPosture::Deny,
+        });
+        let mut ro_ws_cmd = tokio::process::Command::new("cargo");
+        ro_ws_sandbox.sanitize_cargo_target_dir_with_env(
+            &mut ro_ws_cmd,
+            ro_ws.path(),
+            SandboxBackendKind::Seatbelt,
+            None,
+        );
+        assert_eq!(
+            configured_env_var(&ro_ws_cmd, "CARGO_TARGET_DIR"),
+            Some(Some(project.path().join("target").into_os_string())),
+            "expected unset CARGO_TARGET_DIR in read-only Cargo workspace to pin writable_root/target"
+        );
+
+        // 8. Cargo.toml only in an unmounted ancestor must not trigger workspace detection.
+        let unmounted_parent = tempfile::tempdir().unwrap();
+        std::fs::write(unmounted_parent.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        let mounted_child = unmounted_parent.path().join("plain-subdir");
+        std::fs::create_dir_all(&mounted_child).unwrap();
+        let narrow_sandbox = Sandbox::from_spec(SandboxSpec {
+            host_mounts: Vec::new(),
+            readable_roots: vec![mounted_child.clone()],
+            writable_roots: vec![mounted_child.clone()],
+            read_denylist: Vec::new(),
+            network: super::super::NetworkPosture::Deny,
+        });
+        let mut narrow_cmd = tokio::process::Command::new("cargo");
+        narrow_sandbox.sanitize_cargo_target_dir_with_env(
+            &mut narrow_cmd,
+            &mounted_child,
+            SandboxBackendKind::Seatbelt,
+            None,
+        );
+        assert_eq!(
+            configured_env_var(&narrow_cmd, "CARGO_TARGET_DIR"),
+            None,
+            "ancestor Cargo.toml outside mounted roots must not trigger pinning"
+        );
+
+        // 9. Unsandboxed HostAccountTrusted or HostMountPathGuard -> preserved untouched.
         let mut no_sb_cmd = tokio::process::Command::new("cargo");
         sandbox.sanitize_cargo_target_dir_with_env(
             &mut no_sb_cmd,
