@@ -36,7 +36,8 @@ guard-openspec-current-surfaces:
 openspec-check:
     bash scripts/test-openspec-current-surfaces.sh
     bash scripts/check-openspec-current-surfaces.sh
-    openspec validate --all --strict
+    openspec validate --all
+    openspec validate --changes --strict
 
 # Run the canonical non-mutating repository quality gate
 quality:
