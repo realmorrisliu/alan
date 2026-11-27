@@ -7,6 +7,25 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-11-27
+
+### Added
+
+- Add Project Ledger, named workstreams, in-instance async child workstreams, `routefs` cross-stream handoff, TUI `/streams` / `/focus` / `/root` controls, workflow inbox digests, and stateful cron streams (`#1167`, `#1176`, `#1177`).
+- Add personal capability extensions: community skill intake, native CoW workspaces (`clonefile`/`FICLONE`) + `/mnt/branch` + Intent Provenance, executable `alan-arena` behind fail-closed OS sandbox confinement, governed tools, and pure-Rust `gdrivefs` aP file server (`/mnt/gdrive`) (`#1169`, `#1177`).
+- Add zero-root macOS loopback NFSv3 bridge (`macos_nfs_reification`) for read-only aP namespace reification under Seatbelt (`#1180`).
+- Add first-class Decisions API (`DecisionRequest`/`DecisionResponse` with `Predicate`, `Choice`, and `Score` primitives) across OpenRouter, Google Gemini (`/v1beta/decisions`), OpenAI (`/v1/decisions`), TypeSafe, Magpie, and `FallbackDecisionEvaluator`, plus `llmfs` `connections/<conn>/decide` and independent `max_decisions` metering (`#1183`).
+- Add System 1 smart approval (`ConfinedSmart` / `--smart` / `rw·smart` / `Shift+Tab` 3-way cycle) with a 5-question parallel Rubric, bounded System 2 fallback, bounded task budget auto-extension, and live `Ctrl+T` telemetry (`#1184`).
+- Upgrade the TUI with a high-density 2-row status bar below the composer, live task budget projection (`machine/ui/budget`), `Ctrl+T` / `Ctrl+O (s)` Status Panel, modal-only SGR mouse capture preserving native scrollback/copy, and OSC 8 hyperlinks (`#1182`).
+- Add capability-probed Kitty Graphics Protocol and iTerm2 `OSC 1337` inline thumbnail rendering for pasted and tool image attachments (`#1185`).
+- Add `--no-resume-update` CLI flag and `ALAN_NO_RESUME` environment parity (`#1174`).
+- Migrate the ChatGPT provider to Sign in with ChatGPT (`SIWC`) (`#1181`) and redesign `alanworks.app` as a Plan 9 archive site on Solid 2 + Vite 8 SSG (`#1186`).
+
+### Fixed
+
+- Fix one-shot `--grant`/`--cwd` namespace resolution, grant-root trailing slash handling, `alan doctor` version reporting, `read_file` paging, Gemini `MessageRole::Context` system instruction injection, and `partialArgs` object markers (`#1175`, `#1179`).
+- Fix high-context `>1 MiB` `llmfs` generation request failures (raising `GenData` limit to `16 MiB` with `stream_error:payload_too_large` `/compact` hints and expanded Vertex finish-reason mapping), confine `CARGO_TARGET_DIR` inside Seatbelt/Landlock workspaces, submit `/quit` on a single `Enter`, raise `BashTool` timeouts (`180s` default / `600s` max with float parsing), format 0-match `Grep` summaries as `0 rows`, and add seamless Tier-2 `Uncalibrated` `--smart` fallback (`#1182`, `#1188`).
+
 ## [0.1.10] - 2026-11-24
 
 ### Fixed
