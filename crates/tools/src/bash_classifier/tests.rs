@@ -578,3 +578,47 @@ fn test_classify_bash_command_gh_network_and_local_queries() {
         assert_ne!(classify_bash_command(cmd), ToolCapability::Network, "{cmd}");
     }
 }
+
+#[test]
+fn test_classify_bash_command_distinguishes_standalone_env_from_wrapper() {
+    use alan_agent_protocol::ToolCapability;
+
+    for read_cmd in [
+        "env",
+        "/usr/bin/env",
+        "env -0",
+        "env --null",
+        "FOO=bar env",
+        "env | grep -E 'CARGO|RUST' || true",
+        "env < /dev/null | grep -E 'CARGO|RUST' || true",
+        "env | rg -i 'cargo|rust' || false",
+        "printenv",
+        "printenv PATH",
+        "printenv | grep -E 'CARGO|RUST' || true",
+    ] {
+        assert_eq!(
+            classify_bash_command(read_cmd),
+            ToolCapability::Read,
+            "expected Read for `{read_cmd}`"
+        );
+    }
+
+    assert_eq!(
+        classify_bash_command("env > env.txt"),
+        ToolCapability::Write
+    );
+
+    for wrapper_cmd in [
+        "env FOO=bar rg TODO src",
+        "env -i cargo test",
+        "env -- FOO=bar rg TODO src",
+        "env -S 'sh -c rg TODO src'",
+        "env FOO=bar sh -c 'rg TODO src'",
+    ] {
+        assert_eq!(
+            classify_bash_command(wrapper_cmd),
+            ToolCapability::Unknown,
+            "expected Unknown for wrapper `{wrapper_cmd}`"
+        );
+    }
+}

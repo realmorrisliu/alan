@@ -10,7 +10,13 @@ pub(super) fn contains_unsupported_shell_form(tokens: &[&str]) -> bool {
         return true;
     }
 
-    is_unsupported_shell_wrapper(command_basename(command_word))
+    let command = command_basename(command_word);
+    if command == "env" {
+        let args = &tokens[command_index + 1..];
+        return env_split_string_flag(args).is_some() || env_command_offset(args).is_some();
+    }
+
+    is_unsupported_shell_wrapper(command)
 }
 
 pub(super) fn contains_nested_eval_wrapper(tokens: &[&str]) -> bool {
@@ -94,6 +100,10 @@ fn next_command_offset(tokens: &[&str]) -> Option<usize> {
 fn env_command_offset(args: &[&str]) -> Option<usize> {
     let mut index = 0;
     while let Some(arg) = args.get(index).copied() {
+        if let Some(skip) = redirection_token_span(arg) {
+            index += skip;
+            continue;
+        }
         if arg == "--" {
             index += 1;
             break;
@@ -120,8 +130,36 @@ fn env_command_offset(args: &[&str]) -> Option<usize> {
         break;
     }
 
+    while let Some(arg) = args.get(index).copied() {
+        if let Some(skip) = redirection_token_span(arg) {
+            index += skip;
+            continue;
+        }
+        if is_env_assignment(arg) {
+            index += 1;
+            continue;
+        }
+        break;
+    }
     args.get(index)?;
     Some(index)
+}
+
+fn redirection_token_span(token: &str) -> Option<usize> {
+    let rest = token
+        .trim_start_matches(|ch: char| ch.is_ascii_digit())
+        .strip_prefix('&')
+        .unwrap_or_else(|| token.trim_start_matches(|ch: char| ch.is_ascii_digit()));
+    if matches!(
+        rest,
+        ">" | ">>" | ">|" | "<>" | "<" | "<<" | "<<<" | "<&" | ">&"
+    ) {
+        Some(2)
+    } else if rest.starts_with('>') || rest.starts_with('<') {
+        Some(1)
+    } else {
+        None
+    }
 }
 
 fn transparent_wrapper_offset(command: &str, args: &[&str]) -> Option<usize> {

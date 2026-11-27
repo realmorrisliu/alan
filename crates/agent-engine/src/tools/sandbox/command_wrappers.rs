@@ -153,7 +153,13 @@ pub(super) fn validate_direct_command_shapes(
         }
 
         let command = command_basename(command_word);
-        if is_unsupported_shell_wrapper(command) {
+        let is_wrapper = if command == "env" {
+            let args = &words[command_index + 1..];
+            env_split_string_flag(args).is_some() || env_command_offset(args).is_some()
+        } else {
+            is_unsupported_shell_wrapper(command)
+        };
+        if is_wrapper {
             return Err(anyhow!(
                 "Sandbox backend {} rejects shell wrappers like {} because host_mount_path_guard only supports direct commands with statically checkable paths",
                 backend_name,

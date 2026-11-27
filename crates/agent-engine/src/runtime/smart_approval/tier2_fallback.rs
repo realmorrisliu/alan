@@ -191,9 +191,15 @@ pub(crate) async fn evaluate_tier2_structured_rubric(
             );
             Tier2Attempt::Success(response)
         }
-        Err(err) => Tier2Attempt::FailClosed(format!(
-            "tier-2 structured rubric returned malformed output: {err}"
-        )),
+        Err(err) => {
+            let detail = err
+                .downcast_ref::<alan_llm::SafeMalformedDecisionDetail>()
+                .map(|d| format!(" ({d})"))
+                .unwrap_or_default();
+            Tier2Attempt::FailClosed(format!(
+                "tier-2 structured rubric returned malformed output: {err}{detail}"
+            ))
+        }
     }
 }
 
