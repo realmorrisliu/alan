@@ -355,7 +355,7 @@ async fn run_polish_session() -> Result<()> {
                     "submission_id": input.submission_id,
                 });
                 let _ = responder_shell
-                    .write(
+                    .write_exclusive(
                         &format!("{responder_owner}/machine/tape"),
                         format!("{user_rec}\n").as_bytes(),
                     )
@@ -366,7 +366,7 @@ async fn run_polish_session() -> Result<()> {
                     };
                     tokio::time::sleep(Duration::from_millis(40)).await;
                     let _ = responder_shell
-                        .write(
+                        .write_exclusive(
                             &format!("{responder_owner}/machine/ui/events"),
                             format!("{}\n", serde_json::to_string(&thinking).unwrap()).as_bytes(),
                         )
@@ -384,7 +384,7 @@ async fn run_polish_session() -> Result<()> {
                         "content": reply,
                     });
                     let _ = responder_shell
-                        .write(
+                        .write_exclusive(
                             &format!("{responder_owner}/machine/tape"),
                             format!("{assistant_rec}\n").as_bytes(),
                         )
@@ -393,14 +393,14 @@ async fn run_polish_session() -> Result<()> {
                     // Intentionally race io/output BEFORE UiEvent::Thinking::Complete to verify
                     // the renderer still places `· thought · 2s` above the streamed reply.
                     let _ = responder_shell
-                        .write(&format!("{responder_owner}/io/output"), b"I am Alan.")
+                        .write_exclusive(&format!("{responder_owner}/io/output"), b"I am Alan.")
                         .await;
                     tokio::time::sleep(Duration::from_millis(60)).await;
                     let thinking = UiEvent::Thinking {
                         snapshot: UiThinkingSnapshot::complete("identity check".into(), 2),
                     };
                     let _ = responder_shell
-                        .write(
+                        .write_exclusive(
                             &format!("{responder_owner}/machine/ui/events"),
                             format!("{}\n", serde_json::to_string(&thinking).unwrap()).as_bytes(),
                         )
@@ -413,7 +413,7 @@ async fn run_polish_session() -> Result<()> {
                         "content": "I am Alan.",
                     });
                     let _ = responder_shell
-                        .write(
+                        .write_exclusive(
                             &format!("{responder_owner}/machine/tape"),
                             format!("{assistant_rec}\n").as_bytes(),
                         )
@@ -425,7 +425,7 @@ async fn run_polish_session() -> Result<()> {
                     error: None,
                 };
                 let _ = responder_shell
-                    .write(
+                    .write_exclusive(
                         &format!("{responder_owner}/machine/ui/events"),
                         format!("{}\n", serde_json::to_string(&completed).unwrap()).as_bytes(),
                     )

@@ -717,9 +717,9 @@ async fn hydrated_output_is_not_replayed_by_the_live_tail() {
 
     // A completed turn, written in engine order (io/output first, then
     // the tape record), landing entirely before the client attaches.
-    shell.write(&output_path, b"hi").await.unwrap();
+    shell.write_exclusive(&output_path, b"hi").await.unwrap();
     shell
-        .write(
+        .write_exclusive(
             &format!("{agent_path}/machine/tape"),
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"hi\"}\n",
         )
@@ -744,7 +744,7 @@ async fn hydrated_output_is_not_replayed_by_the_live_tail() {
 
     // ...and the live tail delivers only post-attach output: the first
     // read must be the new write, not a replay of the hydrated "hi".
-    shell.write(&output_path, b"-next").await.unwrap();
+    shell.write_exclusive(&output_path, b"-next").await.unwrap();
     let bytes = tokio::time::timeout(std::time::Duration::from_secs(5), tails.output.read(4096))
         .await
         .expect("tail read timed out")
@@ -948,7 +948,7 @@ async fn response_missed_at_attach_is_recovered_by_the_tape_watcher() {
     // not landed yet when the client attaches: the output bytes are
     // behind the live edge and the tape hydration comes up empty.
     shell
-        .write(&agent_output_path(&agent_path), b"hi")
+        .write_exclusive(&agent_output_path(&agent_path), b"hi")
         .await
         .unwrap();
     let mut app = FileBackedApp::new(agent_path.clone());
@@ -964,7 +964,7 @@ async fn response_missed_at_attach_is_recovered_by_the_tape_watcher() {
 
     // The tape record lands after attach; the tape watcher recovers it.
     shell
-        .write(
+        .write_exclusive(
             &format!("{agent_path}/machine/tape"),
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"hi\"}\n",
         )

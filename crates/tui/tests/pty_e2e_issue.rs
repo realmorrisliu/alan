@@ -415,7 +415,7 @@ async fn run_issue_pty_session() -> Result<()> {
     let mut tape_bytes = serde_json::to_vec(&tape_entry)?;
     tape_bytes.push(b'\n');
     shell
-        .write(&format!("{owner}/machine/tape"), &tape_bytes)
+        .write_exclusive(&format!("{owner}/machine/tape"), &tape_bytes)
         .await?;
     let notice = UiNoticeSnapshot {
         version: 1,

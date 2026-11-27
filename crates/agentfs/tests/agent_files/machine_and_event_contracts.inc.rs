@@ -119,16 +119,16 @@ async fn machine_ui_events_stream_supports_offset_resume() {
     let fs = AgentFs::new();
     let first = br#"{"type":"notice","snapshot":{"version":1,"kind":"warning","message":"one"}}"#;
     let second = br#"{"type":"notice","snapshot":{"version":1,"kind":"warning","message":"two"}}"#;
-    write_doc(&fs, &["machine", "ui", "events"], Fid(1), first)
+    write_exclusive_doc(&fs, &["machine", "ui", "events"], Fid(1), first)
         .await
         .unwrap();
-    write_doc(&fs, &["machine", "ui", "events"], Fid(2), b"\n")
+    write_exclusive_doc(&fs, &["machine", "ui", "events"], Fid(2), b"\n")
         .await
         .unwrap();
-    write_doc(&fs, &["machine", "ui", "events"], Fid(3), second)
+    write_exclusive_doc(&fs, &["machine", "ui", "events"], Fid(3), second)
         .await
         .unwrap();
-    write_doc(&fs, &["machine", "ui", "events"], Fid(4), b"\n")
+    write_exclusive_doc(&fs, &["machine", "ui", "events"], Fid(4), b"\n")
         .await
         .unwrap();
 
@@ -190,14 +190,14 @@ async fn requests_events_stream_announces_new_requests() {
 async fn io_events_is_scoped_to_io_not_the_aggregate() {
     let fs = AgentFs::new();
     // A tape write goes to the aggregate `events` but NOT to io/events.
-    write_doc(&fs, &["machine", "tape"], Fid(1), b"turn-1\n")
+    write_exclusive_doc(&fs, &["machine", "tape"], Fid(1), b"turn-1\n")
         .await
         .unwrap();
     assert!(read_text(&fs, &["events"], Fid(2)).await.contains("tape:"));
 
     // io/events only carries io output/input. Read non-blocking: it has no tape
     // record. (An output write does land here.)
-    write_doc(&fs, &["io", "output"], Fid(3), b"hi")
+    write_exclusive_doc(&fs, &["io", "output"], Fid(3), b"hi")
         .await
         .unwrap();
     let io_events = read_text(&fs, &["io", "events"], Fid(4)).await;
@@ -409,10 +409,10 @@ async fn ordinary_data_writes_do_not_invoke_control_semantics() {
     fs.open(Fid(2), OpenMode::ReadWrite).await.unwrap();
     let action_id = String::from_utf8(fs.read(Fid(2), 0, 64).await.unwrap()).unwrap();
 
-    write_doc(&fs, &["io", "output"], Fid(3), b"assistant text")
+    write_exclusive_doc(&fs, &["io", "output"], Fid(3), b"assistant text")
         .await
         .unwrap();
-    write_doc(
+    write_exclusive_doc(
         &fs,
         &["machine", "tape"],
         Fid(4),
@@ -503,7 +503,7 @@ async fn the_events_stream_is_watchable_by_blocking_read() {
         "watcher blocks until an event is written"
     );
 
-    write_doc(&fs, &["io", "output"], Fid(1), b"hi")
+    write_exclusive_doc(&fs, &["io", "output"], Fid(1), b"hi")
         .await
         .unwrap();
     let rec = tokio::time::timeout(Duration::from_millis(500), handle)
@@ -541,7 +541,7 @@ async fn qid_versions_bump_when_dirs_and_fields_change() {
     assert_eq!(s1, s0 + 1, "answering changed status");
 
     // A stream's qid version stays stable (freshness is the read offset).
-    write_doc(&fs, &["io", "output"], Fid(7), b"hi")
+    write_exclusive_doc(&fs, &["io", "output"], Fid(7), b"hi")
         .await
         .unwrap();
     assert_eq!(qid_version(&fs, &["io", "output"], Fid(8)).await, 0);

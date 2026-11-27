@@ -1,9 +1,9 @@
 //! Namespace mechanics for the `/agent` overlay.
 
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{HashMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
-    sync::{Arc, atomic::Ordering},
+    sync::{Arc, Mutex, atomic::Ordering},
 };
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid};
@@ -109,6 +109,85 @@ pub(super) fn is_proc_overlay_name(name: &str) -> bool {
 pub(super) fn proc_child_names(mut names: Vec<String>, child: &str) -> Vec<String> {
     names.push(child.to_string());
     names
+}
+
+pub(super) fn is_agent_output_proc_path(names: &[String]) -> bool {
+    matches!(names, [dir, file] if dir == "io" && file == "output")
+}
+
+/// Exclusive-write lease table for `/agent/<pid>/io/output` forwarded to `/proc`.
+///
+/// Uses a synchronous mutex never held across `.await` so failed or cancelled
+/// `open` calls roll back deterministically via [`OutputLeaseGuard::drop`].
+#[derive(Default)]
+pub(super) struct OutputLeaseTable {
+    active: Mutex<HashMap<String, Fid>>,
+}
+
+pub(super) struct OutputLeaseGuard<'a> {
+    table: &'a OutputLeaseTable,
+    pid: String,
+    fid: Fid,
+    committed: bool,
+}
+
+impl OutputLeaseTable {
+    pub(super) fn acquire<'a>(
+        &'a self,
+        pid: &str,
+        fid: Fid,
+    ) -> Result<OutputLeaseGuard<'a>, ErrorCode> {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(holder) = active.get(pid) {
+            return Err(if *holder == fid {
+                ErrorCode::BadRequest
+            } else {
+                ErrorCode::NoAccess
+            });
+        }
+        active.insert(pid.to_string(), fid);
+        Ok(OutputLeaseGuard {
+            table: self,
+            pid: pid.to_string(),
+            fid,
+            committed: false,
+        })
+    }
+
+    pub(super) fn release_fid(&self, fid: Fid) {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        active.retain(|_, holder| *holder != fid);
+    }
+
+    fn release_entry(&self, pid: &str, fid: Fid) {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if active.get(pid) == Some(&fid) {
+            active.remove(pid);
+        }
+    }
+}
+
+impl OutputLeaseGuard<'_> {
+    pub(super) fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for OutputLeaseGuard<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.table.release_entry(&self.pid, self.fid);
+        }
+    }
 }
 
 pub(super) fn is_agent_overlay_reserved_name(name: &str) -> bool {

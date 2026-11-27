@@ -309,7 +309,7 @@ async fn write_ui_event(shell: &Shell, owner: &str, event: &UiEvent) {
     if let Ok(mut bytes) = serde_json::to_vec(event) {
         bytes.push(b'\n');
         let _ = shell
-            .write(&format!("{owner}/machine/ui/events"), &bytes)
+            .write_exclusive(&format!("{owner}/machine/ui/events"), &bytes)
             .await;
     }
 }

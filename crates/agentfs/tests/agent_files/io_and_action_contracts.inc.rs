@@ -2,9 +2,28 @@ use alan_agentfs::AgentFs;
 use alan_ap::{ErrorCode, Fid, FileServer, OpenMode};
 
 async fn write_doc(fs: &AgentFs, path: &[&str], fid: Fid, data: &[u8]) -> Result<(), ErrorCode> {
+    write_doc_with_mode(fs, path, fid, OpenMode::Write, data).await
+}
+
+async fn write_exclusive_doc(
+    fs: &AgentFs,
+    path: &[&str],
+    fid: Fid,
+    data: &[u8],
+) -> Result<(), ErrorCode> {
+    write_doc_with_mode(fs, path, fid, OpenMode::WriteExclusive, data).await
+}
+
+async fn write_doc_with_mode(
+    fs: &AgentFs,
+    path: &[&str],
+    fid: Fid,
+    mode: OpenMode,
+    data: &[u8],
+) -> Result<(), ErrorCode> {
     let names: Vec<String> = path.iter().map(|s| s.to_string()).collect();
     fs.walk(Fid::ROOT, fid, &names).await?;
-    fs.open(fid, OpenMode::Write).await?;
+    fs.open(fid, mode).await?;
     fs.write(fid, 0, data).await?;
     fs.clunk(fid).await
 }
@@ -86,7 +105,7 @@ async fn agent_writes_output_and_it_is_readable() {
     fs.walk(Fid::ROOT, Fid(1), &["io".into(), "output".into()])
         .await
         .unwrap();
-    fs.open(Fid(1), OpenMode::Write).await.unwrap();
+    fs.open(Fid(1), OpenMode::WriteExclusive).await.unwrap();
     fs.write(Fid(1), 0, b"Hello ").await.unwrap();
     fs.write(Fid(1), 0, b"world").await.unwrap();
     fs.clunk(Fid(1)).await.unwrap();
@@ -106,10 +125,10 @@ async fn agent_writes_output_and_it_is_readable() {
 #[tokio::test]
 async fn tape_is_append_only_and_readable() {
     let fs = AgentFs::new();
-    write_doc(&fs, &["machine", "tape"], Fid(1), b"turn-1\n")
+    write_exclusive_doc(&fs, &["machine", "tape"], Fid(1), b"turn-1\n")
         .await
         .unwrap();
-    write_doc(&fs, &["machine", "tape"], Fid(2), b"turn-2\n")
+    write_exclusive_doc(&fs, &["machine", "tape"], Fid(2), b"turn-2\n")
         .await
         .unwrap();
     assert_eq!(
@@ -123,10 +142,10 @@ async fn machine_tape_is_backed_by_a_content_addressed_checkpoint() {
     let fs = AgentFs::new();
     let empty_root = fs.current_tape_checkpoint().await;
 
-    write_doc(&fs, &["machine", "tape"], Fid(1), b"turn-1\n")
+    write_exclusive_doc(&fs, &["machine", "tape"], Fid(1), b"turn-1\n")
         .await
         .unwrap();
-    write_doc(&fs, &["machine", "tape"], Fid(2), b"turn-2\n")
+    write_exclusive_doc(&fs, &["machine", "tape"], Fid(2), b"turn-2\n")
         .await
         .unwrap();
 
@@ -441,35 +460,80 @@ async fn expired_action_output_returns_structured_retention_record() {
 }
 
 #[tokio::test]
-async fn machine_tape_holds_an_exclusive_write_lease() {
-    let fs = AgentFs::new();
-    // One writer holds machine/tape open for write (the generating engine).
-    fs.walk(Fid::ROOT, Fid(1), &["machine".into(), "tape".into()])
-        .await
-        .unwrap();
-    fs.open(Fid(1), OpenMode::Write).await.unwrap();
+async fn single_producer_streams_require_write_exclusive_and_allow_concurrent_readers() {
+    use std::sync::Arc;
+    use std::time::Duration;
 
-    // A second write-open of the tape is refused while the lease is held.
-    fs.walk(Fid::ROOT, Fid(2), &["machine".into(), "tape".into()])
-        .await
-        .unwrap();
-    assert_eq!(
-        fs.open(Fid(2), OpenMode::Write).await,
-        Err(ErrorCode::NoAccess)
-    );
+    let surfaces: [&[&str]; 3] = [
+        &["machine", "tape"],
+        &["io", "output"],
+        &["machine", "ui", "events"],
+    ];
 
-    // Readers are not excluded — a tail during generation still works.
-    fs.walk(Fid::ROOT, Fid(3), &["machine".into(), "tape".into()])
-        .await
-        .unwrap();
-    fs.open(Fid(3), OpenMode::Read).await.unwrap();
+    for path in surfaces {
+        let fs = Arc::new(AgentFs::new());
+        let names: Vec<String> = path.iter().map(|s| s.to_string()).collect();
 
-    // Releasing the writer releases the lease; a new writer may then take it.
-    fs.clunk(Fid(1)).await.unwrap();
-    fs.walk(Fid::ROOT, Fid(4), &["machine".into(), "tape".into()])
-        .await
-        .unwrap();
-    fs.open(Fid(4), OpenMode::Write).await.unwrap();
+        // Non-exclusive Write and ReadWrite are rejected even when no writer holds the lease.
+        for rejected in [OpenMode::Write, OpenMode::ReadWrite] {
+            fs.walk(Fid::ROOT, Fid(1), &names).await.unwrap();
+            assert_eq!(
+                fs.open(Fid(1), rejected).await,
+                Err(ErrorCode::NoAccess),
+                "{path:?} must reject {rejected:?}"
+            );
+            fs.clunk(Fid(1)).await.unwrap();
+        }
+
+        // First WriteExclusive acquires the lease.
+        fs.walk(Fid::ROOT, Fid(10), &names).await.unwrap();
+        fs.open(Fid(10), OpenMode::WriteExclusive).await.unwrap();
+
+        // A concurrent second WriteExclusive (as well as Write / ReadWrite) is rejected.
+        for mode in [
+            OpenMode::WriteExclusive,
+            OpenMode::Write,
+            OpenMode::ReadWrite,
+        ] {
+            fs.walk(Fid::ROOT, Fid(11), &names).await.unwrap();
+            assert_eq!(
+                fs.open(Fid(11), mode).await,
+                Err(ErrorCode::NoAccess),
+                "{path:?} must reject concurrent {mode:?}"
+            );
+            fs.clunk(Fid(11)).await.unwrap();
+        }
+
+        // Concurrent Read tailing succeeds while the exclusive writer holds the lease.
+        let reader_fs = Arc::clone(&fs);
+        let reader_names = names.clone();
+        let reader = tokio::spawn(async move {
+            reader_fs
+                .walk(Fid::ROOT, Fid(20), &reader_names)
+                .await
+                .unwrap();
+            reader_fs.open(Fid(20), OpenMode::Read).await.unwrap();
+            let data = reader_fs.read(Fid(20), 0, 4096).await.unwrap();
+            reader_fs.clunk(Fid(20)).await.unwrap();
+            data
+        });
+
+        fs.write(Fid(10), 0, b"first\n").await.unwrap();
+        let streamed = tokio::time::timeout(Duration::from_secs(1), reader)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(streamed, b"first\n");
+
+        // Releasing the exclusive writer releases the lease cleanly.
+        fs.clunk(Fid(10)).await.unwrap();
+        fs.walk(Fid::ROOT, Fid(30), &names).await.unwrap();
+        fs.open(Fid(30), OpenMode::WriteExclusive).await.unwrap();
+        fs.write(Fid(30), 0, b"second\n").await.unwrap();
+        fs.clunk(Fid(30)).await.unwrap();
+
+        assert_eq!(read_text(&fs, path, Fid(40)).await, "first\nsecond\n");
+    }
 }
 
 #[tokio::test]

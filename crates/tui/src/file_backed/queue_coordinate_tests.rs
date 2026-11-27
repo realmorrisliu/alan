@@ -18,7 +18,7 @@ async fn hydrated_preview_boundary_survives_public_reattach() {
                 ""
             };
             shell
-                .write(&format!("{owner}/machine/tape"), tape.as_bytes())
+                .write_exclusive(&format!("{owner}/machine/tape"), tape.as_bytes())
                 .await
                 .unwrap();
             let event = if thinking {
@@ -37,7 +37,7 @@ async fn hydrated_preview_boundary_survives_public_reattach() {
                 }
             };
             shell
-                .write(
+                .write_exclusive(
                     &format!("{owner}/machine/ui/events"),
                     format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes(),
                 )
@@ -111,7 +111,7 @@ async fn retained_restore_helpers_preserve_positions() {
         "{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"answer\"}\n",
     ] {
         shell
-            .write(&format!("{owner}/machine/tape"), suffix.as_bytes())
+            .write_exclusive(&format!("{owner}/machine/tape"), suffix.as_bytes())
             .await
             .unwrap();
         let tail = shell.tail(&format!("{owner}/machine/tape")).await.unwrap();

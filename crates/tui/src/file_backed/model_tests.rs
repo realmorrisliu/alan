@@ -282,7 +282,7 @@ async fn model_file_backed_hydration_notification_and_failure() {
             error: None,
         };
         shell
-            .write(
+            .write_exclusive(
                 &format!("{owner}/machine/ui/events"),
                 format!("{}\n", serde_json::to_string(&receipt).unwrap()).as_bytes(),
             )

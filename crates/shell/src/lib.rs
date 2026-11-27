@@ -308,8 +308,23 @@ impl Shell {
     /// rejection (the server discards a malformed document at clunk) surfaces as an
     /// error rather than a false success.
     pub async fn write(&self, path: &str, data: &[u8]) -> Result<(), ErrorCode> {
+        self.write_with_mode(path, data, OpenMode::Write).await
+    }
+
+    /// Write a document using `OpenMode::WriteExclusive` and commit it on clunk.
+    pub async fn write_exclusive(&self, path: &str, data: &[u8]) -> Result<(), ErrorCode> {
+        self.write_with_mode(path, data, OpenMode::WriteExclusive)
+            .await
+    }
+
+    async fn write_with_mode(
+        &self,
+        path: &str,
+        data: &[u8],
+        mode: OpenMode,
+    ) -> Result<(), ErrorCode> {
         let (fid, _) = self.walk_to(path).await?;
-        match self.write_body(fid, data).await {
+        match self.write_body(fid, mode, data).await {
             // The write reached the commit step: the clunk *is* the commit.
             Ok(()) => self.clunk(fid).await,
             Err(e) => {
@@ -319,8 +334,8 @@ impl Shell {
         }
     }
 
-    async fn write_body(&self, fid: Fid, data: &[u8]) -> Result<(), ErrorCode> {
-        self.open(fid, OpenMode::Write).await?;
+    async fn write_body(&self, fid: Fid, mode: OpenMode, data: &[u8]) -> Result<(), ErrorCode> {
+        self.open(fid, mode).await?;
         self.write_all(fid, data).await
     }
 

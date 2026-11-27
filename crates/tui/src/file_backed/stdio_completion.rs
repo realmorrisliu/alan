@@ -349,7 +349,7 @@ mod command_tests {
             // A UI event already on the stream parks the attach at the live edge, which
             // is what exposed the answer wait wedging on its root-agent probe.
             shell
-                .write(
+                .write_exclusive(
                     &format!("{path}/machine/ui/events"),
                     format!(
                         "{}\n",
@@ -434,7 +434,7 @@ mod command_tests {
                 error: (exit_code == 7).then(|| "tape finalization failed".into()),
             };
             shell
-                .write(
+                .write_exclusive(
                     &format!("{path}/machine/ui/events"),
                     format!("{}\n", serde_json::to_string(&completed).unwrap()).as_bytes(),
                 )

@@ -213,7 +213,7 @@ async fn run_child_file_backed(project_dir: PathBuf) -> Result<()> {
         .await
         .context("update ui/models process_path")?;
     shell
-        .write(
+        .write_exclusive(
             &format!("{owner}/machine/tape"),
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"**Bold lead** and regular prose that word wraps across narrow terminal widths cleanly.\"}\n",
         )
@@ -375,7 +375,7 @@ fn spawn_pty_control_task(
                     .unwrap_or_default();
                     ev.push(b'\n');
                     let _ = control_shell
-                        .write(&format!("{control_owner}/machine/ui/events"), &ev)
+                        .write_exclusive(&format!("{control_owner}/machine/ui/events"), &ev)
                         .await;
                 } else if let Some(json) = line.strip_prefix("ctl:project-cwd-v1 ")
                     && let Ok(val) = serde_json::from_str::<serde_json::Value>(json)
@@ -415,7 +415,7 @@ fn spawn_pty_control_task(
                     .unwrap_or_default();
                     ev.push(b'\n');
                     let _ = control_shell
-                        .write(&format!("{control_owner}/machine/ui/events"), &ev)
+                        .write_exclusive(&format!("{control_owner}/machine/ui/events"), &ev)
                         .await;
                 }
             }
@@ -471,7 +471,7 @@ async fn run_child_m6() -> Result<()> {
                     .unwrap_or_default();
                     ev.push(b'\n');
                     let _ = input_shell
-                        .write(&format!("{input_owner}/machine/ui/events"), &ev)
+                        .write_exclusive(&format!("{input_owner}/machine/ui/events"), &ev)
                         .await;
                 }
             }

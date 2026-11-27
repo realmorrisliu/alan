@@ -162,14 +162,14 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         .unwrap();
     let agent_path = format!("/agent/{pid}");
     shell
-        .write(
+        .write_exclusive(
             &format!("{agent_path}/machine/tape"),
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"repeat me\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n",
         )
         .await
         .unwrap();
     shell
-        .write(
+        .write_exclusive(
             &format!("{agent_path}/machine/ui/events"),
             b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":1}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
         )
@@ -204,14 +204,14 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         }
 
         shell
-            .write(
+            .write_exclusive(
                 &format!("{agent_path}/machine/tape"),
                 &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"repeat me\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"preamble\"}\n"),
             )
             .await
             .unwrap();
         shell
-            .write(
+            .write_exclusive(
                 &format!("{agent_path}/machine/ui/events"),
                 b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
             )
@@ -224,14 +224,14 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
             );
 
         shell
-            .write(
+            .write_exclusive(
                 &format!("{agent_path}/machine/tape"),
                 &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"new answer\"}\n"),
             )
             .await
             .unwrap();
         shell
-            .write(
+            .write_exclusive(
                 &format!("{agent_path}/machine/ui/events"),
                 &completion(alan_agent_protocol::UiInputStatus::Completed, None),
             )
@@ -277,14 +277,14 @@ async fn one_shot_fails_when_final_tape_read_races_root_agent_replacement() {
         tokio::pin!(wait_for_answer);
 
         shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/tape",
             &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\"}\n"),
         )
         .await
         .unwrap();
         shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/ui/events",
             b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":18446744073709551615}}\n",
         )
@@ -292,7 +292,7 @@ async fn one_shot_fails_when_final_tape_read_races_root_agent_replacement() {
         .unwrap();
         let (walked, resume) = tail_closer.pause_next_walk_with_suffix("/machine/tape");
         shell
-            .write(
+            .write_exclusive(
                 "/agent/root/machine/ui/events",
                 &completion(alan_agent_protocol::UiInputStatus::Completed, None),
             )
@@ -326,14 +326,14 @@ async fn one_shot_fails_when_final_tape_read_races_root_agent_replacement() {
             alan_kernel::Access::ReadOnly,
         );
         shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/tape",
             &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"recovered answer\"}\n"),
         )
         .await
         .unwrap();
         shell
-            .write(
+            .write_exclusive(
                 "/agent/root/machine/ui/events",
                 b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
             )
@@ -359,7 +359,7 @@ async fn one_shot_fails_when_final_tape_read_races_root_agent_replacement() {
 async fn renderer_reconnect_discards_queued_events_from_the_old_root_pid() {
     let (shell, agent_root, live_namespace, _old_pid) = stdio_tests::live_root_agent().await;
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/tape",
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"previous task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n",
         )
@@ -391,7 +391,7 @@ async fn renderer_reconnect_discards_queued_events_from_the_old_root_pid() {
         alan_kernel::Access::ReadOnly,
     );
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/tape",
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"previous task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"remote task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"remote answer\"}\n",
         )
@@ -489,7 +489,7 @@ async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
         result
     });
     shell
-        .write(
+        .write_exclusive(
             &format!("/agent/{pid}/machine/ui/events"),
             format!(
                 "{}\n",
@@ -502,7 +502,7 @@ async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
     for (id, answer) in [(&a_id, "answer a"), (&b_id, "answer b")] {
         let tape = serde_json::json!({"version":1,"kind":"message","role":"assistant","content":answer,"submission_id":id});
         shell
-            .write(
+            .write_exclusive(
                 &format!("/agent/{pid}/machine/tape"),
                 format!("{tape}\n").as_bytes(),
             )
@@ -514,7 +514,7 @@ async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
             error: None,
         };
         shell
-            .write(
+            .write_exclusive(
                 &format!("/agent/{pid}/machine/ui/events"),
                 format!("{}\n", serde_json::to_string(&completion).unwrap()).as_bytes(),
             )

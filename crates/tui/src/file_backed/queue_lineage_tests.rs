@@ -49,7 +49,7 @@ async fn canonical_receipt_with_submitted_a(has_a: bool) {
             format!("{q}\n{answer_q}\n")
         };
         shell
-            .write(&format!("{owner}/machine/tape"), tape.as_bytes())
+            .write_exclusive(&format!("{owner}/machine/tape"), tape.as_bytes())
             .await
             .unwrap();
         shell
@@ -195,7 +195,7 @@ async fn remaining_canonical_scene(scene: usize) {
             expected.push(HistoryCell::Assistant("answer R".into()));
         }
         shell
-            .write(&format!("{owner}/machine/tape"), tape.as_bytes())
+            .write_exclusive(&format!("{owner}/machine/tape"), tape.as_bytes())
             .await
             .unwrap();
         shell
@@ -279,7 +279,7 @@ async fn review_canonical_receipt_chronology() {
         let exact = serde_json::json!({"version":1,"kind":"message","role":"user","content":body,"submission_id":"q"});
         let answer = serde_json::json!({"version":1,"kind":"message","role":"assistant","content":"answer Q"});
         shell
-            .write(
+            .write_exclusive(
                 &format!("{owner}/machine/tape"),
                 format!("{old}\n{exact}\n{answer}\n").as_bytes(),
             )
@@ -383,7 +383,7 @@ async fn changed_owner_keeps_old_canonical_whole_turn() {
         );
         let a = serde_json::json!({"version":1,"kind":"message","role":"user","content":"A","submission_id":"a"});
         shell
-            .write(
+            .write_exclusive(
                 &format!("/agent/{new_pid}/machine/tape"),
                 format!("{a}\n").as_bytes(),
             )
@@ -481,7 +481,7 @@ async fn exercise(submitted: bool, canonical: bool, equal: bool, error: bool) {
     }
     let tape = records.iter().map(|r| format!("{r}\n")).collect::<String>();
     shell
-        .write(&format!("{owner}/machine/tape"), tape.as_bytes())
+        .write_exclusive(&format!("{owner}/machine/tape"), tape.as_bytes())
         .await
         .unwrap();
     shell
@@ -497,7 +497,7 @@ async fn exercise(submitted: bool, canonical: bool, equal: bool, error: bool) {
             recoverable: true,
         };
         shell
-            .write(
+            .write_exclusive(
                 &format!("{owner}/machine/ui/events"),
                 format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes(),
             )
@@ -597,7 +597,7 @@ async fn review_idle_ambiguous_single_receipt_exact_tape() {
     app.acknowledge_local_input("q", &owner);
     let old = serde_json::json!({"version":1,"kind":"message","role":"user","content":body,"submission_id":"old-u"});
     shell
-        .write(
+        .write_exclusive(
             &format!("{owner}/machine/tape"),
             format!("{old}\n").as_bytes(),
         )
@@ -630,7 +630,7 @@ async fn review_idle_ambiguous_single_receipt_exact_tape() {
     assert_eq!(app.transcript.len(), 2);
     // AgentFS Tape writes append: old-u is already present, so append only q.
     shell
-        .write(
+        .write_exclusive(
             &format!("{owner}/machine/tape"),
             format!("{exact}\n").as_bytes(),
         )
@@ -678,7 +678,7 @@ async fn review_hydrated_error_filter_receipt_lineage() {
     app.transcript.push(HistoryCell::User("A".into()));
     let tape = serde_json::json!({"version":1,"kind":"message","role":"user","content":"A","submission_id":"a"});
     shell
-        .write(
+        .write_exclusive(
             &format!("{owner}/machine/tape"),
             format!("{tape}\n").as_bytes(),
         )
@@ -689,7 +689,7 @@ async fn review_hydrated_error_filter_receipt_lineage() {
         recoverable: true,
     };
     shell
-        .write(
+        .write_exclusive(
             &format!("{owner}/machine/ui/events"),
             format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes(),
         )

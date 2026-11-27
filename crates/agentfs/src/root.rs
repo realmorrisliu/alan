@@ -32,9 +32,10 @@ use crate::{
     actor_view::{ResolvedTarget, is_write_intent},
 };
 use namespace::{
-    agent_children_qid, is_agent_overlay_reserved_name, is_proc_overlay_name, namespace_agent_qid,
-    proc_child_names, read_file_text, read_listing, release_node, resolved_target_of,
-    rollback_created_fid, root_qid, slice,
+    OutputLeaseTable, agent_children_qid, is_agent_output_proc_path,
+    is_agent_overlay_reserved_name, is_proc_overlay_name, namespace_agent_qid, proc_child_names,
+    read_file_text, read_listing, release_node, resolved_target_of, rollback_created_fid, root_qid,
+    slice,
 };
 use process_event_bridge::{
     agent_event_sink, input_event_sink, io_event_sink, output_event_sink, process_event_sink,
@@ -128,33 +129,38 @@ pub struct AgentRootFs {
     io_events: Option<Arc<dyn ProcessIoEventSource>>,
     input_events: Option<Arc<dyn ProcessInputEventSource>>,
     output_events: Option<Arc<dyn ProcessOutputEventSource>>,
+    output_leases: OutputLeaseTable,
     state: Arc<Mutex<State>>,
 }
 
 impl AgentRootFs {
-    pub fn new(proc: Arc<dyn FileServer>) -> Self {
+    fn with_sources(
+        proc: Arc<dyn FileServer>,
+        process_events: Option<Arc<dyn ProcessEventSource>>,
+        io_events: Option<Arc<dyn ProcessIoEventSource>>,
+        input_events: Option<Arc<dyn ProcessInputEventSource>>,
+        output_events: Option<Arc<dyn ProcessOutputEventSource>>,
+    ) -> Self {
         Self {
             proc,
-            process_events: None,
-            io_events: None,
-            input_events: None,
-            output_events: None,
+            process_events,
+            io_events,
+            input_events,
+            output_events,
+            output_leases: OutputLeaseTable::default(),
             state: Arc::new(Mutex::new(State::default())),
         }
+    }
+
+    pub fn new(proc: Arc<dyn FileServer>) -> Self {
+        Self::with_sources(proc, None, None, None, None)
     }
 
     pub fn new_with_process_output_events(
         proc: Arc<dyn FileServer>,
         output_events: Arc<dyn ProcessOutputEventSource>,
     ) -> Self {
-        Self {
-            proc,
-            process_events: None,
-            io_events: None,
-            input_events: None,
-            output_events: Some(output_events),
-            state: Arc::new(Mutex::new(State::default())),
-        }
+        Self::with_sources(proc, None, None, None, Some(output_events))
     }
 
     pub fn new_with_process_io_events(
@@ -162,42 +168,21 @@ impl AgentRootFs {
         input_events: Arc<dyn ProcessInputEventSource>,
         output_events: Arc<dyn ProcessOutputEventSource>,
     ) -> Self {
-        Self {
-            proc,
-            process_events: None,
-            io_events: None,
-            input_events: Some(input_events),
-            output_events: Some(output_events),
-            state: Arc::new(Mutex::new(State::default())),
-        }
+        Self::with_sources(proc, None, None, Some(input_events), Some(output_events))
     }
 
     pub fn new_with_ordered_process_io_events(
         proc: Arc<dyn FileServer>,
         io_events: Arc<dyn ProcessIoEventSource>,
     ) -> Self {
-        Self {
-            proc,
-            process_events: None,
-            io_events: Some(io_events),
-            input_events: None,
-            output_events: None,
-            state: Arc::new(Mutex::new(State::default())),
-        }
+        Self::with_sources(proc, None, Some(io_events), None, None)
     }
 
     pub fn new_with_process_events(
         proc: Arc<dyn FileServer>,
         process_events: Arc<dyn ProcessEventSource>,
     ) -> Self {
-        Self {
-            proc,
-            process_events: Some(process_events),
-            io_events: None,
-            input_events: None,
-            output_events: None,
-            state: Arc::new(Mutex::new(State::default())),
-        }
+        Self::with_sources(proc, Some(process_events), None, None, None)
     }
 
     /// Expose an optional `/agent/history` subtree served by Agent Runtime Service.
@@ -767,7 +752,24 @@ impl FileServer for AgentRootFs {
                 .open(backing_fid, mode)
                 .await
                 .map(|qid| namespace_agent_qid(&pid, qid)),
-            Node::ProcFile { proc, proc_fid, .. } => proc.open(proc_fid, mode).await,
+            Node::ProcFile {
+                proc,
+                proc_fid,
+                pid,
+                names,
+            } => {
+                if is_agent_output_proc_path(&names) && is_write_intent(mode) {
+                    if mode != OpenMode::WriteExclusive {
+                        return Err(ErrorCode::NoAccess);
+                    }
+                    let lease = self.output_leases.acquire(&pid, fid)?;
+                    let qid = proc.open(proc_fid, mode).await?;
+                    lease.commit();
+                    Ok(qid)
+                } else {
+                    proc.open(proc_fid, mode).await
+                }
+            }
         }
     }
 
@@ -927,6 +929,7 @@ impl FileServer for AgentRootFs {
             } => backing.remove(backing_fid).await,
             Node::ProcFile { proc, proc_fid, .. } => proc.remove(proc_fid).await,
         }?;
+        self.output_leases.release_fid(fid);
         self.state.lock().await.fids.remove(&fid);
         Ok(())
     }
@@ -935,6 +938,7 @@ impl FileServer for AgentRootFs {
         if fid == Fid::ROOT {
             return Ok(());
         }
+        self.output_leases.release_fid(fid);
         let entry = self.state.lock().await.fids.remove(&fid);
         match entry.map(|entry| entry.node) {
             Some(Node::AgentFile {

@@ -50,7 +50,7 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
     let agent_files = environment.agent_files();
 
     shell
-        .write("/agent/1/io/output", b"assistant output")
+        .write_exclusive("/agent/1/io/output", b"assistant output")
         .await
         .unwrap();
     shell

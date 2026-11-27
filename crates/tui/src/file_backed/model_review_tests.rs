@@ -229,7 +229,7 @@ async fn review_file_backed_malformed_receipt_preserves_uncertainty() {
     let outcome = super::model_transport_tests::catch_poll(async {
         app.model_chooser.pending = Some((owner.clone(), "pending-model".into()));
         shell
-            .write(&format!("{owner}/machine/ui/events"), b"invalid-json\n")
+            .write_exclusive(&format!("{owner}/machine/ui/events"), b"invalid-json\n")
             .await
             .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(3), async {

@@ -169,7 +169,7 @@ async fn redirected_wait_requires_a_tty_instead_of_accepting_a_response() {
     let mut event = serde_json::to_vec(&UiEvent::Activity { snapshot: activity }).unwrap();
     event.push(b'\n');
     shell
-        .write("/agent/root/machine/ui/events", &event)
+        .write_exclusive("/agent/root/machine/ui/events", &event)
         .await
         .unwrap();
     let error = tokio::time::timeout(

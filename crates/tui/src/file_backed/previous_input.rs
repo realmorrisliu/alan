@@ -167,7 +167,7 @@ mod tests {
             serde_json::json!({"version":1,"kind":"message","role":"assistant","content":"final answer","submission_id":"mine"}),
         ].map(|record| format!("{record}\n")).concat();
         shell
-            .write(&format!("/agent/{pid}/machine/tape"), tape.as_bytes())
+            .write_exclusive(&format!("/agent/{pid}/machine/tape"), tape.as_bytes())
             .await
             .unwrap();
         let tail = shell
@@ -245,7 +245,7 @@ mod tests {
             serde_json::to_string(&queued_completion).unwrap()
         );
         shell
-            .write(&format!("/agent/{pid}/machine/ui/events"), ui.as_bytes())
+            .write_exclusive(&format!("/agent/{pid}/machine/ui/events"), ui.as_bytes())
             .await
             .unwrap();
         let tape = [
@@ -254,7 +254,7 @@ mod tests {
             serde_json::json!({"version":1,"kind":"message","role":"assistant","content":"queued answer","submission_id":"mine-two"}),
         ].map(|record| format!("{record}\n")).concat();
         shell
-            .write(&format!("/agent/{pid}/machine/tape"), tape.as_bytes())
+            .write_exclusive(&format!("/agent/{pid}/machine/tape"), tape.as_bytes())
             .await
             .unwrap();
         let ui_tail = shell

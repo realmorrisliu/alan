@@ -34,7 +34,7 @@ impl NamespaceTapeWriter {
     pub(super) async fn open(client: NamespaceClient, tape_path: &str) -> Result<Self> {
         let fid = client.walk_to(tape_path).await?;
         let guard = client
-            .open_guarded_fid(fid, OpenMode::Write)
+            .open_guarded_fid(fid, OpenMode::WriteExclusive)
             .await
             .with_context(|| format!("open tape writer for {tape_path}"))?;
         Ok(Self { client, guard })
@@ -82,7 +82,7 @@ pub(super) async fn write_agent_output(
 ) -> Result<()> {
     let output_path = format!("{agent_path}/io/output");
     client
-        .write_document(&output_path, response.as_bytes())
+        .write_exclusive_document(&output_path, response.as_bytes())
         .await
         .with_context(|| format!("write assistant output to {output_path}"))
 }

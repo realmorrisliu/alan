@@ -21,7 +21,7 @@ impl FileServer for CountTapeOpens {
     }
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
         let qid = self.inner.open(fid, mode).await?;
-        if qid.path == self.tape_path && mode == OpenMode::Write {
+        if qid.path == self.tape_path && mode == OpenMode::WriteExclusive {
             self.writes.fetch_add(1, Ordering::SeqCst);
             *self.writer_fid.lock().unwrap() = Some(fid);
         }

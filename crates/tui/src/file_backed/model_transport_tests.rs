@@ -233,7 +233,7 @@ async fn root_loss_revokes_model_events_and_prewrite_until_descriptor_repin() {
                 error: None,
             };
             shell
-                .write(
+                .write_exclusive(
                     &format!("{owner}/machine/ui/events"),
                     format!("{}\n", serde_json::to_string(&receipt).unwrap()).as_bytes(),
                 )

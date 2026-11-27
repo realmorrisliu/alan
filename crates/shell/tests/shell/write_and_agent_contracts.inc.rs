@@ -344,7 +344,7 @@ async fn run_one_file_agent_turn(root: InProcessTransport, agent_root_path: Stri
     let message = parse_agent_input_frame(&frame);
     let response = generate_once(root, &message).await;
     shell
-        .write(&format!("{agent_root_path}/io/output"), response.as_bytes())
+        .write_exclusive(&format!("{agent_root_path}/io/output"), response.as_bytes())
         .await
         .expect("agent should write io/output");
 }

@@ -353,8 +353,23 @@ impl NamespaceClient {
     }
 
     pub(super) async fn write_document(&self, path: &str, data: &[u8]) -> Result<()> {
+        self.write_document_with_mode(path, data, OpenMode::Write)
+            .await
+    }
+
+    pub(super) async fn write_exclusive_document(&self, path: &str, data: &[u8]) -> Result<()> {
+        self.write_document_with_mode(path, data, OpenMode::WriteExclusive)
+            .await
+    }
+
+    async fn write_document_with_mode(
+        &self,
+        path: &str,
+        data: &[u8],
+        mode: OpenMode,
+    ) -> Result<()> {
         let fid = self.walk_to(path).await?;
-        match self.write_opened(fid, data).await {
+        match self.write_opened(fid, mode, data).await {
             Ok(()) => self.clunk(fid).await,
             Err(err) => {
                 let _ = self.clunk(fid).await;
@@ -364,8 +379,8 @@ impl NamespaceClient {
         .with_context(|| format!("write {path}"))
     }
 
-    async fn write_opened(&self, fid: Fid, data: &[u8]) -> Result<()> {
-        self.open(fid, OpenMode::Write).await?;
+    async fn write_opened(&self, fid: Fid, mode: OpenMode, data: &[u8]) -> Result<()> {
+        self.open(fid, mode).await?;
         self.write_all_opened(fid, data).await
     }
 

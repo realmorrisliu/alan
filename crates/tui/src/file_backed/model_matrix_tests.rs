@@ -45,7 +45,7 @@ async fn publish_receipt(
         error: None,
     };
     shell
-        .write(
+        .write_exclusive(
             &format!("{owner}/machine/ui/events"),
             format!("{}\n", serde_json::to_string(&receipt).unwrap()).as_bytes(),
         )

@@ -292,7 +292,7 @@ fn spawn_input_echo_responder(
                     tape_bytes.extend_from_slice(&serde_json::to_vec(&assistant_line).unwrap());
                     tape_bytes.push(b'\n');
                     let _ = shell
-                        .write(&format!("{owner}/machine/tape"), &tape_bytes)
+                        .write_exclusive(&format!("{owner}/machine/tape"), &tape_bytes)
                         .await;
                     let mut ev = serde_json::to_vec(&UiEvent::InputCompleted {
                         submission_ids: vec![record.submission_id],
@@ -302,7 +302,7 @@ fn spawn_input_echo_responder(
                     .unwrap();
                     ev.push(b'\n');
                     let _ = shell
-                        .write(&format!("{owner}/machine/ui/events"), &ev)
+                        .write_exclusive(&format!("{owner}/machine/ui/events"), &ev)
                         .await;
                 }
             }
@@ -373,13 +373,13 @@ async fn run_workstreams_child() -> Result<()> {
     .await?;
 
     shell
-        .write(
+        .write_exclusive(
             &format!("{root_owner}/machine/tape"),
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"root-seed-q\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"root-seed-a\"}\n",
         )
         .await?;
     shell
-        .write(
+        .write_exclusive(
             &format!("{child_owner}/machine/tape"),
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"worker-seed-q\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"worker-seed-a\"}\n",
         )

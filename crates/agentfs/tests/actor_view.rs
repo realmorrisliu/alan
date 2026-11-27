@@ -86,18 +86,44 @@ async fn assert_write_allowed(
     path: &str,
     payload: &[u8],
 ) -> Result<(), ErrorCode> {
+    assert_write_allowed_with_mode(transport, path, OpenMode::Write, payload).await
+}
+
+async fn assert_exclusive_write_allowed(
+    transport: &InProcessTransport,
+    path: &str,
+    payload: &[u8],
+) -> Result<(), ErrorCode> {
+    for rejected in [OpenMode::Write, OpenMode::ReadWrite] {
+        let fid = walk_path(transport, path).await?;
+        assert_eq!(
+            transport
+                .call(Request::Open {
+                    fid,
+                    mode: rejected
+                })
+                .await,
+            Err(ErrorCode::NoAccess),
+            "{path} open({rejected:?}) must fail with NoAccess"
+        );
+        let _ = transport.call(Request::Clunk { fid }).await;
+    }
+    assert_write_allowed_with_mode(transport, path, OpenMode::WriteExclusive, payload).await
+}
+
+async fn assert_write_allowed_with_mode(
+    transport: &InProcessTransport,
+    path: &str,
+    mode: OpenMode,
+    payload: &[u8],
+) -> Result<(), ErrorCode> {
     let stat = stat_path(transport, path).await;
     assert!(
         stat.writable,
         "{path} must report stat.writable == true, got false"
     );
     let fid = walk_path(transport, path).await?;
-    transport
-        .call(Request::Open {
-            fid,
-            mode: OpenMode::Write,
-        })
-        .await?;
+    transport.call(Request::Open { fid, mode }).await?;
     transport
         .call(Request::Write {
             fid,
@@ -420,14 +446,19 @@ async fn engine_view_scopes_engine_writes_to_self_pid_and_allows_child_client_or
         },
     );
 
-    // Own pid + `/agent/root` alias allow engine writes.
+    // Own pid + `/agent/root` alias allow engine writes (single-producer
+    // streams require `OpenMode::WriteExclusive`).
     for prefix in [format!("/agent/{}", fx.root_pid), "/agent/root".to_string()] {
-        assert_write_allowed(&root_engine, &format!("{prefix}/io/output"), b"assistant")
+        assert_exclusive_write_allowed(&root_engine, &format!("{prefix}/io/output"), b"assistant")
             .await
             .unwrap();
-        assert_write_allowed(&root_engine, &format!("{prefix}/machine/tape"), b"record\n")
-            .await
-            .unwrap();
+        assert_exclusive_write_allowed(
+            &root_engine,
+            &format!("{prefix}/machine/tape"),
+            b"record\n",
+        )
+        .await
+        .unwrap();
         assert_write_allowed(
             &root_engine,
             &format!("{prefix}/machine/ui/activity"),
@@ -435,7 +466,7 @@ async fn engine_view_scopes_engine_writes_to_self_pid_and_allows_child_client_or
         )
         .await
         .unwrap();
-        assert_write_allowed(
+        assert_exclusive_write_allowed(
             &root_engine,
             &format!("{prefix}/machine/ui/events"),
             b"{}\n",
@@ -527,14 +558,14 @@ async fn child_view_allows_own_pid_and_keeps_parent_root_and_siblings_read_only(
         format!("/agent/{}", fx.child_pid),
         format!("/agent/{}/children/{}", fx.root_pid, fx.child_pid),
     ] {
-        assert_write_allowed(
+        assert_exclusive_write_allowed(
             &child_view,
             &format!("{own_prefix}/io/output"),
             b"child out",
         )
         .await
         .unwrap();
-        assert_write_allowed(&child_view, &format!("{own_prefix}/machine/tape"), b"t\n")
+        assert_exclusive_write_allowed(&child_view, &format!("{own_prefix}/machine/tape"), b"t\n")
             .await
             .unwrap();
         assert_write_allowed(
@@ -635,7 +666,15 @@ async fn agent_fs_view_enforces_actor_writability_directly_without_fid_collision
         Err(ErrorCode::NoAccess)
     );
 
-    engine.open(Fid(1), OpenMode::Write).await.unwrap();
+    assert_eq!(
+        engine.open(Fid(1), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        engine.open(Fid(1), OpenMode::ReadWrite).await,
+        Err(ErrorCode::NoAccess)
+    );
+    engine.open(Fid(1), OpenMode::WriteExclusive).await.unwrap();
     engine.write(Fid(1), 0, b"engine-tape\n").await.unwrap();
     engine.clunk(Fid(1)).await.unwrap();
 
@@ -643,4 +682,107 @@ async fn agent_fs_view_enforces_actor_writability_directly_without_fid_collision
     assert_eq!(client.read(Fid(1), 0, 64).await.unwrap(), b"engine-tape\n");
     client.clunk(Fid(1)).await.unwrap();
     foreign_child.clunk(Fid(1)).await.unwrap();
+}
+
+#[tokio::test]
+async fn agent_root_enforces_write_exclusive_leases_across_aliases_and_allows_client_tailing() {
+    use std::time::Duration;
+
+    let fx = setup_fixture().await;
+    let engine = mount_agent_view(
+        &fx.agent_root,
+        AgentActorView::Engine {
+            self_pid: fx.root_pid.clone(),
+        },
+    );
+    let client = mount_agent_view(&fx.agent_root, AgentActorView::Client);
+    let client_shell = Shell::new(client);
+
+    for suffix in ["machine/tape", "io/output", "machine/ui/events"] {
+        let concrete_path = format!("/agent/{}/{suffix}", fx.root_pid);
+        let root_alias = format!("/agent/root/{suffix}");
+
+        // Non-exclusive Write and ReadWrite are rejected even for the owning Engine.
+        for rejected in [OpenMode::Write, OpenMode::ReadWrite] {
+            let fid = walk_path(&engine, &concrete_path).await.unwrap();
+            assert_eq!(
+                engine
+                    .call(Request::Open {
+                        fid,
+                        mode: rejected
+                    })
+                    .await,
+                Err(ErrorCode::NoAccess),
+                "{concrete_path} must reject {rejected:?}"
+            );
+            engine.call(Request::Clunk { fid }).await.unwrap();
+        }
+
+        // Owning Engine acquires WriteExclusive via concrete pid path.
+        let writer_fid = walk_path(&engine, &concrete_path).await.unwrap();
+        engine
+            .call(Request::Open {
+                fid: writer_fid,
+                mode: OpenMode::WriteExclusive,
+            })
+            .await
+            .unwrap();
+
+        // A concurrent second WriteExclusive via either concrete path or `/agent/root` alias fails.
+        for contending_path in [&concrete_path, &root_alias] {
+            let second_fid = walk_path(&engine, contending_path).await.unwrap();
+            assert_eq!(
+                engine
+                    .call(Request::Open {
+                        fid: second_fid,
+                        mode: OpenMode::WriteExclusive,
+                    })
+                    .await,
+                Err(ErrorCode::NoAccess),
+                "{contending_path} must reject concurrent WriteExclusive"
+            );
+            engine
+                .call(Request::Clunk { fid: second_fid })
+                .await
+                .unwrap();
+        }
+
+        // Client can concurrently tail via OpenMode::Read while the Engine holds the lease.
+        let mut tail = client_shell.tail(&root_alias).await.unwrap();
+        let reader = tokio::spawn(async move {
+            let chunk = tail.read(4096).await.unwrap();
+            tail.close().await.unwrap();
+            chunk
+        });
+
+        engine
+            .call(Request::Write {
+                fid: writer_fid,
+                offset: 0,
+                data: b"stream-chunk\n".to_vec(),
+            })
+            .await
+            .unwrap();
+
+        let observed = tokio::time::timeout(Duration::from_secs(1), reader)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(observed, b"stream-chunk\n");
+
+        // Clunking the exclusive writer releases the lease so the next WriteExclusive succeeds.
+        engine
+            .call(Request::Clunk { fid: writer_fid })
+            .await
+            .unwrap();
+        let next_fid = walk_path(&engine, &root_alias).await.unwrap();
+        engine
+            .call(Request::Open {
+                fid: next_fid,
+                mode: OpenMode::WriteExclusive,
+            })
+            .await
+            .unwrap();
+        engine.call(Request::Clunk { fid: next_fid }).await.unwrap();
+    }
 }
