@@ -3,17 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Native shell guidance distinguishes namespace and shell operands
-Model-visible native Bash Tool guidance SHALL distinguish Host-resolved Process
-cwd and file-Tool namespace paths from operands embedded in unchanged shell
-command text. It SHALL describe cwd-relative operands for mounted project files
-and file Tools for absolute Alan namespace paths. A namespace-absolute shell
-operand refusal MUST NOT be described as proof that the selected project lacks
-authorization. Guidance MUST NOT expose private Host backing, add authority or
-claim that arbitrary namespace paths are automatically rewritten for a shell.
-Guidance SHALL explain that shell variable, command, brace and unquoted glob
-expansion is unsupported even for reads. The Tool description and command schema
-SHALL offer literal paths or quoted search filters as supported alternatives;
-guidance MUST NOT claim that another project grant enables shell expansion.
+Model-visible Bash guidance SHALL distinguish cwd-relative project paths, file-Tool namespace paths, and literal shell operands without exposing private Host paths, adding authority, or claiming automatic path rewriting or that grants enable expansion. It SHALL explain that variable, command, brace, and unquoted glob expansion are unsupported even for reads, offer literal paths or quoted filters, and never frame namespace-operand refusals as missing grants.
 
 #### Scenario: Model receives Bash guidance for a mounted project
 - **WHEN** a real Agent receives the builtin Bash definition and command schema

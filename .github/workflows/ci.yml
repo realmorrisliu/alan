@@ -35,7 +35,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes ripgrep
-          npm install --global @fission-ai/openspec@1.4.1
+          npm install --global @fission-ai/openspec@2.2.0
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
@@ -74,13 +74,14 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install pinned OpenSpec CLI
-        run: npm install --global @fission-ai/openspec@1.4.1
+        run: npm install --global @fission-ai/openspec@2.2.0
 
       - name: Validate canonical specs and active changes
         run: |
           bash scripts/test-openspec-current-surfaces.sh
           bash scripts/check-openspec-current-surfaces.sh
-          openspec validate --all --strict
+          openspec validate --all
+          openspec validate --changes --strict
 
   test:
     name: Test Suite

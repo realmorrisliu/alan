@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: Personal daily-use qualification retains a consecutive real-work sample
-Personal daily-use qualification SHALL retain at least fifty real tasks over at least fourteen consecutive days across Alan and a second actual repository. It SHALL freeze intake, budgets and accounting before formal runs and require at least90% completion without unplanned human rescue. Routine initial grants and clarification SHALL be reported separately from corrective steering, environment repair and operator-authored solutions. Pilot results and full-trust runs MUST NOT replace the default-posture sample. Eligibility and ordinary-task classification SHALL be fixed before admission; every admitted failed, blocked, abandoned or budget-exhausted task SHALL remain in the scored denominator.
+Personal daily-use qualification SHALL retain >=50 real tasks over >=14 consecutive days across Alan and a second real repo, freezing intake, budgets, eligibility, and ordinary-task rules upfront and requiring >=90% completion without unplanned rescue. Grants and clarification SHALL be reported separately from rescues; pilots and full-trust runs MUST NOT replace the default sample, and every failed, blocked, abandoned, or budget-exhausted task SHALL remain in the denominator.
 
 #### Scenario: Task requires rescue
 - **WHEN** an admitted task needs an operator to repair the runtime or finish the solution
