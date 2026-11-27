@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - 'website/**'
+      - 'CHANGELOG.md'
       - '.github/workflows/website.yml'
   pull_request:
     paths:
       - 'website/**'
+      - 'CHANGELOG.md'
       - '.github/workflows/website.yml'
   workflow_dispatch:
 
@@ -40,11 +42,19 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck and build Cloudflare Worker + assets
+      - name: Typecheck, build Worker + assets, prerender pages
         run: pnpm build
 
-      - name: Verify Cloudflare Build Output
+      - name: Verify Cloudflare build output and prerendered pages
         run: |
+          out=.cloudflare/output/v1/workers/default
           test -f .cloudflare/output/v1/config.json
-          test -f .cloudflare/output/v1/workers/default/assets/index.html
-          test -f .cloudflare/output/v1/workers/default/bundle/index.js
+          test -f $out/bundle/index.js
+          for f in index.html docs.html docs/alan.html docs/alan9.html docs/agentfs.html docs/q.html docs/install.html \
+                   install.sh robots.txt sitemap.xml og.png ph.js _headers; do
+            test -f "$out/assets/$f" || { echo "missing $f"; exit 1; }
+          done
+          grep -q 'Even an agent' $out/assets/index.html
+          grep -q 'id="fig-rio"' $out/assets/index.html
+          grep -q 'AGENTFS(4)' $out/assets/docs/agentfs.html
+          ! grep -q '<div id="root"></div>' $out/assets/index.html
