@@ -22,6 +22,7 @@ qualification.
 | M8 | Merged on `main` (`#1167` M8.1, `#1176` M8.2, `#1177` M8.3; synced & archived at [2026-11-25-add-project-workstreams](../archive/2026-11-25-add-project-workstreams/) via `#1178`) — Project Workstreams Ledger (`ADR-0062`), in-instance async concurrency, `routefs` cross-stream handoff, TUI `/streams` & `/focus`, tiered write isolation, `alan-memfs` delta commits & `/summary rollback`, and guarded Stateful Cron Streams (`alan workflow draft`) | M8.1–M8.3 unit/integration suites + `workstream_pty_test` passing on `main`, canonical `openspec/specs/` synced and archived |
 | Next-Wave Workspace & Arena | Merged on `main` (`#1172` proposal, `#1177` implementation; synced & archived at [2026-11-25-add-cow-workspaces-and-executable-arena](../archive/2026-11-25-add-cow-workspaces-and-executable-arena/) via `#1178`); Track B ([Issue #1171](https://github.com/realmorrisliu/alan/issues/1171)) closed & merged on `main` via `#1180` | Native OS CoW workspaces (`clonefile(2)` / `FICLONE` with `git worktree` fallback) upgrading M8 Tier-3 write isolation, `/mnt/branch` (`alan-branchfs`) coordination, confined `mode = "executable"` `alan-arena`, `cow_branch_arena_e2e` passing on `main`, and Track B zero-root macOS loopback NFSv3 bridge (`#1180`) verified with live `/sbin/mount_nfs` and `sandbox-exec` `(deny network*)` |
 | M9 (`v0.1.11`) | Merged on `main` (`v0.1.11`; `#1180`–`#1186`, `#1188`–`#1189`; synced & archived at [2026-11-26-add-first-class-decisions-and-smart-approval](../archive/2026-11-26-add-first-class-decisions-and-smart-approval/)) — Track B zero-root macOS loopback NFSv3 bridge (`#1180`, closes `#1171`), Sign in with ChatGPT (`#1181`), 2-row TUI status bar + live budget projection + `Ctrl+T` panel + modal mouse (`#1182`), first-class calibrated Decisions API (`#1183`) & System 1 smart approval (`ConfinedSmart` / `--smart`, `#1184`), capability-probed Kitty/iTerm2 inline image rendering (`#1185`), `alanworks.app` Plan 9 archive redesign (`#1186`), dogfooding polish (`#1188`), and `v0.1.11` release (`#1189`) | 16/16–17/17 CI green across `#1180`–`#1189`, live macOS `mount_nfs` + `sandbox-exec` verification, real Unix PTY tests (`pty_e2e_quit`, status bar, modal mouse, Kitty/iTerm2 capability probing), canonical `openspec/specs/` synced and archived, tagged `v0.1.11` release published |
+| Wave 2 (Proposed) | Planned under [ADR-0063](../../../docs/adr/0063-actor-fileserver-multi-writer-and-event-supervision.md) — Change 1: [harden-ap-multi-writer-and-actor-substrate](../harden-ap-multi-writer-and-actor-substrate/proposal.md) (`#1187` + `#1190` Slice A `ActorFileServer`); Change 2: [add-event-driven-process-supervision](../add-event-driven-process-supervision/proposal.md) (`#1190` Slice B + Slice C polling removal); `AgentMachine` `gen_statem` deferred | Strict OpenSpec validation + `ADR-0063`; implementation slices feed into `Qualification` (`>=50` real tasks) once rubric is frozen; source code, unit/interposition/chaos suites, and CI pass per change before archive |
 | Deferred | Automatic input routing (`qualify-agent-input-routing` parked in place) and general mixed-Machine work (`2026-11-20-add-cognitive-model-routing` archived without sync) | Frozen deferred research outside M1–M7; requires an explicit new planning decision and standard-terminal (POSIX/VT) acceptance plan |
 
 ## Rules adopted by ADR-0061
@@ -60,10 +61,12 @@ and M9 (`v0.1.11`, `#1180`–`#1186`, `#1188`–`#1189`, including Track B `#117
 and `add-first-class-decisions-and-smart-approval` synced & archived under
 `openspec/changes/archive/2026-11-26-add-first-class-decisions-and-smart-approval/`) are
 likewise merged on `main`. `Qualification` (`qualify-personal-daily-development`) remains
-the single active execution milestone; next-wave architecture candidates are tracked in
-GitHub Issues `#1187` (`ready-for-agent`: aP stream & `/agent` multi-writer boundaries)
-and `#1190` (`ready-for-human`: Erlang/OTP supervision & actor invariants design
-discussion).
+the single active execution milestone; Wave 2 architectural changes are specified under
+[ADR-0063](../../../docs/adr/0063-actor-fileserver-multi-writer-and-event-supervision.md)
+in `harden-ap-multi-writer-and-actor-substrate` (`#1187` + `#1190` Slice A) and
+`add-event-driven-process-supervision` (`#1190` Slice B + Slice C polling removal),
+whose implementation tasks contribute real-task evidence toward `Qualification` once the
+sample rubric is frozen (`AgentMachine` `gen_statem` remains deferred).
 
 `qualify-agent-input-routing` remains in place under `openspec/changes/` solely as
 a `deferred-research / parked` directory because `scripts/harness/collect_routing_shadow_clients.py`,
