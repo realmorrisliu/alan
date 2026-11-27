@@ -708,11 +708,48 @@ async fn test_sandbox_exec_does_not_treat_non_find_exec_flag_as_dispatcher() {
 
     let result = sandbox
         .exec_with_timeout_and_capability(
-            "printf '%s\n' -exec ';'",
+            "printf '%s\\n' -exec ';'",
             temp.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Read),
         )
         .await;
     assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_sandbox_allows_standalone_env_pipeline_while_blocking_env_wrappers() {
+    let temp = TempDir::new().unwrap();
+    let guard = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
+    );
+
+    let read_res = guard
+        .exec_with_timeout_and_capability(
+            "env | grep -E 'CARGO|RUST' || true",
+            temp.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await;
+    assert!(
+        read_res.is_ok(),
+        "standalone env pipeline should pass preflight: {read_res:?}"
+    );
+
+    let wrapper_err = guard
+        .exec_with_timeout_and_capability(
+            "env FOO=bar printf ok",
+            temp.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        wrapper_err
+            .to_string()
+            .contains("rejects shell wrappers like env")
+    );
 }

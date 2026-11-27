@@ -34,7 +34,7 @@ pub use wire::{
 };
 
 use auth::{ADC_TOKEN_TTL, AdcTokenCache, AuthState};
-use catalog::{build_gemini_thinking_config, supports_stream_function_call_arguments};
+use catalog::{build_gemini_request_thinking_config, supports_stream_function_call_arguments};
 use endpoint::{Endpoint, Method, Transport};
 use input_projection::project_request_input;
 use signatures::TurnSignatures;
@@ -223,7 +223,11 @@ impl GoogleGeminiGenerateContentClient {
         streaming: bool,
     ) -> Result<GoogleGeminiGenerateContentRequest> {
         crate::message::reject_retired_message_overrides(&request)?;
-        let thinking_config = build_gemini_thinking_config(&self.model, request.reasoning.effort)?;
+        let thinking_config = build_gemini_request_thinking_config(
+            &self.model,
+            request.reasoning.effort,
+            request.response_schema.is_some(),
+        )?;
         let input = project_request_input(
             &self.model,
             request.system_prompt.as_deref(),

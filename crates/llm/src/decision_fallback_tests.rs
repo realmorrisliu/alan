@@ -294,3 +294,79 @@ async fn fallback_evaluator_supports_evaluate_choice_via_decide_delegation() {
     );
     assert_eq!(eval_resp.usage, None);
 }
+
+#[tokio::test]
+async fn build_fallback_generation_request_reserves_thinking_headroom() {
+    let request = multi_question_request();
+    let gen_req = build_fallback_generation_request(&request).unwrap();
+    assert!(
+        gen_req.max_tokens.unwrap() >= 2048,
+        "expected >= 2048 max_tokens for thinking headroom, got {:?}",
+        gen_req.max_tokens
+    );
+}
+
+#[tokio::test]
+async fn decode_fallback_generation_response_attaches_safe_diagnostics_without_secret_leakage() {
+    let request = multi_question_request();
+
+    let mut max_tokens_empty = gen_response("   ", None);
+    max_tokens_empty.finish_reason = Some("MAX_TOKENS".to_string());
+
+    let mut truncated_json = gen_response(r#"{"answers":{"safe":{"yes_probability":0.9"#, None);
+    truncated_json.finish_reason = Some("MAX_TOKENS".to_string());
+
+    let invalid_syntax_secret = gen_response("not-json secret=sk-leak-1", None);
+    let schema_mismatch_secret = gen_response(
+        r#"{"answers":{"safe":{"yes_probability":"sk-leak-2","confidence":0.9},"action":{"choice":"allow","probabilities":{"allow":1.0,"deny":0.0,"escalate":0.0},"confidence":1.0},"risk":{"probabilities":{"low":1.0,"medium":0.0,"high":0.0},"confidence":1.0}}}"#,
+        None,
+    );
+    let out_of_set_secret = gen_response(
+        r#"{"answers":{"safe":{"yes_probability":0.9,"confidence":0.9},"action":{"choice":"sk-leak-3","probabilities":{"allow":1.0,"deny":0.0,"escalate":0.0},"confidence":1.0},"risk":{"probabilities":{"low":1.0,"medium":0.0,"high":0.0},"confidence":1.0}}}"#,
+        None,
+    );
+    let trailing_secret = gen_response(
+        r#"{"answers":{"safe":{"yes_probability":0.9,"confidence":0.9},"action":{"choice":"allow","probabilities":{"allow":1.0,"deny":0.0,"escalate":0.0},"confidence":1.0},"risk":{"probabilities":{"low":1.0,"medium":0.0,"high":0.0},"confidence":1.0}}} sk-leak-4"#,
+        None,
+    );
+    let tool_call_resp = GenerationResponse {
+        tool_calls: vec![ToolCall::new("bash", json!({"command": "sk-leak-5"}))],
+        ..gen_response("", None)
+    };
+
+    let cases = [
+        (max_tokens_empty, "empty response, finish_reason=MAX_TOKENS"),
+        (
+            truncated_json,
+            "truncated JSON (unexpected EOF) at line 1 column 41, finish_reason=MAX_TOKENS",
+        ),
+        (invalid_syntax_secret, "invalid JSON syntax"),
+        (
+            schema_mismatch_secret,
+            "JSON does not match decision schema",
+        ),
+        (out_of_set_secret, "choice missing from probabilities"),
+        (trailing_secret, "trailing content after JSON"),
+        (tool_call_resp, "unexpected tool calls"),
+    ];
+
+    for (resp, expected_needle) in cases {
+        let mut mock = MockLlmProvider::new().with_response(resp);
+        let err = decide_via_generation(&mut mock, "gemini-4-neon", request.clone())
+            .await
+            .unwrap_err();
+        assert!(err.is::<MalformedDecisionResponse>());
+        let detail = err
+            .downcast_ref::<SafeMalformedDecisionDetail>()
+            .expect("expected SafeMalformedDecisionDetail");
+        assert!(
+            detail.0.contains(expected_needle),
+            "expected `{expected_needle}` in `{}`",
+            detail.0
+        );
+        assert!(
+            !format!("{err:#}").contains("sk-leak"),
+            "diagnostic leaked secret: {err:#}"
+        );
+    }
+}

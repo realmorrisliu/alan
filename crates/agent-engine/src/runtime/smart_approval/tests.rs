@@ -131,6 +131,7 @@ struct MockSmartProvider {
     supports_decisions_flag: bool,
     decide_result: std::result::Result<DecisionResponse, String>,
     generate_result: std::result::Result<String, String>,
+    generate_finish_reason: Option<String>,
     delay_ms: u64,
     generate_delay_ms: u64,
     bump_posture_fn: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -149,6 +150,7 @@ impl MockSmartProvider {
             supports_decisions_flag: true,
             decide_result,
             generate_result,
+            generate_finish_reason: None,
             delay_ms: 0,
             generate_delay_ms: 0,
             bump_posture_fn: None,
@@ -188,7 +190,7 @@ impl LlmProvider for MockSmartProvider {
             redacted_thinking: Vec::new(),
             tool_calls: Vec::new(),
             usage: None,
-            finish_reason: None,
+            finish_reason: self.generate_finish_reason.clone(),
             warnings: Vec::new(),
             provider_response_id: None,
             provider_response_status: None,
@@ -217,7 +219,7 @@ impl LlmProvider for MockSmartProvider {
                 sequence_number: None,
                 tool_call_delta: None,
                 is_finished: true,
-                finish_reason: Some("stop".into()),
+                finish_reason: resp.finish_reason.or_else(|| Some("stop".into())),
             })
             .await;
         Ok(rx)
