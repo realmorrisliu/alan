@@ -1,24 +1,31 @@
-//! alan-routefs — typed message routing as an aP file server.
+//! alan-routefs — typed message routing as a crash-isolated aP file server.
 //!
 //! A sender writes one typed message document to `send` and commits it by
 //! clunking the fid. Routefs matches the complete message against plain rule
 //! files in deterministic name order, delivers it to a destination port stream,
 //! and appends the routing decision to `log`. The sender emits a result type; it
 //! does not name the receiving actor.
+//!
+//! [`RouteFs`] executes its routing state inside a single-owner
+//! [`RouteFsActor`] spawned via [`alan_ap::spawn_file_actor`] without internal
+//! `tokio::sync::Mutex` locks, offloading blocking `ports/*` and `log` stream
+//! reads outside the actor loop via [`alan_ap::ActorOutcome::ReadStream`].
 
+mod actor;
 mod handoff;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream, VersionTable,
+    ActorExitHandle, ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat,
+    spawn_file_actor,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 
-use handoff::parse_optional_hop_count;
+pub use actor::RouteFsActor;
+use actor::{MessageDocument, rule_source, valid_name};
 pub use handoff::{
     LOOP_GUARD_RULE_NAME, MAX_HANDOFF_HOPS, ROUTE_HANDOFF_VERSION, RouteHandoffKind,
     RouteHandoffMessage, RoutedRecord, workstream_handoff_rules,
@@ -32,8 +39,10 @@ pub const MOUNT_PATH: &str = "/mnt/route";
 pub const DEAD_LETTER_PORT: &str = "dead-letter";
 /// Default coordinator port receiving cross-workstream handoffs for Root.
 pub const ROOT_PORT: &str = "root";
+/// Default bounded mailbox capacity for [`RouteFs`] actor instances.
+pub const DEFAULT_MAILBOX_CAP: usize = 256;
 
-const MAX_DOC_BYTES: usize = 1 << 20; // 1 MiB
+const INTERNAL_FID_BASE: u64 = 1 << 63;
 
 /// A plain JSON rule file.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -76,7 +85,7 @@ impl RuleSpec {
         self
     }
 
-    fn validate(&self) -> Result<(), ErrorCode> {
+    pub(crate) fn validate(&self) -> Result<(), ErrorCode> {
         if self.version != 1 || !valid_name(&self.port) {
             return Err(ErrorCode::BadRequest);
         }
@@ -88,7 +97,7 @@ impl RuleSpec {
         Ok(())
     }
 
-    fn matches(&self, message: &MessageDocument) -> bool {
+    pub(crate) fn matches(&self, message: &MessageDocument) -> bool {
         let type_matches = self
             .match_type
             .as_deref()
@@ -101,111 +110,14 @@ impl RuleSpec {
     }
 }
 
-#[derive(Debug, Clone)]
-struct MessageDocument {
-    message_type: String,
-    content: String,
-    hop_count: Option<u8>,
-    raw: serde_json::Value,
-}
-
-impl MessageDocument {
-    fn parse(bytes: &[u8]) -> Result<Self, ErrorCode> {
-        let raw: serde_json::Value =
-            serde_json::from_slice(bytes).map_err(|_| ErrorCode::BadRequest)?;
-        let object = raw.as_object().ok_or(ErrorCode::BadRequest)?;
-        if object.contains_key("kind") {
-            let handoff: RouteHandoffMessage =
-                serde_json::from_value(raw.clone()).map_err(|_| ErrorCode::BadRequest)?;
-            handoff.validate()?;
-            if let Some(explicit_type) = object.get("type")
-                && explicit_type.as_str() != Some(handoff.kind.as_str())
-            {
-                return Err(ErrorCode::BadRequest);
-            }
-            return Ok(Self {
-                message_type: handoff.kind.as_str().to_string(),
-                content: handoff.payload,
-                hop_count: Some(handoff.hop_count),
-                raw,
-            });
-        }
-        let version = object
-            .get("version")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u16::try_from(value).ok())
-            .ok_or(ErrorCode::BadRequest)?;
-        let message_type = object
-            .get("type")
-            .and_then(serde_json::Value::as_str)
-            .ok_or(ErrorCode::BadRequest)?
-            .to_string();
-        let content = object
-            .get("content")
-            .and_then(serde_json::Value::as_str)
-            .ok_or(ErrorCode::BadRequest)?
-            .to_string();
-        let hop_count = parse_optional_hop_count(object)?;
-        if version != 1 || message_type.is_empty() {
-            return Err(ErrorCode::BadRequest);
-        }
-        Ok(Self {
-            message_type,
-            content,
-            hop_count,
-            raw,
-        })
-    }
-}
-
-#[derive(Serialize)]
-struct RoutedRecordRef<'a> {
-    version: u16,
-    port: &'a str,
-    rule: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<&'a str>,
-    message: &'a serde_json::Value,
-}
-
-#[derive(Debug, Clone)]
-struct RuleEntry {
-    spec: RuleSpec,
-    source: Vec<u8>,
-}
-
-struct State {
-    rules: BTreeMap<String, RuleEntry>,
-    pending_rules: BTreeSet<String>,
-    ports: BTreeMap<String, Stream>,
-    log: Stream,
-    versions: VersionTable,
-    fids: HashMap<Fid, RouteFid>,
-}
-
-struct RouteFid {
-    node: Node,
-    mode: Option<OpenMode>,
-    write_buf: Vec<u8>,
-    wrote: bool,
-    pending_rule_create: bool,
-    observed_rule_version: Option<u32>,
-}
-
-#[derive(Debug, Clone)]
-enum Node {
-    Root,
-    Send,
-    RulesDir,
-    Rule(String),
-    PortsDir,
-    Port(String),
-    Log,
-}
-
-/// The message routing file server.
+/// The crash-isolated message routing file server.
+///
+/// Wraps a spawned [`RouteFsActor`] behind [`alan_ap::spawn_file_actor`] with
+/// bounded mailbox backpressure and non-blocking `Stream` read offloading.
 pub struct RouteFs {
-    state: Mutex<State>,
+    server: Arc<dyn FileServer>,
+    exit_handle: ActorExitHandle,
+    next_internal_fid: AtomicU64,
 }
 
 impl Default for RouteFs {
@@ -217,45 +129,54 @@ impl Default for RouteFs {
 impl RouteFs {
     /// Create an empty routefs with the default `dead-letter` and `root` ports.
     pub fn new() -> Self {
-        let mut ports = BTreeMap::new();
-        ports.insert(DEAD_LETTER_PORT.to_string(), Stream::new());
-        ports.insert(ROOT_PORT.to_string(), Stream::new());
-        Self {
-            state: Mutex::new(State {
-                rules: BTreeMap::new(),
-                pending_rules: BTreeSet::new(),
-                ports,
-                log: Stream::new(),
-                versions: VersionTable::new(),
-                fids: HashMap::new(),
-            }),
-        }
+        Self::with_mailbox_cap(DEFAULT_MAILBOX_CAP)
+    }
+
+    /// Create an empty routefs using an explicit bounded actor mailbox capacity
+    /// (clamped to at least `1`).
+    pub fn with_mailbox_cap(mailbox_cap: usize) -> Self {
+        Self::spawn(RouteFsActor::new(), mailbox_cap).0
     }
 
     /// Create a `RouteFs` pre-populated with default workstream handoff rules
     /// routing `reroute_request`, `cross_stream_dependency`, and `handoff_result`
     /// to `/mnt/route/ports/root`.
     pub fn new_with_workstream_handoff_rules() -> Self {
-        let fs = Self::new();
-        if let Ok(mut state) = fs.state.try_lock() {
-            for (name, spec) in workstream_handoff_rules() {
-                let _ = state.install_rule(name.to_string(), spec);
-            }
-        }
-        fs
+        Self::spawn(
+            RouteFsActor::new_with_workstream_handoff_rules(),
+            DEFAULT_MAILBOX_CAP,
+        )
+        .0
+    }
+
+    /// Spawn a configured [`RouteFsActor`] with bounded `mailbox_cap`, returning
+    /// the [`RouteFs`] handle alongside its [`ActorExitHandle`].
+    pub fn spawn(actor: RouteFsActor, mailbox_cap: usize) -> (Self, ActorExitHandle) {
+        let (server, exit_handle) = spawn_file_actor(actor, mailbox_cap);
+        let fs = Self {
+            server,
+            exit_handle: exit_handle.clone(),
+            next_internal_fid: AtomicU64::new(INTERNAL_FID_BASE),
+        };
+        (fs, exit_handle)
+    }
+
+    /// Return a handle for observing clean exit or panic termination of the
+    /// underlying [`RouteFsActor`] task.
+    pub fn exit_handle(&self) -> ActorExitHandle {
+        self.exit_handle.clone()
     }
 
     /// Install the default inspectable workstream handoff rules routing typed
     /// cross-stream messages to `/mnt/route/ports/root`.
     pub async fn install_workstream_handoff_rules(&self) -> Result<(), ErrorCode> {
-        let mut state = self.state.lock().await;
         for (name, spec) in workstream_handoff_rules() {
-            state.install_rule(name.to_string(), spec)?;
+            self.install_rule(name, spec).await?;
         }
         Ok(())
     }
 
-    /// Install or replace a rule without going through the aP file surface.
+    /// Install or replace a rule through the actor mailbox.
     /// Tests and bootstrap code may use this; the rule remains readable as
     /// `rules/<name>`.
     pub async fn install_rule(
@@ -263,290 +184,80 @@ impl RouteFs {
         name: impl Into<String>,
         spec: RuleSpec,
     ) -> Result<(), ErrorCode> {
-        let mut state = self.state.lock().await;
         let name = name.into();
-        state.install_rule(name, spec)
-    }
-}
-
-impl State {
-    fn node_of(&self, fid: Fid) -> Result<Node, ErrorCode> {
-        if fid == Fid::ROOT {
-            return Ok(Node::Root);
-        }
-        self.fids
-            .get(&fid)
-            .map(|f| f.node.clone())
-            .ok_or(ErrorCode::NotFound)
-    }
-
-    fn qid(&self, node: &Node) -> Qid {
-        let (kind, path) = node_identity(node);
-        Qid {
-            kind,
-            version: self.versions.get(path),
-            path,
-        }
-    }
-
-    fn child(&self, node: &Node, name: &str) -> Result<Node, ErrorCode> {
-        match node {
-            Node::Root => match name {
-                "send" => Ok(Node::Send),
-                "rules" => Ok(Node::RulesDir),
-                "ports" => Ok(Node::PortsDir),
-                "log" => Ok(Node::Log),
-                _ => Err(ErrorCode::NotFound),
-            },
-            Node::RulesDir => {
-                if self.rules.contains_key(name) {
-                    Ok(Node::Rule(name.to_string()))
-                } else {
-                    Err(ErrorCode::NotFound)
-                }
-            }
-            Node::PortsDir => {
-                if self.ports.contains_key(name) {
-                    Ok(Node::Port(name.to_string()))
-                } else {
-                    Err(ErrorCode::NotFound)
-                }
-            }
-            _ => Err(ErrorCode::NotDirectory),
-        }
-    }
-
-    fn computed_bytes(&self, node: &Node) -> Result<Vec<u8>, ErrorCode> {
-        let bytes = match node {
-            Node::Root => b"send\nrules\nports\nlog".to_vec(),
-            Node::Send => b"# routefs send: write one message JSON document, then clunk\n".to_vec(),
-            Node::RulesDir => listing(self.rules.keys()),
-            Node::PortsDir => listing(self.ports.keys()),
-            Node::Rule(name) => self
-                .rules
-                .get(name)
-                .ok_or(ErrorCode::NotFound)?
-                .source
-                .clone(),
-            Node::Port(_) | Node::Log => return Err(ErrorCode::Unsupported),
-        };
-        Ok(bytes)
-    }
-
-    fn stream_for(&self, node: &Node) -> Option<Stream> {
-        match node {
-            Node::Port(name) => self.ports.get(name).cloned(),
-            Node::Log => Some(self.log.clone()),
-            _ => None,
-        }
-    }
-
-    fn current_rule_version(&self, name: &str) -> Option<u32> {
-        self.rules.contains_key(name).then(|| {
-            self.versions
-                .get(node_identity(&Node::Rule(name.to_string())).1)
-        })
-    }
-
-    fn ensure_current_rule_fid(&self, f: &RouteFid, name: &str) -> Result<(), ErrorCode> {
-        if f.pending_rule_create {
-            return Ok(());
-        }
-        let observed = f.observed_rule_version.ok_or(ErrorCode::BadRequest)?;
-        let current = self.current_rule_version(name).ok_or(ErrorCode::NotFound)?;
-        if observed != current {
-            return Err(ErrorCode::BadRequest);
-        }
-        Ok(())
-    }
-
-    fn install_rule(&mut self, name: String, spec: RuleSpec) -> Result<(), ErrorCode> {
         if !valid_name(&name) {
             return Err(ErrorCode::BadRequest);
         }
-        if self.pending_rules.contains(&name) {
-            return Err(ErrorCode::BadRequest);
-        }
         spec.validate()?;
-        let source = rule_source(&spec)?;
-        let port = spec.port.clone();
-        self.rules.insert(name.clone(), RuleEntry { spec, source });
-        self.ensure_port(&port);
-        self.versions.bump(node_identity(&Node::RulesDir).1);
-        self.versions.bump(node_identity(&Node::Rule(name)).1);
-        Ok(())
-    }
+        let bytes = rule_source(&spec)?;
 
-    fn ensure_port(&mut self, port: &str) {
-        if !self.ports.contains_key(port) {
-            self.ports.insert(port.to_string(), Stream::new());
-            self.versions.bump(node_identity(&Node::PortsDir).1);
-        }
-    }
+        let dir_fid = self.alloc_internal_fid();
+        let rule_fid = self.alloc_internal_fid();
+        self.server
+            .walk(Fid::ROOT, dir_fid, &["rules".to_string()])
+            .await?;
 
-    async fn route_message(&mut self, bytes: &[u8]) -> Result<(), ErrorCode> {
-        let message = MessageDocument::parse(bytes)?;
-
-        let decision = if let Some(hop_count) =
-            message.hop_count.filter(|&hops| hops > MAX_HANDOFF_HOPS)
+        let prepare = match self
+            .server
+            .create(dir_fid, rule_fid, &name, FileKind::File)
+            .await
         {
-            (
-                DEAD_LETTER_PORT.to_string(),
-                LOOP_GUARD_RULE_NAME.to_string(),
-                Some(format!(
-                    "handoff hop_count {hop_count} exceeds max_handoff_hops={MAX_HANDOFF_HOPS}; escalated to {DEAD_LETTER_PORT}"
-                )),
-            )
-        } else {
-            self.rules
-                .iter()
-                .find(|(_, rule)| rule.spec.matches(&message))
-                .map(|(name, rule)| {
-                    (
-                        rule.spec.port.clone(),
-                        name.clone(),
-                        rule.spec.reason.clone(),
-                    )
-                })
-                .unwrap_or_else(|| {
-                    (
-                        DEAD_LETTER_PORT.to_string(),
-                        "dead-letter".to_string(),
-                        Some("no matching rule".to_string()),
-                    )
-                })
+            Ok(_) => Ok(()),
+            Err(ErrorCode::BadRequest) => match self
+                .server
+                .walk(dir_fid, rule_fid, std::slice::from_ref(&name))
+                .await
+            {
+                Ok(_) => Ok(()),
+                Err(ErrorCode::NotFound) => Err(ErrorCode::BadRequest),
+                Err(err) => Err(err),
+            },
+            Err(err) => Err(err),
         };
-        let (port, rule_name, reason) = decision;
-        self.ensure_port(&port);
-        let record = RoutedRecordRef {
-            version: 1,
-            port: &port,
-            rule: &rule_name,
-            reason: reason.as_deref(),
-            message: &message.raw,
-        };
-        let bytes = routed_record_bytes(&record)?;
-        let stream = self.ports.get(&port).ok_or(ErrorCode::NotFound)?.clone();
-        stream.append(&bytes).await;
-        self.log.append(&bytes).await;
-        Ok(())
+
+        if let Err(err) = prepare {
+            let _ = self.server.clunk(dir_fid).await;
+            return Err(err);
+        }
+
+        let write_res = async {
+            self.server.open(rule_fid, OpenMode::Write).await?;
+            self.server.write(rule_fid, 0, &bytes).await?;
+            Ok::<(), ErrorCode>(())
+        }
+        .await;
+        let clunk_res = self.server.clunk(rule_fid).await;
+        let _ = self.server.clunk(dir_fid).await;
+        write_res?;
+        clunk_res
     }
 
-    fn commit_pending_rule(&mut self, name: String, spec: RuleSpec) -> Result<(), ErrorCode> {
-        self.pending_rules.remove(&name);
-        self.install_rule(name, spec)
-    }
-
-    fn abandon_pending_rule(&mut self, name: &str) {
-        self.pending_rules.remove(name);
+    fn alloc_internal_fid(&self) -> Fid {
+        let raw = self.next_internal_fid.fetch_add(1, Ordering::Relaxed);
+        Fid(raw | INTERNAL_FID_BASE)
     }
 }
 
 #[async_trait]
 impl FileServer for RouteFs {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
-        let mut state = self.state.lock().await;
-        if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
-            return Err(ErrorCode::BadRequest);
-        }
-        let mut node = state.node_of(fid)?;
-        for name in names {
-            node = state.child(&node, name)?;
-        }
-        let qid = state.qid(&node);
-        state.fids.insert(newfid, RouteFid::at(node, qid));
-        Ok(qid)
+        self.server.walk(fid, newfid, names).await
     }
 
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
-        let mut state = self.state.lock().await;
-        let node = state.node_of(fid)?;
-        if fid != Fid::ROOT && state.fids.get(&fid).is_some_and(|f| f.mode.is_some()) {
-            return Err(ErrorCode::BadRequest);
-        }
-        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !is_writable(&node) {
-            return Err(ErrorCode::NoAccess);
-        }
-        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite)
-            && let Node::Rule(name) = &node
-        {
-            let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
-            state.ensure_current_rule_fid(f, name)?;
-        }
-        if fid != Fid::ROOT {
-            let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
-            f.mode = Some(mode);
-        }
-        Ok(state.qid(&node))
+        self.server.open(fid, mode).await
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        let (node, stream) = {
-            let state = self.state.lock().await;
-            if fid != Fid::ROOT {
-                let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
-                if !matches!(f.mode, Some(OpenMode::Read | OpenMode::ReadWrite)) {
-                    return Err(ErrorCode::NoAccess);
-                }
-            }
-            let node = state.node_of(fid)?;
-            let stream = state.stream_for(&node);
-            (node, stream)
-        };
-        if let Some(stream) = stream {
-            return Ok(stream.read(offset, count).await);
-        }
-        let state = self.state.lock().await;
-        Ok(slice(state.computed_bytes(&node)?, offset, count))
+        self.server.read(fid, offset, count).await
     }
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-        let mut state = self.state.lock().await;
-        let node = state.node_of(fid)?;
-        let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
-        if !matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
-            return Err(ErrorCode::NoAccess);
-        }
-        if !matches!(node, Node::Send | Node::Rule(_)) {
-            return Err(ErrorCode::Unsupported);
-        }
-        if let Node::Rule(name) = &node {
-            state.ensure_current_rule_fid(f, name)?;
-        }
-        let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-        let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-        if end > MAX_DOC_BYTES {
-            return Err(ErrorCode::BadRequest);
-        }
-        let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
-        if f.write_buf.len() < end {
-            f.write_buf.resize(end, 0);
-        }
-        f.write_buf[start..end].copy_from_slice(data);
-        f.wrote = true;
-        Ok(data.len() as u32)
+        self.server.write(fid, offset, data).await
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
-        let state = self.state.lock().await;
-        let node = state.node_of(fid)?;
-        let length = match &node {
-            Node::Port(_) | Node::Log => {
-                state
-                    .stream_for(&node)
-                    .ok_or(ErrorCode::NotFound)?
-                    .len()
-                    .await
-            }
-            other => state.computed_bytes(other)?.len() as u64,
-        };
-        Ok(Stat {
-            name: String::new(),
-            qid: state.qid(&node),
-            length,
-            executable: false,
-            writable: is_writable(&node),
-        })
+        self.server.stat(fid).await
     }
 
     async fn create(
@@ -556,145 +267,14 @@ impl FileServer for RouteFs {
         name: &str,
         kind: FileKind,
     ) -> Result<Qid, ErrorCode> {
-        if kind != FileKind::File || !valid_name(name) {
-            return Err(ErrorCode::BadRequest);
-        }
-        let mut state = self.state.lock().await;
-        if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
-            return Err(ErrorCode::BadRequest);
-        }
-        if !matches!(state.node_of(fid)?, Node::RulesDir)
-            || state.rules.contains_key(name)
-            || state.pending_rules.contains(name)
-        {
-            return Err(ErrorCode::BadRequest);
-        }
-        state.pending_rules.insert(name.to_string());
-        let node = Node::Rule(name.to_string());
-        let qid = state.qid(&node);
-        state.fids.insert(newfid, RouteFid::pending_rule(node));
-        Ok(qid)
+        self.server.create(fid, newfid, name, kind).await
     }
 
     async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
-        let mut state = self.state.lock().await;
-        let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
-        let node = f.node.clone();
-        let Node::Rule(name) = node else {
-            return Err(ErrorCode::Unsupported);
-        };
-        if f.pending_rule_create {
-            if !state.pending_rules.remove(&name) {
-                return Err(ErrorCode::NotFound);
-            }
-        } else {
-            state.ensure_current_rule_fid(f, &name)?;
-            state.rules.remove(&name).ok_or(ErrorCode::NotFound)?;
-        }
-        state.versions.bump(node_identity(&Node::RulesDir).1);
-        state.fids.remove(&fid);
-        Ok(())
+        self.server.remove(fid).await
     }
 
     async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
-        if fid == Fid::ROOT {
-            return Ok(());
-        }
-        let mut state = self.state.lock().await;
-        let f = state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
-        match f.node {
-            Node::Send if f.wrote => state.route_message(&f.write_buf).await,
-            Node::Rule(name) if f.wrote && f.pending_rule_create => {
-                let spec: RuleSpec = match serde_json::from_slice(&f.write_buf) {
-                    Ok(spec) => spec,
-                    Err(_) => {
-                        state.abandon_pending_rule(&name);
-                        return Err(ErrorCode::BadRequest);
-                    }
-                };
-                state.commit_pending_rule(name, spec)
-            }
-            Node::Rule(ref name) if f.wrote => {
-                state.ensure_current_rule_fid(&f, name)?;
-                let spec: RuleSpec =
-                    serde_json::from_slice(&f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
-                state.install_rule(name.clone(), spec)
-            }
-            Node::Rule(name) if f.pending_rule_create => {
-                state.abandon_pending_rule(&name);
-                Ok(())
-            }
-            _ => Ok(()),
-        }
+        self.server.clunk(fid).await
     }
-}
-
-impl RouteFid {
-    fn at(node: Node, qid: Qid) -> Self {
-        let observed_rule_version = matches!(node, Node::Rule(_)).then_some(qid.version);
-        Self {
-            node,
-            mode: None,
-            write_buf: Vec::new(),
-            wrote: false,
-            pending_rule_create: false,
-            observed_rule_version,
-        }
-    }
-
-    fn pending_rule(node: Node) -> Self {
-        Self {
-            node,
-            mode: None,
-            write_buf: Vec::new(),
-            wrote: false,
-            pending_rule_create: true,
-            observed_rule_version: None,
-        }
-    }
-}
-
-fn is_writable(node: &Node) -> bool {
-    matches!(node, Node::Send | Node::Rule(_))
-}
-
-fn valid_name(name: &str) -> bool {
-    !name.is_empty() && !name.contains('/') && !name.contains('\n')
-}
-
-fn listing<'a>(names: impl Iterator<Item = &'a String>) -> Vec<u8> {
-    names.cloned().collect::<Vec<_>>().join("\n").into_bytes()
-}
-
-fn rule_source(spec: &RuleSpec) -> Result<Vec<u8>, ErrorCode> {
-    let mut bytes = serde_json::to_vec(spec).map_err(|_| ErrorCode::BadRequest)?;
-    bytes.push(b'\n');
-    Ok(bytes)
-}
-
-fn routed_record_bytes(record: &RoutedRecordRef<'_>) -> Result<Vec<u8>, ErrorCode> {
-    let mut bytes = serde_json::to_vec(record).map_err(|_| ErrorCode::BadRequest)?;
-    bytes.push(b'\n');
-    Ok(bytes)
-}
-
-fn node_identity(node: &Node) -> (FileKind, u64) {
-    let (kind, key) = match node {
-        Node::Root => (FileKind::Dir, "/".to_string()),
-        Node::Send => (FileKind::File, "send".to_string()),
-        Node::RulesDir => (FileKind::Dir, "rules".to_string()),
-        Node::Rule(name) => (FileKind::File, format!("rules/{name}")),
-        Node::PortsDir => (FileKind::Dir, "ports".to_string()),
-        Node::Port(name) => (FileKind::Stream, format!("ports/{name}")),
-        Node::Log => (FileKind::Stream, "log".to_string()),
-    };
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    key.hash(&mut h);
-    (kind, h.finish())
-}
-
-fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {
-    let start = (offset as usize).min(bytes.len());
-    let end = bytes.len().min(start + count as usize);
-    bytes[start..end].to_vec()
 }
