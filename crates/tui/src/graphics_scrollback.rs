@@ -15,7 +15,7 @@ use crate::graphics::{
     GraphicsCapability, ImageDimensions, ImageFormat, MAX_THUMBNAIL_ROWS,
     compute_thumbnail_geometry, encode_inline_image, format_image_badge, parse_image_dimensions,
 };
-use crate::terminal::TerminalSession;
+use crate::terminal::{InlineSession, InlineSessionBackend};
 use crate::theme::{Theme, ThemeMode};
 
 /// An immutable scrollback item committed above the inline viewport.
@@ -118,8 +118,8 @@ pub(crate) fn write_image_escape_at_row<W: Write>(
 }
 
 /// Commit typed scrollback items (lines and inline images) into the active terminal session.
-pub(crate) fn write_scrollback_items(
-    session: &mut TerminalSession,
+pub(crate) fn write_scrollback_items<B: InlineSessionBackend>(
+    session: &mut InlineSession<B>,
     items: &[ScrollbackItem],
 ) -> Result<()> {
     for item in items {
@@ -135,8 +135,8 @@ pub(crate) fn write_scrollback_items(
     Ok(())
 }
 
-fn emit_scrollback_image(
-    session: &mut TerminalSession,
+fn emit_scrollback_image<B: InlineSessionBackend>(
+    session: &mut InlineSession<B>,
     bytes: &[u8],
     label: &str,
     dimensions: Option<ImageDimensions>,

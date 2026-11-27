@@ -18,6 +18,9 @@ use crate::transcript_ui::wrapped_line_count;
 #[cfg(test)]
 #[path = "terminal_accessibility_tests.rs"]
 mod accessibility_tests;
+#[cfg(test)]
+#[path = "terminal_tests.rs"]
+mod tests;
 
 pub type AlanTerminal = Terminal<HyperlinkBackend<Stdout>>;
 
@@ -422,14 +425,56 @@ impl Drop for StdinEchoGuard {
     }
 }
 
-pub struct TerminalSession {
-    pub(crate) terminal: AlanTerminal,
+pub(crate) trait InlineSessionBackend:
+    ratatui::backend::Backend<Error = std::io::Error> + Write
+{
+    fn link_sink(&self) -> std::sync::Arc<std::sync::Mutex<crate::hyperlink::CellLinkMap>>;
+    fn image_sink(&self) -> std::sync::Arc<std::sync::Mutex<Option<String>>>;
+    fn last_cursor_pos(&self) -> Option<ratatui::layout::Position>;
+    fn rebuild_inline(&self, height: u16) -> Result<Terminal<Self>>
+    where
+        Self: Sized;
+    fn is_live_tty(&self) -> bool {
+        false
+    }
+}
+
+impl InlineSessionBackend for HyperlinkBackend<Stdout> {
+    fn link_sink(&self) -> std::sync::Arc<std::sync::Mutex<crate::hyperlink::CellLinkMap>> {
+        HyperlinkBackend::link_sink(self)
+    }
+
+    fn image_sink(&self) -> std::sync::Arc<std::sync::Mutex<Option<String>>> {
+        HyperlinkBackend::image_sink(self)
+    }
+
+    fn last_cursor_pos(&self) -> Option<ratatui::layout::Position> {
+        HyperlinkBackend::last_cursor_pos(self)
+    }
+
+    fn rebuild_inline(&self, height: u16) -> Result<Terminal<Self>> {
+        build_inline_terminal(stdout(), height)
+    }
+
+    fn is_live_tty(&self) -> bool {
+        true
+    }
+}
+
+pub(crate) struct InlineSession<B: InlineSessionBackend> {
+    pub(crate) terminal: Terminal<B>,
     pub(crate) viewport_height: u16,
-    mouse_capture_enabled: bool,
+    last_screen_size: ratatui::layout::Size,
+    last_cursor_offset: u16,
     hyperlink_host_root: Option<std::path::PathBuf>,
     hyperlinks_enabled: bool,
     pub(crate) graphics_capability: crate::graphics::GraphicsCapability,
     pub(crate) theme_mode: crate::theme::ThemeMode,
+}
+
+pub struct TerminalSession {
+    pub(crate) inner: InlineSession<HyperlinkBackend<Stdout>>,
+    mouse_capture_enabled: bool,
 }
 
 impl TerminalSession {
@@ -452,21 +497,28 @@ impl TerminalSession {
             .context("failed to clear startup screen")?;
         let mut terminal = build_inline_terminal(out, 1)?;
         terminal.clear().context("failed to clear terminal")?;
+        let last_screen_size = terminal
+            .size()
+            .context("failed to read initial terminal size")?;
         startup_guard.disarm();
         Ok(Self {
-            terminal,
-            viewport_height: 1,
+            inner: InlineSession {
+                terminal,
+                viewport_height: 1,
+                last_screen_size,
+                last_cursor_offset: 0,
+                hyperlink_host_root: None,
+                hyperlinks_enabled: !term.eq_ignore_ascii_case("dumb"),
+                graphics_capability,
+                theme_mode,
+            },
             mouse_capture_enabled: false,
-            hyperlink_host_root: None,
-            hyperlinks_enabled: !term.eq_ignore_ascii_case("dumb"),
-            graphics_capability,
-            theme_mode,
         })
     }
 
     /// Detected terminal inline graphics capability probed at session startup.
     pub fn graphics_capability(&self) -> crate::graphics::GraphicsCapability {
-        self.graphics_capability
+        self.inner.graphics_capability
     }
 
     /// Enable or disable SGR mouse capture strictly for open modals/pickers.
@@ -474,7 +526,7 @@ impl TerminalSession {
         if self.mouse_capture_enabled == enabled {
             return Ok(());
         }
-        write_mouse_capture_mode(self.terminal.backend_mut(), enabled)
+        write_mouse_capture_mode(self.inner.terminal.backend_mut(), enabled)
             .context("failed to toggle terminal mouse capture")?;
         self.mouse_capture_enabled = enabled;
         MOUSE_CAPTURE_ACTIVE.store(enabled, Ordering::SeqCst);
@@ -483,12 +535,77 @@ impl TerminalSession {
 
     /// Configure the optional Host project root used to resolve relative `file://` OSC 8 links.
     pub fn set_hyperlink_context(&mut self, enabled: bool, host_root: Option<std::path::PathBuf>) {
-        self.hyperlinks_enabled = enabled;
-        self.hyperlink_host_root = host_root;
+        self.inner.hyperlinks_enabled = enabled;
+        self.inner.hyperlink_host_root = host_root;
     }
 
     /// Publish permanent scrollback lines and the rebuilt inline viewport as one host update.
     pub fn draw_inline_frame(
+        &mut self,
+        committed: &[Line<'static>],
+        height: u16,
+        base_height: u16,
+        draw: impl FnOnce(&mut Frame<'_>),
+    ) -> Result<()> {
+        self.inner
+            .draw_inline_frame(committed, height, base_height, draw)
+    }
+
+    /// Publish typed permanent scrollback items and the rebuilt inline viewport as one update.
+    pub fn draw_inline_frame_items(
+        &mut self,
+        committed: &[crate::graphics_scrollback::ScrollbackItem],
+        height: u16,
+        base_height: u16,
+        draw: impl FnOnce(&mut Frame<'_>),
+    ) -> Result<()> {
+        self.inner
+            .draw_inline_frame_items(committed, height, base_height, draw)
+    }
+
+    pub fn draw_with<F>(&mut self, draw: F) -> Result<()>
+    where
+        F: FnOnce(&mut Frame<'_>),
+    {
+        self.inner.draw_with(draw)
+    }
+
+    pub fn viewport_size(&self) -> (usize, usize) {
+        self.inner.viewport_size()
+    }
+
+    pub fn set_inline_height(&mut self, height: u16) -> Result<()> {
+        self.inner.set_inline_height(height)
+    }
+
+    pub fn write_scrollback(&mut self, lines: &[Line<'static>]) -> Result<()> {
+        self.inner.write_scrollback(lines)
+    }
+}
+
+impl<B: InlineSessionBackend> InlineSession<B> {
+    #[cfg(test)]
+    pub(crate) fn from_inline_terminal(
+        terminal: Terminal<B>,
+        viewport_height: u16,
+    ) -> Result<Self> {
+        let last_screen_size = terminal
+            .size()
+            .context("failed to read initial terminal size")?;
+        Ok(Self {
+            terminal,
+            viewport_height,
+            last_screen_size,
+            last_cursor_offset: 0,
+            hyperlink_host_root: None,
+            hyperlinks_enabled: false,
+            graphics_capability: crate::graphics::GraphicsCapability::None,
+            theme_mode: crate::theme::ThemeMode::Auto,
+        })
+    }
+
+    /// Publish permanent scrollback lines and the rebuilt inline viewport as one host update.
+    pub(crate) fn draw_inline_frame(
         &mut self,
         committed: &[Line<'static>],
         height: u16,
@@ -505,7 +622,7 @@ impl TerminalSession {
     }
 
     /// Publish typed permanent scrollback items and the rebuilt inline viewport as one update.
-    pub fn draw_inline_frame_items(
+    pub(crate) fn draw_inline_frame_items(
         &mut self,
         committed: &[crate::graphics_scrollback::ScrollbackItem],
         height: u16,
@@ -516,6 +633,7 @@ impl TerminalSession {
             self,
             |session, begin| synchronized_boundary(session.terminal.backend_mut(), begin),
             |session| {
+                session.sync_terminal_resize()?;
                 crate::graphics_scrollback::write_scrollback_items(session, committed)?;
                 let screen = session.terminal.size()?.height;
                 let top = session.terminal.get_frame().area().y;
@@ -526,7 +644,7 @@ impl TerminalSession {
         )
     }
 
-    pub fn draw_with<F>(&mut self, draw: F) -> Result<()>
+    pub(crate) fn draw_with<F>(&mut self, draw: F) -> Result<()>
     where
         F: FnOnce(&mut Frame<'_>),
     {
@@ -537,7 +655,8 @@ impl TerminalSession {
         if let Ok(mut guard) = link_sink.lock() {
             *guard = crate::hyperlink::CellLinkMap::default();
         }
-        self.terminal
+        let completed = self
+            .terminal
             .draw(|frame| {
                 render_frame_with_policy(frame, policy, draw);
                 if hyperlinks {
@@ -552,18 +671,71 @@ impl TerminalSession {
                     }
                 }
             })
-            .map(|_| ())
-            .context("failed to draw terminal frame")
+            .context("failed to draw terminal frame")?;
+        let top = completed.buffer.area.y;
+        if let Some(pos) = self.terminal.backend().last_cursor_pos() {
+            self.last_cursor_offset = pos.y.saturating_sub(top);
+        }
+        Ok(())
     }
 
-    pub fn viewport_size(&self) -> (usize, usize) {
+    pub(crate) fn viewport_size(&self) -> (usize, usize) {
         self.terminal
             .size()
             .map(|area| (area.width as usize, area.height as usize))
             .unwrap_or((80, 24))
     }
 
+    /// Synchronize Ratatui's viewport area with any terminal size change before writing
+    /// scrollback or computing `top`, preserving committed rows above the live viewport.
+    pub(crate) fn sync_terminal_resize(&mut self) -> Result<()> {
+        let current_size = self
+            .terminal
+            .size()
+            .context("failed to read terminal size")?;
+        if current_size == self.last_screen_size {
+            return Ok(());
+        }
+
+        let horizontal_shrink = current_size.width < self.last_screen_size.width;
+        let height_below_viewport = current_size.height < self.viewport_height;
+
+        if horizontal_shrink || height_below_viewport {
+            let cur_pos = self
+                .terminal
+                .get_cursor_position()
+                .context("failed to read cursor position during resize")?;
+            let on_screen_top = cur_pos.y.saturating_sub(self.last_cursor_offset);
+            let target_height = self.viewport_height.min(current_size.height.max(1));
+            // On horizontal shrink, push all committed rows above the viewport into scrollback
+            // and re-anchor at row 0 instead of letting Ratatui's `Clear(All)` erase them.
+            let transition_height = if horizontal_shrink {
+                current_size.height.max(1)
+            } else {
+                target_height
+            };
+            prepare_inline_height_transition(
+                self.terminal.backend_mut(),
+                on_screen_top,
+                current_size.height,
+                transition_height,
+            )
+            .context("failed to preserve scrollback across terminal resize")?;
+            let terminal = self.terminal.backend().rebuild_inline(target_height)?;
+            self.terminal = terminal;
+            self.viewport_height = target_height;
+            self.last_cursor_offset = 0;
+        } else {
+            self.terminal
+                .autoresize()
+                .context("failed to resize terminal")?;
+        }
+        self.last_screen_size = current_size;
+        Ok(())
+    }
+
     pub fn set_inline_height(&mut self, height: u16) -> Result<()> {
+        self.sync_terminal_resize()?;
         let terminal_size = self
             .terminal
             .size()
@@ -582,9 +754,11 @@ impl TerminalSession {
         )
         .context("failed to clear the previous inline viewport")?;
 
-        let terminal = build_inline_terminal(stdout(), height)?;
+        let terminal = self.terminal.backend().rebuild_inline(height)?;
         self.terminal = terminal;
         self.viewport_height = height;
+        self.last_screen_size = terminal_size;
+        self.last_cursor_offset = 0;
         Ok(())
     }
 
@@ -592,6 +766,7 @@ impl TerminalSession {
         if lines.is_empty() {
             return Ok(());
         }
+        self.sync_terminal_resize()?;
         let width = self
             .terminal
             .size()
@@ -661,10 +836,10 @@ pub(crate) fn prepare_inline_height_transition<W: Write>(
     new_height: u16,
 ) -> std::io::Result<()> {
     let clear_y = inline_clear_y(top, screen_height, new_height);
-    if new_height < screen_height && top.saturating_add(new_height) > screen_height {
-        // Partial upward expansion at the bottom of the screen: clear only the old live viewport,
-        // then scroll committed rows above `top` into terminal scrollback instead of erasing them.
-        let deficit = top.saturating_add(new_height).saturating_sub(screen_height);
+    let deficit = top.min(screen_height).saturating_sub(clear_y);
+    if deficit > 0 {
+        // Upward expansion (including full-screen `new_height == screen_height`): clear the old
+        // live viewport first, then scroll committed rows above `top` into terminal scrollback.
         execute!(
             writer,
             MoveTo(0, top),
@@ -754,21 +929,24 @@ impl Drop for TerminalStartupGuard {
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
+        if !self.inner.terminal.backend().is_live_tty() {
+            return;
+        }
         TERMINAL_ACTIVE.store(false, Ordering::SeqCst);
         let _ = crossterm_terminal::disable_raw_mode();
         if self.mouse_capture_enabled || MOUSE_CAPTURE_ACTIVE.swap(false, Ordering::SeqCst) {
             self.mouse_capture_enabled = false;
             MOUSE_CAPTURE_ACTIVE.store(false, Ordering::SeqCst);
-            let _ = write_mouse_capture_mode(self.terminal.backend_mut(), false);
+            let _ = write_mouse_capture_mode(self.inner.terminal.backend_mut(), false);
         }
         if KITTY_KEYBOARD_ACTIVE.swap(false, Ordering::SeqCst) {
-            let _ = pop_kitty_keyboard_flags(self.terminal.backend_mut());
+            let _ = pop_kitty_keyboard_flags(self.inner.terminal.backend_mut());
         }
         if OSC_TITLE_ACTIVE.swap(false, Ordering::SeqCst) {
-            let _ = write_osc_title_to(self.terminal.backend_mut(), "");
+            let _ = write_osc_title_to(self.inner.terminal.backend_mut(), "");
         }
-        let _ = restore_terminal_input_and_line(self.terminal.backend_mut());
-        let _ = self.terminal.show_cursor();
+        let _ = restore_terminal_input_and_line(self.inner.terminal.backend_mut());
+        let _ = self.inner.terminal.show_cursor();
     }
 }
 
@@ -801,195 +979,4 @@ fn synchronized_frame<T>(
 
 fn restore_terminal_input_and_line<W: Write>(writer: &mut W) -> std::io::Result<()> {
     execute!(writer, DisableBracketedPaste, MoveToNextLine(1))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn complete_frame_transaction_orders_native_boundaries_and_closes_on_errors() {
-        // Inject only IO at the existing frame owner, not renderer geometry.
-        for failure in [
-            None,
-            Some("begin"),
-            Some("scrollback"),
-            Some("clear"),
-            Some("draw"),
-            Some("end"),
-        ] {
-            let mut output = Vec::new();
-            let result = synchronized_frame(
-                &mut output,
-                |out, begin| {
-                    synchronized_boundary(out, begin)?;
-                    let stage = if begin { "begin" } else { "end" };
-                    anyhow::ensure!(failure != Some(stage), "{stage} failed");
-                    Ok(())
-                },
-                |out| {
-                    for stage in ["scrollback", "clear", "draw"] {
-                        out.extend_from_slice(stage.as_bytes());
-                        anyhow::ensure!(failure != Some(stage), "{stage} failed");
-                    }
-                    Ok(())
-                },
-            );
-            assert!(
-                output.starts_with(b"\x1b[?2026h"),
-                "{failure:?}: {output:?}"
-            );
-            assert!(output.ends_with(b"\x1b[?2026l"), "{failure:?}: {output:?}");
-            match failure {
-                None => {
-                    assert!(result.is_ok());
-                    assert_eq!(output, b"\x1b[?2026hscrollbackcleardraw\x1b[?2026l");
-                }
-                Some(stage) => assert!(format!("{:#}", result.unwrap_err()).contains(stage)),
-            }
-        }
-        let error = synchronized_frame(
-            &mut (),
-            |_, begin| {
-                if begin {
-                    Ok(())
-                } else {
-                    anyhow::bail!("cleanup failed")
-                }
-            },
-            |_| anyhow::bail!("original draw failed"),
-        )
-        .unwrap_err();
-        assert!(format!("{error:#}").contains("original draw failed"));
-        assert!(format!("{error:#}").contains("cleanup failed"));
-    }
-
-    #[test]
-    fn terminal_error_names_bare_alan_contract() {
-        assert!(terminal_capability_error().contains("bare `alan`"));
-        assert!(!terminal_capability_error().contains("alan-tui"));
-    }
-
-    #[test]
-    fn terminal_restoration_ends_the_inline_prompt_line() {
-        let mut output = Vec::new();
-
-        restore_terminal_input_and_line(&mut output).unwrap();
-
-        assert_eq!(output, b"\x1b[?2004l\x1b[1E");
-    }
-
-    #[test]
-    fn kitty_keyboard_flags_push_and_pop_standard_escape_sequences() {
-        assert!(!should_enable_kitty_keyboard("dumb", true));
-        assert!(!should_enable_kitty_keyboard("xterm-256color", false));
-        assert!(should_enable_kitty_keyboard("xterm-256color", true));
-
-        let mut pushed = Vec::new();
-        push_kitty_keyboard_flags(&mut pushed).unwrap();
-        assert_eq!(pushed, b"\x1b[>1u");
-
-        let mut popped = Vec::new();
-        pop_kitty_keyboard_flags(&mut popped).unwrap();
-        assert_eq!(popped, b"\x1b[<1u");
-    }
-
-    #[test]
-    fn osc_title_strips_control_sequences_and_formats_cleanly() {
-        assert_eq!(
-            format_osc_title(Some("my\x1b]0;bad\x07repo"), "running\ntools"),
-            "alan · my ]0;bad repo · running tools"
-        );
-        let mut out = Vec::new();
-        write_osc_title_to(&mut out, "alan · repo · ready").unwrap();
-        assert_eq!(out, b"\x1b]0;alan \xc2\xb7 repo \xc2\xb7 ready\x07");
-    }
-
-    #[test]
-    fn inline_clear_y_clears_upward_expansion_origins() {
-        // Welcome drained to rows 0..3 -> top=4; /help grows viewport to 24 rows -> must clear from 0.
-        assert_eq!(inline_clear_y(4, 24, 24), 0);
-        // Partial upward growth from row 12 to 22-row viewport at 24-row screen -> clear from row 2.
-        assert_eq!(inline_clear_y(12, 24, 22), 2);
-        // Shrinking from row 2 to 5 rows -> keeps clearing from row 2 downward.
-        assert_eq!(inline_clear_y(2, 24, 5), 2);
-        // Zero-anchored expansion stays at 0.
-        assert_eq!(inline_clear_y(0, 24, 15), 0);
-    }
-
-    #[test]
-    fn clear_startup_screen_clears_visible_screen_without_purging_scrollback() {
-        let mut vt_out = Vec::new();
-        clear_startup_screen(&mut vt_out, "xterm-256color", true).unwrap();
-        assert_eq!(vt_out, b"\x1b[2J\x1b[1;1H");
-        assert!(!vt_out.windows(4).any(|w| w == b"\x1b[3J"));
-
-        for (term, interactive) in [("dumb", true), ("DUMB", true), ("xterm-256color", false)] {
-            let mut out = Vec::new();
-            clear_startup_screen(&mut out, term, interactive).unwrap();
-            assert!(
-                out.is_empty(),
-                "expected no bytes for ({term}, {interactive})"
-            );
-        }
-    }
-
-    #[test]
-    fn prepare_inline_height_transition_handles_fullscreen_upward_scroll_and_in_bounds() {
-        // Case 1: full-screen overlay clears from row 0 without extra scrolling.
-        let mut fullscreen = Vec::new();
-        prepare_inline_height_transition(&mut fullscreen, 4, 24, 24).unwrap();
-        assert_eq!(fullscreen, b"\x1b[1;1H\x1b[J\x1b[1;1H");
-
-        // Case 2: partial upward expansion clears old live viewport, scrolls committed rows up,
-        // and leaves the rebuilt viewport anchored at clear_y.
-        let mut partial = Vec::new();
-        prepare_inline_height_transition(&mut partial, 12, 24, 15).unwrap();
-        assert_eq!(
-            partial,
-            b"\x1b[13;1H\x1b[J\x1b[24;1H\n\n\n\x1b[10;1H\x1b[J\x1b[10;1H"
-        );
-
-        let mut parser = vt100::Parser::new(
-            std::num::NonZeroU16::new(24).unwrap(),
-            std::num::NonZeroU16::new(80).unwrap(),
-            16,
-        );
-        for row in 0..12 {
-            parser.process(format!("committed-{row:02}\r\n").as_bytes());
-        }
-        for row in 12..16 {
-            parser.process(format!("old-live-{row:02}\r\n").as_bytes());
-        }
-        parser.process(&partial);
-        assert_eq!(parser.screen().cursor_position(), (9, 0));
-        let active = parser.screen().contents();
-        assert!(
-            !active.contains("old-live-"),
-            "old live viewport leaked:\n{active}"
-        );
-        for row in 3..12 {
-            assert!(
-                active.contains(&format!("committed-{row:02}")),
-                "missing committed-{row:02} on active screen:\n{active}"
-            );
-        }
-        parser.screen_mut().set_scrollback(usize::MAX);
-        let scrolled = parser.screen().contents();
-        for row in 0..3 {
-            assert!(
-                scrolled.contains(&format!("committed-{row:02}")),
-                "missing committed-{row:02} in scrollback:\n{scrolled}"
-            );
-        }
-
-        // Case 3: in-bounds growth and shrink keep clearing from `top` without scrolling.
-        let mut in_bounds_grow = Vec::new();
-        prepare_inline_height_transition(&mut in_bounds_grow, 10, 24, 8).unwrap();
-        assert_eq!(in_bounds_grow, b"\x1b[11;1H\x1b[J\x1b[11;1H");
-
-        let mut in_bounds_shrink = Vec::new();
-        prepare_inline_height_transition(&mut in_bounds_shrink, 2, 24, 5).unwrap();
-        assert_eq!(in_bounds_shrink, b"\x1b[3;1H\x1b[J\x1b[3;1H");
-    }
 }
