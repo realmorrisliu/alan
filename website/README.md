@@ -12,7 +12,7 @@ Shared across the author's three product sites (`alanworks.app`, `slowpage.app`,
 - **Edge Worker**: `worker/index.js` (`cloudflare.config.ts`, `cf` CLI) redirects `www.alanworks.app` → `https://alanworks.app`, serves an ANSI terminal card for `curl` / `wget` / `httpie` on `/`, serves `/install` & `/install.sh`, and proxies `/latest.json` and `/beta.json` release manifests.
 - **Anonymous analytics**: Deferred PostHog loader (`public/ph.js`, `src/analytics.ts`) via `https://t.realmorrisliu.com` with `person_profiles: 'identified_only'` and `disable_session_recording: true`. Shared event names across all three sites: `$pageview`, `install_copy`, `download_click`, `github_click`, `scroll_75`.
 - **Shared components**: Duplicated per repository rather than cross-repo linked; footer cross-links Slowpage and M3 under *Also by the author*.
-- **Easter eggs**: Press `/` for the Acme command palette (`/dev/palette`); pass `?TERM=dumb` (or run `TERM=dumb` in `fig. 1` / palette) for monochrome terminal mode. Pass `?fonts=1` (`?display=league|oswald|archivo`) to compare condensed display-face candidates.
+- **Easter eggs**: Press `/` for the Acme command palette (`/dev/palette`); pass `?TERM=dumb` (or run `TERM=dumb` in `fig. 1` / palette) for monochrome terminal mode.
 
 ## Commands
 

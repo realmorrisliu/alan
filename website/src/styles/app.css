@@ -37,22 +37,10 @@
   font-weight: 700;
   font-display: swap;
 }
-/* Display candidates (only the face in use is downloaded). */
+/* Display face: League Gothic. */
 @font-face {
   font-family: 'League Gothic';
   src: url('/fonts/LeagueGothic.woff2') format('woff2');
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Oswald';
-  src: url('/fonts/Oswald-SemiBold.woff2') format('woff2');
-  font-weight: 600;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Archivo XC';
-  src: url('/fonts/Archivo-ExtraCondensed-ExtraBold.woff2') format('woff2');
-  font-weight: 800;
   font-display: swap;
 }
 /* Metric-matched fallbacks keep the swap from moving the layout. */
@@ -96,18 +84,6 @@
   --display-scale: 1;
   --display-track: 0.005em;
   color-scheme: light;
-}
-html[data-display='oswald'] {
-  --display: 'Oswald', 'Gothic Fallback', 'Go', sans-serif;
-  --display-weight: 600;
-  --display-scale: 0.74;
-  --display-track: 0;
-}
-html[data-display='archivo'] {
-  --display: 'Archivo XC', 'Gothic Fallback', 'Go', sans-serif;
-  --display-weight: 800;
-  --display-scale: 0.86;
-  --display-track: -0.005em;
 }
 
 html {
@@ -1243,35 +1219,6 @@ a:hover {
   padding: 10px 12px;
   font-family: var(--font-mono);
   font-size: 13px;
-}
-
-/* review-only display-face toggle (?fonts) */
-.fonttoggle {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 70;
-  margin: 0;
-  padding: 10px 12px 10px;
-  background: var(--acme-tag);
-  color: #000;
-  border: 3px solid var(--rio-border);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  display: grid;
-  gap: 3px;
-}
-.fonttoggle legend {
-  float: left;
-  width: 100%;
-  font-weight: 700;
-  margin-bottom: 4px;
-}
-.fonttoggle label {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  cursor: pointer;
 }
 
 /* ------------------------------ responsive ------------------------------ */

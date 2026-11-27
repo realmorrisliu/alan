@@ -68,13 +68,6 @@ window.addEventListener('keydown', (event) => {
   import('./islands/Palette').then((m) => m.openPalette())
 })
 
-/* Display-face candidates for review: ?fonts shows the toggle, ?display=<id> picks one. */
-const params = new URLSearchParams(location.search)
-if (params.has('display')) document.documentElement.dataset.display = params.get('display')!
-if (params.has('fonts') || import.meta.env.DEV) {
-  import('./islands/FontToggle').then((m) => m.mountFontToggle())
-}
-
 async function boot() {
   const root = document.getElementById('root')
   if (import.meta.env.DEV && root && !root.firstElementChild) {
