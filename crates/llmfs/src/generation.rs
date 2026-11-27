@@ -416,6 +416,9 @@ impl Generation {
     pub(super) fn sequence(&self) -> u64 {
         self.sequence
     }
+    pub(super) fn kind(&self) -> OperationKind {
+        self.kind
+    }
     pub(super) fn version(&self) -> u32 {
         self.version.load(Ordering::Relaxed)
     }
@@ -464,6 +467,31 @@ impl Generation {
     }
 }
 
+pub(super) async fn fail_oversized_request(generation: Arc<Generation>) -> Result<(), ErrorCode> {
+    let _guard = generation.finalize.lock().await;
+    match generation.kind {
+        OperationKind::Generation => {
+            if generation.claim(GenStatus::Error) {
+                generation
+                    .events
+                    .append(&event_line(WireStreamEventV1::error(
+                        "stream_error:payload_too_large",
+                    )))
+                    .await;
+            }
+        }
+        OperationKind::Evaluation | OperationKind::Decision => {
+            if generation.claim(GenStatus::Rejected) {
+                generation
+                    .events
+                    .append(&event_line(WireStreamEventV1::rejected()))
+                    .await;
+            }
+        }
+    }
+    Err(ErrorCode::BadRequest)
+}
+
 pub(super) async fn commit_request(
     buf: Vec<u8>,
     generation: Arc<Generation>,
@@ -472,6 +500,9 @@ pub(super) async fn commit_request(
         OperationKind::Evaluation => return evaluation::commit(buf, generation).await,
         OperationKind::Decision => return decisions::commit(buf, generation).await,
         OperationKind::Generation => {}
+    }
+    if buf.len() > crate::MAX_GENERATION_DOC_BYTES {
+        return fail_oversized_request(generation).await;
     }
     // Parse the request first (pure): an empty or invalid document is malformed.
     let doc: Result<WireRequestDocV2, ()> = if buf.is_empty() {

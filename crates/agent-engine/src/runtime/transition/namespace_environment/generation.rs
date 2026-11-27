@@ -24,7 +24,42 @@ struct LlmCapabilitiesDoc {
     capabilities: alan_llm::ProviderCapabilities,
 }
 
+#[derive(Deserialize)]
+struct LlmProfileDoc {
+    version: u16,
+    connection: String,
+    provider: String,
+    #[serde(default)]
+    model: Option<String>,
+}
+
 impl NamespaceGeneration {
+    pub(crate) fn connection_name(&self) -> &str {
+        &self.llm_connection
+    }
+
+    pub(crate) async fn read_llm_connection_profile(&self) -> Result<(String, Option<String>)> {
+        let path = format!("/mnt/llm/connections/{}/profile", self.llm_connection);
+        let client = NamespaceClient::new(self.root.clone());
+        let raw = client
+            .read_file(&path)
+            .await
+            .with_context(|| format!("read llm connection profile from {path}"))?;
+        let doc: LlmProfileDoc =
+            serde_json::from_slice(&raw).context("parse llm connection profile")?;
+        if doc.version != 1 {
+            bail!("unsupported llm profile version {}", doc.version);
+        }
+        if doc.connection != self.llm_connection {
+            bail!(
+                "llm profile connection mismatch: expected {}, got {}",
+                self.llm_connection,
+                doc.connection
+            );
+        }
+        Ok((doc.provider, doc.model))
+    }
+
     pub(crate) fn with_task_budget(
         mut self,
         budget: Option<crate::agent_machine::task_budget::TaskBudget>,
@@ -566,6 +601,8 @@ pub(super) async fn start_generation_controlled(
         cleanup.check_admission()?;
         bail!("LLM request cancelled before allocation");
     }
+    cleanup.check_admission()?;
+    cause::check_request_size(request)?;
     let mut operation = cleanup.lease(client.clone(), b"abort")?;
     let clone_path = format!("/mnt/llm/connections/{llm_connection}/clone");
     let mut retained = None;

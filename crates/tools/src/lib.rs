@@ -28,6 +28,21 @@ use serde_json::{Value, json};
 // Bash
 // ============================================================================
 
+const BASH_DEFAULT_TIMEOUT_SECS: u64 = 180;
+const BASH_MAX_TIMEOUT_SECS: u64 = 600;
+
+fn parse_bash_timeout_secs(value: &Value) -> u64 {
+    let requested = value.as_u64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|secs| secs.is_finite() && *secs >= 1.0)
+            .map(|secs| secs.trunc() as u64)
+    });
+    requested
+        .unwrap_or(BASH_DEFAULT_TIMEOUT_SECS)
+        .clamp(1, BASH_MAX_TIMEOUT_SECS)
+}
+
 /// bash - Execute shell commands
 #[derive(Default)]
 pub struct BashTool;
@@ -44,7 +59,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command in the Process cwd (or an explicit `cwd` within mounted grants) inside the active OS sandbox and trust posture (falls back to bash). Shell features such as variables, pipes, subshells, globs, and inline interpreters work inside the sandboxed cwd. Prefer dedicated tools (`read_file`, `edit_file`, `write_file`, `grep`, `glob`, `list_dir`) for inspecting, searching, or editing files; use `bash` for builds, tests, git, package managers, and commands without a dedicated tool. Use cwd-relative paths for mounted project files; absolute alan9 paths such as /mnt/project/... inside command strings are not automatically translated."
+        "Execute a shell command in the Process cwd (or an explicit `cwd` within mounted grants) inside the active OS sandbox and trust posture (falls back to bash). Shell features such as variables, pipes, subshells, globs, and inline interpreters work inside the sandboxed cwd. Prefer dedicated tools (`read_file`, `edit_file`, `write_file`, `grep`, `glob`, `list_dir`) for inspecting, searching, or editing files; use `bash` for builds, tests, git, package managers, and commands without a dedicated tool. Commands default to a 180s timeout (up to 600s via `timeout`); pass a higher `timeout` for long builds or test suites. Use cwd-relative paths for mounted project files; absolute alan9 paths such as /mnt/project/... inside command strings are not automatically translated."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -62,10 +77,10 @@ impl Tool for BashTool {
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Timeout in seconds (max 300)",
+                    "description": "Timeout in seconds (default 180, max 600; raise for long builds or test suites)",
                     "minimum": 1,
-                    "maximum": 300,
-                    "default": 60
+                    "maximum": 600,
+                    "default": 180
                 }
             }
         })
@@ -106,7 +121,7 @@ impl Tool for BashTool {
         };
         let command = args["command"].as_str().unwrap_or("").to_string();
         let capability = classify_bash_command(&command);
-        let timeout_secs = args["timeout"].as_u64().unwrap_or(60).clamp(1, 300);
+        let timeout_secs = parse_bash_timeout_secs(&args["timeout"]);
         let progress = ctx.progress_callback();
 
         Box::pin(async move {
@@ -164,7 +179,7 @@ impl Tool for BashTool {
     }
 
     fn timeout_secs(&self) -> usize {
-        300 // Must be >= user-configurable timeout upper bound in schema
+        BASH_MAX_TIMEOUT_SECS as usize // Must be >= user-configurable timeout upper bound in schema
     }
 }
 
@@ -428,7 +443,22 @@ mod tests {
             tool.capability(&json!({"command":"curl https://example.com"})),
             alan_agent_protocol::ToolCapability::Network
         );
-        assert_eq!(tool.timeout_secs(), 300);
+        assert_eq!(tool.timeout_secs(), 600);
+        let schema = tool.parameters_schema();
+        assert_eq!(schema["properties"]["timeout"]["default"], 180);
+        assert_eq!(schema["properties"]["timeout"]["maximum"], 600);
+        assert_eq!(schema["properties"]["timeout"]["minimum"], 1);
+        assert!(
+            schema["properties"]["timeout"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("600")
+        );
+        assert_eq!(parse_bash_timeout_secs(&Value::Null), 180);
+        assert_eq!(parse_bash_timeout_secs(&json!(0)), 1);
+        assert_eq!(parse_bash_timeout_secs(&json!(300)), 300);
+        assert_eq!(parse_bash_timeout_secs(&json!(300.0)), 300);
+        assert_eq!(parse_bash_timeout_secs(&json!(900)), 600);
     }
 
     #[test]
@@ -438,6 +468,8 @@ mod tests {
         assert!(description.contains("read_file"));
         assert!(description.contains("edit_file"));
         assert!(description.contains("sandbox"));
+        assert!(description.contains("180s"));
+        assert!(description.contains("600s"));
         assert!(!description.contains("is unsupported"));
     }
 

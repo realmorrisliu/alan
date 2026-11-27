@@ -141,6 +141,25 @@ pub fn safe_finish_reason(reason: &str) -> &'static str {
         "stream_error:recitation" | "stream_error:prompt_blocked:recitation" => {
             "stream_error:recitation"
         }
+        "MALFORMED_FUNCTION_CALL" | "stream_error:malformed_function_call" => {
+            "stream_error:malformed_function_call"
+        }
+        "UNEXPECTED_TOOL_CALL" | "stream_error:unexpected_tool_call" => {
+            "stream_error:unexpected_tool_call"
+        }
+        "BLOCKLIST" | "stream_error:blocklist" | "stream_error:prompt_blocked:blocklist" => {
+            "stream_error:blocklist"
+        }
+        "PROHIBITED_CONTENT"
+        | "stream_error:prohibited_content"
+        | "stream_error:prompt_blocked:prohibited_content" => "stream_error:prohibited_content",
+        "SPII" | "stream_error:spii" | "stream_error:prompt_blocked:spii" => "stream_error:spii",
+        "IMAGE_SAFETY"
+        | "stream_error:image_safety"
+        | "stream_error:prompt_blocked:image_safety" => "stream_error:image_safety",
+        "OTHER" | "stream_error:other" | "stream_error:prompt_blocked:other" => {
+            "stream_error:other"
+        }
         "stream_error:closed" | "stream_closed" => "stream_error:closed",
         "stream_error" => "stream_error",
         _ => "stream_error:unknown",

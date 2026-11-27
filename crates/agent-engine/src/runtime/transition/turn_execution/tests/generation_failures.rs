@@ -259,3 +259,311 @@ async fn cancellation_during_output_prevents_successful_settlement() {
         assert_eq!(completions, [Some("Task cancelled by user".to_string())]);
     }
 }
+
+#[tokio::test]
+async fn oversized_generation_turn_surfaces_payload_too_large_with_compact_hint() {
+    let generate_calls = Arc::new(AtomicUsize::new(0));
+    struct CountingProvider {
+        calls: Arc<AtomicUsize>,
+    }
+    #[async_trait]
+    impl LlmProvider for CountingProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(GenerationResponse {
+                content: "unexpected".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: Vec::new(),
+                usage: None,
+                finish_reason: Some("stop".to_string()),
+                provider_response_id: None,
+                provider_response_status: None,
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let (tx, rx) = tokio::sync::mpsc::channel(4);
+            tx.send(StreamChunk {
+                text: Some("ok".to_string()),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: None,
+                usage: None,
+                sequence_number: None,
+                tool_call_delta: None,
+                is_finished: true,
+                finish_reason: Some("stop".to_string()),
+                provider_response_id: None,
+                provider_response_status: None,
+            })
+            .await
+            .unwrap();
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "counting_mock"
+        }
+    }
+
+    let mut state = create_test_state_with_provider(CountingProvider {
+        calls: Arc::clone(&generate_calls),
+    });
+    state.core_config.memory.enabled = false;
+    state.runtime_config.compaction_soft_trigger_ratio = 1000.0;
+    state.runtime_config.compaction_hard_trigger_ratio = 1000.0;
+    let cancel = CancellationToken::new();
+    let mut events = Vec::new();
+    let mut emit = |event: Event| {
+        events.push(event);
+        async {}
+    };
+
+    // Exceed MAX_GENERATION_DOC_BYTES (16 MiB).
+    let oversized_input = "a".repeat((16 << 20) + 1024);
+    let err = run_turn_with_cancel(
+        &mut state,
+        TurnRunKind::NewTurn,
+        Some(vec![ContentPart::text(oversized_input)]),
+        &mut emit,
+        &cancel,
+        None,
+    )
+    .await
+    .unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("stream_error:payload_too_large"), "{msg}");
+    assert!(msg.contains("/compact"), "{msg}");
+    assert!(!msg.contains("stream_error:unknown"), "{msg}");
+    assert_eq!(
+        generate_calls.load(Ordering::SeqCst),
+        0,
+        "oversized payload must fail pre-flight without retrying or dispatching to provider"
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::Error { message, .. }
+            if message.contains("stream_error:payload_too_large") && message.contains("/compact")
+    )));
+    assert!(
+        !state
+            .machine
+            .messages()
+            .iter()
+            .any(|m| matches!(m, crate::tape::Message::Assistant { .. })),
+        "failed generation start must not persist any assistant or tool-call record"
+    );
+}
+
+#[tokio::test]
+async fn stream_error_with_partial_tool_call_leaves_no_dangling_records_for_next_turn() {
+    struct MalformedThenCleanProvider {
+        calls: Arc<AtomicUsize>,
+        seen_requests: Arc<std::sync::Mutex<Vec<GenerationRequest>>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for MalformedThenCleanProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            unreachable!("namespace generation uses generate_stream")
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let attempt = self.calls.fetch_add(1, Ordering::SeqCst);
+            self.seen_requests.lock().unwrap().push(request);
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            if attempt == 0 {
+                // Emit enough text to pass any guardrail hold plus a partial tool-call delta,
+                // then fail with Vertex's MALFORMED_FUNCTION_CALL finish reason.
+                tx.send(StreamChunk {
+                    text: Some("partial output before malformed tool call ".repeat(3)),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    sequence_number: None,
+                    tool_call_delta: None,
+                    is_finished: false,
+                    finish_reason: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                })
+                .await
+                .unwrap();
+                tx.send(StreamChunk {
+                    text: None,
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    sequence_number: None,
+                    tool_call_delta: Some(alan_llm::ToolCallDelta {
+                        index: 0,
+                        id: Some("call_corrupted".to_string()),
+                        name: Some("read_file".to_string()),
+                        arguments_delta: Some("{\"path\":\"trun".to_string()),
+                        arguments: None,
+                    }),
+                    is_finished: false,
+                    finish_reason: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                })
+                .await
+                .unwrap();
+                tx.send(StreamChunk {
+                    text: None,
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    sequence_number: None,
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: Some("MALFORMED_FUNCTION_CALL".to_string()),
+                    provider_response_id: None,
+                    provider_response_status: None,
+                })
+                .await
+                .unwrap();
+            } else {
+                tx.send(StreamChunk {
+                    text: Some("Clean recovery on next turn.".to_string()),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    sequence_number: None,
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: Some("STOP".to_string()),
+                    provider_response_id: None,
+                    provider_response_status: None,
+                })
+                .await
+                .unwrap();
+            }
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "vertex_mock"
+        }
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut state = create_test_state_with_provider(MalformedThenCleanProvider {
+        calls: Arc::clone(&calls),
+        seen_requests: Arc::clone(&seen_requests),
+    });
+    state.core_config.memory.enabled = false;
+    let cancel = CancellationToken::new();
+
+    // Turn 1 fails mid-stream with MALFORMED_FUNCTION_CALL after partial text & tool delta.
+    let mut turn1_events = Vec::new();
+    let mut emit1 = |event: Event| {
+        turn1_events.push(event);
+        async {}
+    };
+    let err = run_turn_with_cancel(
+        &mut state,
+        TurnRunKind::NewTurn,
+        Some(vec![ContentPart::text("first turn")]),
+        &mut emit1,
+        &cancel,
+        None,
+    )
+    .await
+    .unwrap_err();
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("stream_error:malformed_function_call"),
+        "expected explicit Vertex finish reason, got: {err_msg}"
+    );
+    assert!(!err_msg.contains("stream_error:unknown"), "{err_msg}");
+
+    // Machine tape must contain no assistant or tool-call message after stream failure.
+    assert!(
+        !state.machine.messages().iter().any(|m| matches!(
+            m,
+            crate::tape::Message::Assistant { .. } | crate::tape::Message::Tool { .. }
+        )),
+        "failed stream must not leave dangling assistant/tool records: {:?}",
+        state.machine.messages()
+    );
+    let shell = alan_shell::Shell::new(state.environment.root_transport());
+    let tape_after_fail = shell
+        .cat(&format!("{}/machine/tape", state.environment.agent_path()))
+        .await
+        .unwrap();
+    let tape_str = std::str::from_utf8(&tape_after_fail).unwrap();
+    assert!(
+        !tape_str.contains("\"role\":\"assistant\""),
+        "machine/tape must not record a failed assistant turn: {tape_str}"
+    );
+
+    // Turn 2 recovers cleanly and sends no corrupted assistant/tool-call history.
+    let mut turn2_events = Vec::new();
+    let mut emit2 = |event: Event| {
+        turn2_events.push(event);
+        async {}
+    };
+    let outcome = run_turn_with_cancel(
+        &mut state,
+        TurnRunKind::NewTurn,
+        Some(vec![ContentPart::text("second turn")]),
+        &mut emit2,
+        &cancel,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(outcome, TurnExecutionOutcome::Finished));
+
+    {
+        let requests = seen_requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(
+            requests[1]
+                .messages
+                .iter()
+                .all(|m| m.role != alan_llm::MessageRole::Assistant && m.tool_calls.is_none()),
+            "next-turn request must not include dangling assistant or tool_calls: {:?}",
+            requests[1].messages
+        );
+    }
+    let tape_after_turn2 = shell
+        .cat(&format!("{}/machine/tape", state.environment.agent_path()))
+        .await
+        .unwrap();
+    let tape_str2 = std::str::from_utf8(&tape_after_turn2).unwrap();
+    assert!(
+        tape_str2.contains("Clean recovery on next turn."),
+        "next-turn assistant output must be recorded cleanly: {tape_str2}"
+    );
+}

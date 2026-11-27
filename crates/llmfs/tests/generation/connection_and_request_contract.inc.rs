@@ -806,3 +806,94 @@ async fn captured_connection_survives_registry_replacement_and_removal() {
     assert!(read_all(&narrowed, &["connections"], Fid(916)).await.is_empty());
     process.unregister_connection("default").await;
 }
+
+#[tokio::test]
+async fn generation_accepts_multi_mib_request_and_rejects_above_16_mib() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let fs = llmfs_with(RecordingProvider {
+        requests: Arc::clone(&requests),
+    });
+
+    // 1. A > 1 MiB (2 MiB) Generation request succeeds across 128 KiB chunks.
+    let large_text = "x".repeat(2 << 20);
+    let large_body = serde_json::to_vec(&serde_json::json!({
+        "version": 2,
+        "messages": [{ "role": "user", "content": large_text }],
+    }))
+    .unwrap();
+    assert!(large_body.len() > (1 << 20));
+    assert!(large_body.len() < alan_llmfs::MAX_GENERATION_DOC_BYTES);
+
+    let g_ok = clone_gen(&fs, Fid(920)).await;
+    fs.walk(
+        Fid::ROOT,
+        Fid(921),
+        &[
+            "connections".into(),
+            "default".into(),
+            g_ok.clone(),
+            "data".into(),
+        ],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(921), OpenMode::Write).await.unwrap();
+    let chunk_size = 128 * 1024;
+    let mut offset = 0_u64;
+    for chunk in large_body.chunks(chunk_size) {
+        let written = fs.write(Fid(921), offset, chunk).await.unwrap();
+        assert_eq!(written as usize, chunk.len());
+        offset += written as u64;
+    }
+    fs.clunk(Fid(921)).await.unwrap();
+    drain_events(&fs, &g_ok, Fid(922)).await;
+    assert_eq!(status_of(&fs, &g_ok, Fid(923)).await, "done");
+    {
+        let recorded = requests.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].messages[0].content.len(), 2 << 20);
+    }
+
+    // 2. A > 16 MiB Generation write fails with BadRequest, never dispatches any
+    //    previously buffered valid prefix, and publishes stream_error:payload_too_large.
+    let g_big = clone_gen(&fs, Fid(924)).await;
+    fs.walk(
+        Fid::ROOT,
+        Fid(925),
+        &[
+            "connections".into(),
+            "default".into(),
+            g_big.clone(),
+            "data".into(),
+        ],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(925), OpenMode::Write).await.unwrap();
+    // Write a valid prefix first, then overflow past MAX_GENERATION_DOC_BYTES.
+    fs.write(Fid(925), 0, SIMPLE_REQUEST).await.unwrap();
+    assert_eq!(
+        fs.write(
+            Fid(925),
+            alan_llmfs::MAX_GENERATION_DOC_BYTES as u64,
+            b"x",
+        )
+        .await,
+        Err(ErrorCode::BadRequest)
+    );
+    assert_eq!(fs.clunk(Fid(925)).await, Err(ErrorCode::BadRequest));
+    assert_eq!(status_of(&fs, &g_big, Fid(926)).await, "error");
+    let events = String::from_utf8(
+        read_all(&fs, &["connections", "default", &g_big, "events"], Fid(927)).await,
+    )
+    .unwrap();
+    assert!(
+        events.contains("stream_error:payload_too_large"),
+        "oversized generation must publish payload_too_large: {events:?}"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "overflowed generation must never dispatch buffered prefix to provider"
+    );
+}

@@ -925,6 +925,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         }
     }
 
+    reader_stop.store(true, std::sync::atomic::Ordering::SeqCst);
     for task in [
         &mut active_login_task,
         &mut active_settings_task,

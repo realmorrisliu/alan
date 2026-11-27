@@ -302,7 +302,35 @@ fn select_primary_candidate(candidates: &[Candidate]) -> Option<&Candidate> {
 fn is_blocking_finish_reason(finish_reason: &str) -> bool {
     finish_reason.eq_ignore_ascii_case("SAFETY")
         || finish_reason.eq_ignore_ascii_case("RECITATION")
+        || finish_reason.eq_ignore_ascii_case("MALFORMED_FUNCTION_CALL")
+        || finish_reason.eq_ignore_ascii_case("UNEXPECTED_TOOL_CALL")
+        || finish_reason.eq_ignore_ascii_case("BLOCKLIST")
+        || finish_reason.eq_ignore_ascii_case("PROHIBITED_CONTENT")
+        || finish_reason.eq_ignore_ascii_case("SPII")
+        || finish_reason.eq_ignore_ascii_case("IMAGE_SAFETY")
         || finish_reason.eq_ignore_ascii_case("OTHER")
+}
+
+fn blocking_finish_reason_message(finish_reason: &str) -> &'static str {
+    if finish_reason.eq_ignore_ascii_case("SAFETY") {
+        "Response blocked by safety filter"
+    } else if finish_reason.eq_ignore_ascii_case("RECITATION") {
+        "Response blocked due to recitation"
+    } else if finish_reason.eq_ignore_ascii_case("MALFORMED_FUNCTION_CALL") {
+        "Response stopped due to malformed function call"
+    } else if finish_reason.eq_ignore_ascii_case("UNEXPECTED_TOOL_CALL") {
+        "Response stopped due to unexpected tool call"
+    } else if finish_reason.eq_ignore_ascii_case("BLOCKLIST") {
+        "Response blocked due to blocklist"
+    } else if finish_reason.eq_ignore_ascii_case("PROHIBITED_CONTENT") {
+        "Response blocked due to prohibited content"
+    } else if finish_reason.eq_ignore_ascii_case("SPII") {
+        "Response blocked due to sensitive personal information (SPII)"
+    } else if finish_reason.eq_ignore_ascii_case("IMAGE_SAFETY") {
+        "Response blocked by image safety filter"
+    } else {
+        "Response stopped with finish reason OTHER"
+    }
 }
 
 #[async_trait::async_trait]
@@ -338,13 +366,7 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
         if let Some(finish_reason) = &candidate.finish_reason
             && is_blocking_finish_reason(finish_reason)
         {
-            if finish_reason.eq_ignore_ascii_case("SAFETY") {
-                anyhow::bail!("Response blocked by safety filter");
-            }
-            if finish_reason.eq_ignore_ascii_case("RECITATION") {
-                anyhow::bail!("Response blocked due to recitation");
-            }
-            anyhow::bail!("Response blocked for unknown reason");
+            anyhow::bail!("{}", blocking_finish_reason_message(finish_reason));
         }
 
         let content = candidate

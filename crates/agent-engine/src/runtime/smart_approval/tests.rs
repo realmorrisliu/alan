@@ -26,6 +26,7 @@ use crate::runtime::transition::NamespaceRuntimeEnvironment;
 use crate::tools::{ToolExecutionAuthority, ToolExecutionBinding, ToolProcessRunner, ToolRegistry};
 
 mod review;
+mod tier2_fallback;
 
 fn sample_audit(capability: &str, rule_id: Option<&str>) -> ToolDecisionAudit {
     ToolDecisionAudit {
@@ -127,11 +128,14 @@ fn violation_calibrated_response() -> DecisionResponse {
 struct MockSmartProvider {
     decide_calls: Arc<AtomicUsize>,
     generate_calls: Arc<AtomicUsize>,
+    supports_decisions_flag: bool,
     decide_result: std::result::Result<DecisionResponse, String>,
     generate_result: std::result::Result<String, String>,
     delay_ms: u64,
+    generate_delay_ms: u64,
     bump_posture_fn: Option<Arc<dyn Fn() + Send + Sync>>,
     captured_generate_prompts: Arc<std::sync::Mutex<Vec<String>>>,
+    captured_response_schemas: Arc<std::sync::Mutex<Vec<Option<Value>>>>,
 }
 
 impl MockSmartProvider {
@@ -142,11 +146,14 @@ impl MockSmartProvider {
         Self {
             decide_calls: Arc::new(AtomicUsize::new(0)),
             generate_calls: Arc::new(AtomicUsize::new(0)),
+            supports_decisions_flag: true,
             decide_result,
             generate_result,
             delay_ms: 0,
+            generate_delay_ms: 0,
             bump_posture_fn: None,
             captured_generate_prompts: Arc::new(std::sync::Mutex::new(Vec::new())),
+            captured_response_schemas: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 }
@@ -156,14 +163,19 @@ impl LlmProvider for MockSmartProvider {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
         self.generate_calls.fetch_add(1, Ordering::SeqCst);
         assert!(request.tools.is_empty(), "System 2 must carry zero tools");
+        self.captured_response_schemas
+            .lock()
+            .unwrap()
+            .push(request.response_schema.clone());
         if let Some(msg) = request.messages.first() {
             self.captured_generate_prompts
                 .lock()
                 .unwrap()
                 .push(msg.content.clone());
         }
-        if self.delay_ms > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+        let gen_delay = self.generate_delay_ms.max(self.delay_ms);
+        if gen_delay > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(gen_delay)).await;
         }
         let content = self
             .generate_result
@@ -226,9 +238,12 @@ impl LlmProvider for MockSmartProvider {
     }
 
     fn supports_decisions(&self) -> bool {
-        true
+        self.supports_decisions_flag
     }
     fn decision_calibration(&self) -> Option<CalibrationKind> {
+        if !self.supports_decisions_flag {
+            return None;
+        }
         Some(match &self.decide_result {
             Ok(resp) => resp.calibration,
             Err(_) => CalibrationKind::Calibrated,
@@ -314,11 +329,16 @@ fn build_captured_profile(profile: &str, provider: MockSmartProvider) -> Capture
     }
 }
 
-async fn setup_smart_env(
+async fn setup_smart_env_with_shell(
     main_provider: MockSmartProvider,
     authority: Option<Arc<dyn ConnectionAuthority>>,
     mount_revision: Arc<AtomicU64>,
-) -> (NamespaceRuntimeEnvironment, AgentMachine) {
+) -> (
+    NamespaceRuntimeEnvironment,
+    AgentMachine,
+    alan_shell::Shell,
+    String,
+) {
     let llmfs = alan_llmfs::LlmFs::new();
     llmfs.register_connection_profile(
         "default",
@@ -352,7 +372,8 @@ async fn setup_smart_env(
         alan_kernel::Access::ReadOnly,
     );
     let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
-    let pid_str = alan_shell::Shell::new(root.clone())
+    let shell = alan_shell::Shell::new(root.clone());
+    let pid_str = shell
         .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"generation":0,"mounts":[]}}"#)
         .await
         .unwrap();
@@ -369,12 +390,23 @@ async fn setup_smart_env(
     );
     runner.register_process_authority(pid, Arc::new(RevisionAuthority(mount_revision)));
 
-    let mut env = NamespaceRuntimeEnvironment::new(root, format!("/agent/{pid}"), "default")
+    let owner = format!("/agent/{pid}");
+    let mut env = NamespaceRuntimeEnvironment::new(root, owner.clone(), "default")
         .with_tool_process_context(pid, runner);
     if let Some(auth) = authority {
         env = env.with_connection_authority(auth);
     }
-    (env, AgentMachine::new())
+    (env, AgentMachine::new(), shell, owner)
+}
+
+async fn setup_smart_env(
+    main_provider: MockSmartProvider,
+    authority: Option<Arc<dyn ConnectionAuthority>>,
+    mount_revision: Arc<AtomicU64>,
+) -> (NamespaceRuntimeEnvironment, AgentMachine) {
+    let (env, machine, _, _) =
+        setup_smart_env_with_shell(main_provider, authority, mount_revision).await;
+    (env, machine)
 }
 
 #[allow(

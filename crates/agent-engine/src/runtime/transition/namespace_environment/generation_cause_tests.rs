@@ -74,6 +74,9 @@ impl FileServer for CauseFs {
         Ok(self.data.get(start..end).unwrap_or_default().to_vec())
     }
     async fn write(&self, _: Fid, _: u64, _: &[u8]) -> std::result::Result<u32, ErrorCode> {
+        if self.mode == "bad_request_write" {
+            return Err(ErrorCode::BadRequest);
+        }
         Err(ErrorCode::Io)
     }
     async fn stat(&self, _: Fid) -> std::result::Result<Stat, ErrorCode> {
@@ -297,4 +300,53 @@ fn published_cause_accepts_only_safe_complete_error_events() {
     ] {
         assert_eq!(published_cause(bytes), "stream_error:unknown");
     }
+}
+
+#[tokio::test]
+async fn oversized_generation_request_surfaces_payload_too_large_and_compact_hint() {
+    assert_eq!(
+        MAX_GENERATION_DOC_BYTES,
+        alan_llmfs::MAX_GENERATION_DOC_BYTES
+    );
+
+    // 1. Pre-flight check rejects >16 MiB without touching the server.
+    let fs = CauseFs::new(b"", 0, "normal");
+    let oversized = vec![b'a'; MAX_GENERATION_DOC_BYTES + 1];
+    let error = commit_generation(&fs.client(), "default", "g0", &oversized)
+        .await
+        .unwrap_err();
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("stream_error:payload_too_large"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("/compact"), "{rendered}");
+    assert!(!rendered.contains("stream_error:unknown"), "{rendered}");
+    assert_eq!(
+        error.downcast_ref::<ErrorCode>(),
+        Some(&ErrorCode::BadRequest)
+    );
+    assert!(!crate::retry::is_retryable(&error));
+    assert_eq!(fs.reads.load(Ordering::SeqCst), 0);
+    assert_eq!(fs.clunks.load(Ordering::SeqCst), 0);
+
+    // 2. BadRequest on >1 MiB write without published cause still surfaces payload_too_large.
+    let fs = CauseFs::new(b"", 0, "bad_request_write");
+    let medium_large = vec![b'b'; (1 << 20) + 1];
+    let error = commit_generation(&fs.client(), "default", "g0", &medium_large)
+        .await
+        .unwrap_err();
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("stream_error:payload_too_large"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("/compact"), "{rendered}");
+    assert!(!rendered.contains("stream_error:unknown"), "{rendered}");
+    assert_eq!(
+        error.downcast_ref::<ErrorCode>(),
+        Some(&ErrorCode::BadRequest)
+    );
+    assert!(!crate::retry::is_retryable(&error));
+    assert_clunks(&fs, 2).await;
 }

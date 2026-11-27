@@ -117,6 +117,33 @@ fn gemini_client_advertises_native_calibrated_decisions_and_endpoints() {
         express.effective_decision_model(&override_req),
         "gemini-decision-2"
     );
+
+    // Without explicit decision_model or request override, default to DEFAULT_GEMINI_DECISION_MODEL
+    // rather than the chat/generation model (`gemini-2.5-pro`).
+    let default_decision_client =
+        GoogleGeminiGenerateContentClient::from_vertex_config(VertexClientConfig {
+            project_id: None,
+            location: "us-central1".to_string(),
+            model: "gemini-2.5-pro".to_string(),
+            auth: VertexAuth::ApiKey("test-key".to_string()),
+            base_url: Some("http://127.0.0.1:9999/".to_string()),
+        })
+        .unwrap();
+    assert_eq!(
+        default_decision_client.effective_decision_model(&sample_request()),
+        DEFAULT_GEMINI_DECISION_MODEL
+    );
+    let custom_decision_client =
+        default_decision_client.with_decision_model("gemini-decision-custom");
+    assert_eq!(
+        custom_decision_client.effective_decision_model(&sample_request()),
+        "gemini-decision-custom"
+    );
+    assert_eq!(
+        custom_decision_client
+            .effective_decision_model(&sample_request().with_model_override("gemini-decision-3")),
+        "gemini-decision-3"
+    );
 }
 
 #[test]

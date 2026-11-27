@@ -22,12 +22,28 @@ fn typed_permanent_cause_wins_over_transient_context() {
         "stream_error:http",
         "stream_error:safety",
         "stream_error:recitation",
+        "stream_error:blocklist",
+        "stream_error:prohibited_content",
+        "stream_error:spii",
+        "stream_error:image_safety",
     ] {
         let error = anyhow::Error::new(ErrorCode::Io).context(GenerationCause::new(reason));
-        assert_eq!(
-            error.to_string(),
-            format!("llmfs generation failed: {reason}")
-        );
+        if reason == "stream_error:payload_too_large" {
+            let rendered = error.to_string();
+            assert!(
+                rendered.starts_with("llmfs generation failed: stream_error:payload_too_large"),
+                "unexpected payload_too_large message: {rendered}"
+            );
+            assert!(
+                rendered.contains("/compact"),
+                "payload_too_large must include /compact hint: {rendered}"
+            );
+        } else {
+            assert_eq!(
+                error.to_string(),
+                format!("llmfs generation failed: {reason}")
+            );
+        }
         let error = error.context("temporary stream connection failure");
         assert!(!is_retryable(&error), "{reason}");
         assert_eq!(error.downcast_ref::<ErrorCode>(), Some(&ErrorCode::Io));
@@ -78,6 +94,35 @@ fn gemini_prompt_block_normalization_and_actual_retry_decision() {
         ),
         ("stream_error:safety", "stream_error:safety", false),
         ("stream_error:recitation", "stream_error:recitation", false),
+        ("BLOCKLIST", "stream_error:blocklist", false),
+        (
+            "stream_error:prompt_blocked:blocklist",
+            "stream_error:blocklist",
+            false,
+        ),
+        (
+            "PROHIBITED_CONTENT",
+            "stream_error:prohibited_content",
+            false,
+        ),
+        (
+            "stream_error:prompt_blocked:prohibited_content",
+            "stream_error:prohibited_content",
+            false,
+        ),
+        ("SPII", "stream_error:spii", false),
+        ("IMAGE_SAFETY", "stream_error:image_safety", false),
+        (
+            "MALFORMED_FUNCTION_CALL",
+            "stream_error:malformed_function_call",
+            true,
+        ),
+        (
+            "UNEXPECTED_TOOL_CALL",
+            "stream_error:unexpected_tool_call",
+            true,
+        ),
+        ("OTHER", "stream_error:other", true),
         ("stream_error:timeout", "stream_error:timeout", true),
         ("stream_error:rate_limit", "stream_error:rate_limit", true),
         (

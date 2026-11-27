@@ -25,10 +25,11 @@ use super::{
         record_reviewer_denial,
     },
     tool_policy::capability_label,
-    transition::{NamespaceAgentFiles, NamespaceDecisionFailure, NamespaceGeneration},
+    transition::{NamespaceAgentFiles, NamespaceGeneration},
 };
 
 mod rubric;
+pub(crate) mod tier2_fallback;
 
 #[cfg(test)]
 pub(crate) use rubric::{
@@ -40,9 +41,12 @@ pub(crate) use rubric::{
     RubricAssessment, RubricContext, SmartRubricDecision, aggregate_rubric, build_rubric_request,
     classify_action_risk,
 };
+use tier2_fallback::{
+    DecisionAttempt, Tier2Attempt, evaluate_tier2_structured_rubric, remaining_decision_ms,
+    remaining_duration, try_decision_with_tier2, try_native_decision,
+};
 
 pub(crate) const SMART_APPROVAL_ROLLOUT_EVENT: &str = "smart_approval_decision";
-const MAX_DECISION_DEADLINE_MS: u64 = 30_000;
 
 pub(crate) fn map_calibration(calibration: CalibrationKind) -> UiSystem1Calibration {
     match calibration {
@@ -105,12 +109,6 @@ enum System1Outcome {
         reason: String,
         source: String,
     },
-}
-
-enum DecisionAttempt {
-    Success(DecisionResponse),
-    RetryNext(String),
-    FailClosed(String),
 }
 
 /// Entry point for `TrustPosture::ConfinedSmart` when `EscalationRoute::Reviewer`.
@@ -540,8 +538,14 @@ fn record_smart_rollout(
 }
 
 /// Dispatch System 1 Rubric over:
-/// `smart_evaluator_profile` -> fallback `guardian_profile` -> bounded main Connection fallback
+/// `smart_evaluator_profile` -> `guardian_profile` -> bounded main Connection fallback
 /// without mutating main Connection bindings.
+///
+/// Tier 1 native `decide()` runs first; when native `decide()` returns
+/// `NamespaceDecisionFailure::Unavailable`, seamlessly falls back to Tier 2
+/// `Uncalibrated` no-tools structured generation on the captured guardian/active
+/// Connection, failing strictly closed to Human on double failure, timeout,
+/// cancellation, or malformed output.
 async fn evaluate_system1<E, F>(
     runtime: &mut ToolAuthorizationRuntime<'_>,
     request: DecisionRequest,
@@ -553,6 +557,7 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    const LABEL: &str = "smart evaluation";
     if cancel.is_cancelled() {
         return Ok(System1Outcome::FailedClosed {
             reason: "smart evaluation cancelled".to_string(),
@@ -561,6 +566,7 @@ where
     }
 
     let mut last_unavailable: Option<(String, String)> = None;
+    let mut smart_fallback: Option<(String, NamespaceGeneration)> = None;
     let smart_profile = runtime.smart_evaluator_profile;
     let guardian_profile = runtime.guardian_profile;
     let used_dedicated = smart_profile.is_some() || guardian_profile.is_some();
@@ -574,7 +580,15 @@ where
             DecisionAttempt::FailClosed(reason) => {
                 return Ok(System1Outcome::FailedClosed { reason, source });
             }
-            DecisionAttempt::RetryNext(reason) => last_unavailable = Some((source, reason)),
+            DecisionAttempt::RetryNext {
+                reason,
+                fallback_generation,
+            } => {
+                if let Some(generation) = fallback_generation {
+                    smart_fallback = Some((source.clone(), generation));
+                }
+                last_unavailable = Some((source, reason));
+            }
         }
     }
 
@@ -595,7 +609,69 @@ where
             DecisionAttempt::FailClosed(reason) => {
                 return Ok(System1Outcome::FailedClosed { reason, source });
             }
-            DecisionAttempt::RetryNext(reason) => last_unavailable = Some((source, reason)),
+            DecisionAttempt::RetryNext {
+                reason,
+                fallback_generation,
+            } => {
+                if let Some(generation) = fallback_generation {
+                    tracing::debug!(
+                        profile,
+                        %reason,
+                        "Guardian native decide() unavailable; falling back to Tier 2 uncalibrated structured rubric"
+                    );
+                    match evaluate_tier2_structured_rubric(
+                        &generation,
+                        &request,
+                        deadline,
+                        cancel,
+                        LABEL,
+                    )
+                    .await
+                    {
+                        Tier2Attempt::Success(resp) => {
+                            return Ok(finalize_system1_response(resp, source));
+                        }
+                        Tier2Attempt::FailClosed(t2_reason) => {
+                            return Ok(System1Outcome::FailedClosed {
+                                reason: t2_reason,
+                                source,
+                            });
+                        }
+                        Tier2Attempt::Unavailable(t2_reason) => {
+                            last_unavailable = Some((source, format!("{reason}; {t2_reason}")));
+                        }
+                    }
+                } else {
+                    last_unavailable = Some((source, reason));
+                }
+            }
+        }
+    }
+
+    if let Some((smart_source, smart_generation)) = smart_fallback {
+        tracing::debug!(
+            source = %smart_source,
+            "Smart evaluator native decide() unavailable; trying Tier 2 uncalibrated structured rubric"
+        );
+        match evaluate_tier2_structured_rubric(&smart_generation, &request, deadline, cancel, LABEL)
+            .await
+        {
+            Tier2Attempt::Success(resp) => {
+                return Ok(finalize_system1_response(resp, smart_source));
+            }
+            Tier2Attempt::FailClosed(t2_reason) => {
+                return Ok(System1Outcome::FailedClosed {
+                    reason: t2_reason,
+                    source: smart_source,
+                });
+            }
+            Tier2Attempt::Unavailable(t2_reason) => {
+                let reason = match last_unavailable {
+                    Some((_, prev)) => format!("{prev}; {t2_reason}"),
+                    None => t2_reason,
+                };
+                last_unavailable = Some((smart_source, reason));
+            }
         }
     }
 
@@ -633,16 +709,9 @@ where
 
     let main_conn = runtime.generation.as_decision_connection();
     let source = format!("main_connection:{}", main_conn.connection_name());
-    let attempt = if cancel.is_cancelled() {
-        DecisionAttempt::FailClosed("smart evaluation cancelled".to_string())
-    } else if let Some(deadline_ms) = remaining_decision_ms(deadline) {
-        classify_decision_result(main_conn.decide(request, deadline_ms, cancel).await)
-    } else {
-        DecisionAttempt::FailClosed("smart evaluation aggregate deadline expired".to_string())
-    };
-    match attempt {
+    match try_decision_with_tier2(&main_conn, request, deadline, cancel, LABEL).await {
         DecisionAttempt::Success(resp) => Ok(finalize_system1_response(resp, source)),
-        DecisionAttempt::RetryNext(reason) | DecisionAttempt::FailClosed(reason) => {
+        DecisionAttempt::RetryNext { reason, .. } | DecisionAttempt::FailClosed(reason) => {
             Ok(System1Outcome::FailedClosed { reason, source })
         }
     }
@@ -675,9 +744,10 @@ async fn try_dedicated_decision(
         );
     };
     let Some(authority) = runtime.authority.as_ref() else {
-        return DecisionAttempt::RetryNext(
-            "smart evaluator Connection authority unavailable".to_string(),
-        );
+        return DecisionAttempt::RetryNext {
+            reason: "smart evaluator Connection authority unavailable".to_string(),
+            fallback_generation: None,
+        };
     };
 
     let capture_fut = async {
@@ -692,57 +762,17 @@ async fn try_dedicated_decision(
     let connection = match tokio::time::timeout(remaining, capture_fut).await {
         Ok(Ok(conn)) => conn,
         Ok(Err(error)) => {
-            return DecisionAttempt::RetryNext(format!("profile capture failed: {error:#}"));
+            return DecisionAttempt::RetryNext {
+                reason: format!("profile capture failed: {error:#}"),
+                fallback_generation: None,
+            };
         }
         Err(_) => {
             return DecisionAttempt::FailClosed("profile capture timed out".to_string());
         }
     };
 
-    if cancel.is_cancelled() {
-        return DecisionAttempt::FailClosed("smart evaluation cancelled".to_string());
-    }
-    let Some(deadline_ms) = remaining_decision_ms(deadline) else {
-        return DecisionAttempt::FailClosed(
-            "smart evaluation aggregate deadline expired".to_string(),
-        );
-    };
-    classify_decision_result(connection.decide(request, deadline_ms, cancel).await)
-}
-
-fn classify_decision_result(result: Result<DecisionResponse>) -> DecisionAttempt {
-    match result {
-        Ok(response) => DecisionAttempt::Success(response),
-        Err(error) => match error.downcast_ref::<NamespaceDecisionFailure>() {
-            Some(NamespaceDecisionFailure::Cancelled) => {
-                DecisionAttempt::FailClosed("smart evaluation cancelled".to_string())
-            }
-            Some(NamespaceDecisionFailure::TimedOut) => {
-                DecisionAttempt::FailClosed("smart evaluation timed out".to_string())
-            }
-            Some(NamespaceDecisionFailure::Malformed) => DecisionAttempt::FailClosed(
-                "smart evaluation returned malformed output".to_string(),
-            ),
-            Some(NamespaceDecisionFailure::Unavailable) | None => {
-                DecisionAttempt::RetryNext(format!("decision call unavailable: {error:#}"))
-            }
-        },
-    }
-}
-
-fn remaining_duration(deadline: Instant) -> Option<std::time::Duration> {
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-        None
-    } else {
-        Some(remaining)
-    }
-}
-
-fn remaining_decision_ms(deadline: Instant) -> Option<u64> {
-    let remaining = remaining_duration(deadline)?;
-    let ms = (remaining.as_millis() as u64).min(MAX_DECISION_DEADLINE_MS);
-    if ms == 0 { None } else { Some(ms) }
+    try_native_decision(&connection, request, deadline, cancel, "smart evaluation").await
 }
 
 /// Bounded System 2 (Guardian): at most ONE no-tools generation call with the System 1 Rubric summary.

@@ -241,7 +241,10 @@ pub(crate) fn build_decision_json_schema(request: &DecisionRequest) -> serde_jso
     })
 }
 
-fn build_fallback_generation_request(request: &DecisionRequest) -> Result<GenerationRequest> {
+/// Build the no-tools, strict JSON-Schema [`GenerationRequest`] for Tier 2
+/// [`CalibrationKind::Uncalibrated`] fallback evaluation of a [`DecisionRequest`].
+pub fn build_fallback_generation_request(request: &DecisionRequest) -> Result<GenerationRequest> {
+    request.validate()?;
     let system_prompt = match &request.instructions {
         Some(instructions) => format!(
             "{FALLBACK_SYSTEM_PROMPT}\n\nAdditional trusted instructions:\n{}",
@@ -263,7 +266,9 @@ fn build_fallback_generation_request(request: &DecisionRequest) -> Result<Genera
         .with_response_schema(build_decision_json_schema(request)))
 }
 
-fn decode_fallback_generation_response(
+/// Strictly decode and validate a no-tools structured generation output into a
+/// [`DecisionResponse`] stamped [`CalibrationKind::Uncalibrated`].
+pub fn decode_fallback_generation_response(
     provider_name: &str,
     model: &str,
     request: &DecisionRequest,

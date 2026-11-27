@@ -5,6 +5,18 @@ use super::{LlmEvent, NamespaceClient};
 
 const MAX_CAUSE_BYTES: u64 = 4096;
 const CAUSE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+/// Must match `alan_llmfs::MAX_GENERATION_DOC_BYTES` (16 MiB).
+pub(crate) const MAX_GENERATION_DOC_BYTES: usize = 16 << 20;
+const OVERSIZED_BAD_REQUEST_FALLBACK_BYTES: usize = 1 << 20;
+
+pub(super) fn check_request_size(request: &[u8]) -> Result<()> {
+    if request.len() > MAX_GENERATION_DOC_BYTES {
+        return Err(anyhow::Error::new(ErrorCode::BadRequest).context(
+            crate::retry::GenerationCause::new("stream_error:payload_too_large"),
+        ));
+    }
+    Ok(())
+}
 
 pub(super) fn safe_cause(reason: &str) -> &'static str {
     let reason = alan_llm::safe_finish_reason(reason);
@@ -74,13 +86,14 @@ pub(super) async fn commit_generation(
     generation: &str,
     request: &[u8],
 ) -> Result<()> {
+    check_request_size(request)?;
     let path = format!("/mnt/llm/connections/{connection}/{generation}/data");
     if let Err(error) = client.write_document(&path, request).await {
         let code = error
             .downcast_ref::<ErrorCode>()
             .copied()
             .unwrap_or(ErrorCode::Io);
-        let cause = tokio::time::timeout(
+        let published = tokio::time::timeout(
             CAUSE_TIMEOUT,
             read_published_cause(client, connection, generation),
         )
@@ -88,6 +101,15 @@ pub(super) async fn commit_generation(
         .ok()
         .and_then(Result::ok)
         .unwrap_or("stream_error:unknown");
+        let cause = if published != "stream_error:unknown" {
+            published
+        } else if code == ErrorCode::BadRequest
+            && request.len() > OVERSIZED_BAD_REQUEST_FALLBACK_BYTES
+        {
+            "stream_error:payload_too_large"
+        } else {
+            "stream_error:unknown"
+        };
         return Err(anyhow::Error::new(code).context(crate::retry::GenerationCause::new(cause)));
     }
     Ok(())

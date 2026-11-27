@@ -64,6 +64,10 @@ impl PtyScreen {
         self.shared.1.notify_all();
     }
 
+    #[allow(
+        dead_code,
+        reason = "used by pty_e2e suites exercising terminal resize"
+    )]
     pub(super) fn resize_parser(&self, rows: u16, cols: u16) {
         let mut guard = self.shared.0.lock().expect("pty state lock");
         guard.parser.screen_mut().set_size(
@@ -395,6 +399,10 @@ pub(super) fn write_master(master: &Arc<Mutex<std::fs::File>>, data: &[u8]) -> R
     Ok(())
 }
 
+#[allow(
+    dead_code,
+    reason = "used by pty_e2e suites exercising terminal resize"
+)]
 pub(super) fn resize_pty(fd: RawFd, rows: u16, cols: u16) -> Result<()> {
     let ws = libc::winsize {
         ws_row: rows,

@@ -730,3 +730,175 @@ fn live_and_rehydrated_transcripts_preserve_command_route_and_body() {
         ["", ": !literal"]
     );
 }
+
+#[test]
+fn slash_quit_typed_or_pasted_executes_on_first_enter_without_popup_or_trailing_space() {
+    use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
+    let enter = || KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+
+    // Typed char-by-char: /quit + single Enter quits immediately.
+    let mut app = FileBackedApp::new("/agent/root".into());
+    for ch in "/quit".chars() {
+        assert!(
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
+                .is_none()
+        );
+    }
+    assert!(app.completion.is_some());
+    assert!(matches!(
+        app.handle_key(enter()),
+        Some(FileBackedAction::Quit)
+    ));
+    assert!(app.should_quit);
+    assert!(app.completion.is_none());
+    assert!(app.composer.text().is_empty());
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(
+        app.composer.text(),
+        "/quit",
+        "history entry must not gain a trailing space"
+    );
+
+    // Pasted via bracketed paste: /quit + single Enter quits immediately.
+    let mut pasted = FileBackedApp::new("/agent/root".into());
+    assert!(
+        pasted
+            .dispatch(FileBackedEvent::Terminal(TerminalEvent::Paste(
+                "/quit".into(),
+            )))
+            .is_none()
+    );
+    assert!(pasted.completion.is_some());
+    assert!(matches!(
+        pasted.handle_key(enter()),
+        Some(FileBackedAction::Quit)
+    ));
+    assert!(pasted.should_quit);
+    assert!(pasted.completion.is_none());
+    assert!(pasted.composer.text().is_empty());
+
+    // Mid-token cursor on an exact slash command still submits exact command cleanly.
+    let mut mid_cursor = FileBackedApp::new("/agent/root".into());
+    for ch in "/tape".chars() {
+        mid_cursor.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    mid_cursor.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    mid_cursor.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert!(matches!(
+        mid_cursor.handle_key(enter()),
+        Some(FileBackedAction::ReadTape)
+    ));
+    assert!(mid_cursor.completion.is_none());
+    assert!(mid_cursor.modal.active);
+
+    // Blocked submit must dismiss popup without mutating composer to add a trailing space.
+    let mut blocked = FileBackedApp::new("/agent/root".into());
+    for ch in "/quit".chars() {
+        blocked.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    blocked.response_in_flight = Some("req-1".into());
+    assert!(blocked.handle_key(enter()).is_none());
+    assert!(blocked.completion.is_none());
+    assert_eq!(blocked.composer.text(), "/quit");
+}
+
+#[test]
+fn exact_slash_commands_submit_on_first_enter_while_tab_and_prefix_completion_work() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let enter = || KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+
+    let exact_commands = [
+        "/quit",
+        "/clear",
+        "/status",
+        "/doctor",
+        "/help",
+        "/new",
+        "/compact",
+        "/rollback",
+        "/root",
+        "/tape",
+        "/streams",
+    ];
+    for cmd in exact_commands {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        for ch in cmd.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        let action = app.handle_key(enter());
+        assert!(app.completion.is_none(), "{cmd} left completion popup open");
+        assert!(
+            app.composer.text().is_empty(),
+            "{cmd} did not clear composer on first Enter"
+        );
+        match cmd {
+            "/quit" => assert!(matches!(action, Some(FileBackedAction::Quit))),
+            "/compact" => assert!(matches!(
+                action,
+                Some(FileBackedAction::MachineCtl { ref command, .. }) if command == "compact"
+            )),
+            "/rollback" => assert!(matches!(
+                action,
+                Some(FileBackedAction::MachineCtl { ref command, .. }) if command == "rollback"
+            )),
+            "/new" => assert!(matches!(
+                action,
+                Some(FileBackedAction::MachineCtl { ref command, .. }) if command == "reset-session"
+            )),
+            "/tape" => assert!(matches!(action, Some(FileBackedAction::ReadTape))),
+            "/streams" => assert!(matches!(
+                action,
+                Some(FileBackedAction::StreamsControl { .. })
+            )),
+            "/clear" | "/status" | "/doctor" | "/help" | "/root" => assert!(action.is_none()),
+            _ => unreachable!(),
+        }
+        // Close modal if opened so Up recalls composer history cleanly.
+        app.modal.active = false;
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(
+            app.composer.text(),
+            cmd,
+            "{cmd} history entry should not have a trailing space"
+        );
+    }
+
+    // Tab still completes partial prefixes with a trailing space ready for arguments.
+    let mut tab_app = FileBackedApp::new("/agent/root".into());
+    for ch in "/comp".chars() {
+        tab_app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert!(
+        tab_app
+            .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+            .is_none()
+    );
+    assert_eq!(tab_app.composer.text(), "/compact ");
+    assert!(tab_app.completion.is_none());
+
+    // Partial-prefix Enter executes immediately and records clean trimmed history.
+    let mut prefix_app = FileBackedApp::new("/agent/root".into());
+    for ch in "/comp".chars() {
+        prefix_app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert!(matches!(
+        prefix_app.handle_key(enter()),
+        Some(FileBackedAction::MachineCtl { command, .. }) if command == "compact"
+    ));
+    assert!(prefix_app.completion.is_none());
+    prefix_app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(prefix_app.composer.text(), "/compact");
+
+    // Shift+Enter does not submit /quit; it inserts a newline instead.
+    let mut shift_app = FileBackedApp::new("/agent/root".into());
+    for ch in "/quit".chars() {
+        shift_app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert!(
+        shift_app
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT))
+            .is_none()
+    );
+    assert!(!shift_app.should_quit);
+    assert_eq!(shift_app.composer.text(), "/quit\n");
+}

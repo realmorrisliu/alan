@@ -698,15 +698,36 @@ mod tests {
 
     #[test]
     fn blocking_finish_reasons_map_to_stream_errors() {
-        assert_eq!(
-            normalize_stream_finish_reason("SAFETY".to_string()),
-            "stream_error:safety"
-        );
-        assert_eq!(
-            normalize_stream_finish_reason("RECITATION".to_string()),
-            "stream_error:recitation"
-        );
+        for (raw, expected) in [
+            ("SAFETY", "stream_error:safety"),
+            ("RECITATION", "stream_error:recitation"),
+            (
+                "MALFORMED_FUNCTION_CALL",
+                "stream_error:malformed_function_call",
+            ),
+            ("UNEXPECTED_TOOL_CALL", "stream_error:unexpected_tool_call"),
+            ("BLOCKLIST", "stream_error:blocklist"),
+            ("PROHIBITED_CONTENT", "stream_error:prohibited_content"),
+            ("SPII", "stream_error:spii"),
+            ("IMAGE_SAFETY", "stream_error:image_safety"),
+            ("OTHER", "stream_error:other"),
+        ] {
+            assert!(is_blocking_finish_reason(raw), "{raw} should be blocking");
+            let normalized = normalize_stream_finish_reason(raw.to_string());
+            assert_eq!(normalized, expected, "{raw}");
+            assert_eq!(
+                crate::safe_finish_reason(&normalized),
+                expected,
+                "{raw} must survive safe_finish_reason without collapsing to unknown"
+            );
+        }
+        assert!(!is_blocking_finish_reason("STOP"));
+        assert!(!is_blocking_finish_reason("MAX_TOKENS"));
         assert_eq!(normalize_stream_finish_reason("STOP".to_string()), "STOP");
+        assert_eq!(
+            normalize_stream_finish_reason("MAX_TOKENS".to_string()),
+            "MAX_TOKENS"
+        );
     }
 
     #[test]

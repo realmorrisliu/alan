@@ -102,9 +102,10 @@ impl FileBackedApp {
                 self.notice = Some("Slash commands cannot be sent as live steer messages.".into());
                 return None;
             }
+            let trimmed = text.trim();
             self.composer.set_text("");
-            self.composer.remember(&text);
-            return self.handle_command(text.trim());
+            self.composer.remember(trimmed);
+            return self.handle_command(trimmed);
         }
         let mut parts = Vec::new();
         let mut seen_hashes = std::collections::BTreeSet::new();
@@ -239,6 +240,35 @@ impl FileBackedApp {
             return true;
         }
         false
+    }
+
+    pub(super) fn exact_slash_command_match(&self) -> Option<&str> {
+        if self.input_intent != InputIntent::Agent {
+            return None;
+        }
+        let trimmed = self.composer.text().trim();
+        let command = trimmed.strip_prefix('/')?;
+        if command.is_empty() || command.contains('/') || command.chars().any(char::is_whitespace) {
+            return None;
+        }
+        self.completion_sources
+            .commands
+            .iter()
+            .find(|candidate| candidate.value == command)
+            .map(|candidate| candidate.value.as_str())
+    }
+
+    pub(super) fn accept_command_completion_for_submit(&mut self) {
+        let Some(state) = self.completion.take() else {
+            return;
+        };
+        if let Some(candidate) = state.selected_candidate() {
+            let value = candidate.value.clone();
+            let (new_text, cursor) =
+                completion::apply_with_trailing_space(self.composer.text(), &state, &value, false);
+            self.composer.set_text_with_cursor(new_text, cursor);
+        }
+        self.completion = None;
     }
 
     #[cfg(test)]

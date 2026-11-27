@@ -50,9 +50,13 @@ impl Request {
 }
 
 pub(super) async fn commit(buf: Vec<u8>, operation: Arc<Generation>) -> Result<(), ErrorCode> {
-    let request = serde_json::from_slice::<Request>(&buf)
-        .map_err(|_| ())
-        .and_then(Request::validate);
+    let request = if buf.is_empty() || buf.len() > crate::MAX_DOC_BYTES {
+        Err(())
+    } else {
+        serde_json::from_slice::<Request>(&buf)
+            .map_err(|_| ())
+            .and_then(Request::validate)
+    };
     let (request, deadline) = match request {
         Ok(request) => request,
         Err(()) => {
