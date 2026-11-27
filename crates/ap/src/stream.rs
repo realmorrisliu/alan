@@ -48,8 +48,12 @@ impl Stream {
         }
     }
 
-    /// Append `bytes` to the log and wake any readers parked at the live edge.
-    pub async fn append(&self, bytes: &[u8]) {
+    /// Synchronously append `bytes` to the log and wake any readers parked at
+    /// the live edge.
+    ///
+    /// Prefer this inside synchronous [`FileServerActor`](crate::FileServerActor)
+    /// handlers where awaiting is not needed.
+    pub fn append_sync(&self, bytes: &[u8]) {
         let new_len = {
             let mut buf = self.inner.buf.lock().expect("stream buffer poisoned");
             buf.extend_from_slice(bytes);
@@ -59,18 +63,33 @@ impl Stream {
         let _ = self.inner.len_tx.send(new_len);
     }
 
-    /// The number of bytes retained so far.
-    pub async fn len(&self) -> u64 {
+    /// Append `bytes` to the log and wake any readers parked at the live edge.
+    pub async fn append(&self, bytes: &[u8]) {
+        self.append_sync(bytes);
+    }
+
+    /// Synchronously return the number of bytes retained so far.
+    pub fn len_sync(&self) -> u64 {
         self.inner.buf.lock().expect("stream buffer poisoned").len() as u64
     }
 
-    /// Whether no bytes have been appended yet.
-    pub async fn is_empty(&self) -> bool {
+    /// The number of bytes retained so far.
+    pub async fn len(&self) -> u64 {
+        self.len_sync()
+    }
+
+    /// Synchronously return whether no bytes have been appended yet.
+    pub fn is_empty_sync(&self) -> bool {
         self.inner
             .buf
             .lock()
             .expect("stream buffer poisoned")
             .is_empty()
+    }
+
+    /// Whether no bytes have been appended yet.
+    pub async fn is_empty(&self) -> bool {
+        self.is_empty_sync()
     }
 
     /// Read up to `count` bytes starting at `offset`. If `offset` is at or beyond

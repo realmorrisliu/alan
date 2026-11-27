@@ -30,7 +30,10 @@ impl Access {
         match (self, mode) {
             (Access::ReadWrite, _) => true,
             (Access::ReadOnly, OpenMode::Read) => true,
-            (Access::ReadOnly, OpenMode::Write | OpenMode::ReadWrite) => false,
+            (
+                Access::ReadOnly,
+                OpenMode::Write | OpenMode::WriteExclusive | OpenMode::ReadWrite,
+            ) => false,
         }
     }
 }

@@ -45,9 +45,18 @@ fn file_kinds_survive_roundtrip() {
 
 #[test]
 fn open_modes_survive_roundtrip() {
-    for mode in [OpenMode::Read, OpenMode::Write, OpenMode::ReadWrite] {
+    for mode in [
+        OpenMode::Read,
+        OpenMode::Write,
+        OpenMode::WriteExclusive,
+        OpenMode::ReadWrite,
+    ] {
         assert_eq!(roundtrip(&mode), mode);
     }
+    assert_eq!(
+        serde_json::to_string(&OpenMode::WriteExclusive).expect("serialize"),
+        "\"write_exclusive\""
+    );
 }
 
 #[test]
@@ -93,6 +102,10 @@ fn every_request_operation_survives_roundtrip() {
         Request::Open {
             fid: Fid(2),
             mode: OpenMode::Read,
+        },
+        Request::Open {
+            fid: Fid(2),
+            mode: OpenMode::WriteExclusive,
         },
         Request::Read {
             fid: Fid(2),

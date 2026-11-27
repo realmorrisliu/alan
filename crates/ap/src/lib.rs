@@ -11,12 +11,18 @@
 //! operations can later cross a process boundary unchanged. v1 runs servers
 //! in-process over [`InProcessTransport`] with no serialization cost.
 
+mod actor;
 pub mod reference;
 mod server;
 mod stream;
 mod types;
 mod version;
 mod wire;
+
+pub use actor::{
+    ActorExitHandle, ActorExitReason, ActorFileServer, ActorOutcome, FileServerActor,
+    spawn_file_actor,
+};
 
 pub use server::{
     FileServer, ImportedFileServer, InProcessTransport, ProcessEvent, ProcessEventSink,
