@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Default aggregate timeout in seconds for a single Guardian escalation review
-/// (including retries and optional bounded fallback to the primary connection).
-pub const DEFAULT_GUARDIAN_TIMEOUT_SECS: u64 = 30;
+/// (including native Tier-1 attempt and bounded Tier-2 fallback on the primary connection).
+pub const DEFAULT_GUARDIAN_TIMEOUT_SECS: u64 = 60;
 
 /// Default maximum number of Guardian fallback calls to the primary connection
 /// allowed in a single logical turn.

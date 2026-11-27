@@ -614,11 +614,57 @@ fn test_classify_bash_command_distinguishes_standalone_env_from_wrapper() {
         "env -- FOO=bar rg TODO src",
         "env -S 'sh -c rg TODO src'",
         "env FOO=bar sh -c 'rg TODO src'",
+        "env -u PATH cargo test",
+        "env -u CARGO_HOME cargo test",
+        "env -u RUSTUP_HOME cargo test",
+        "env -u LD_PRELOAD cargo test",
+        "env -u DYLD_INSERT_LIBRARIES cargo test",
+        "env -iu BASH_ENV cargo test",
+        "env -u BASH_ENV FOO=bar cargo test",
+        "env -u BASH_ENV env -i cargo test",
+        "env -u BASH_ENV sh -c 'rm -rf .'",
     ] {
         assert_eq!(
             classify_bash_command(wrapper_cmd),
             ToolCapability::Unknown,
             "expected Unknown for wrapper `{wrapper_cmd}`"
+        );
+    }
+
+    for read_unset_cmd in [
+        "env -u BASH_ENV rg TODO src",
+        "env --unset=BASH_ENV cat README.md",
+        "env -uBASH_ENV ls -la",
+        "env -u BASH_ENV -- which cargo",
+    ] {
+        assert_eq!(
+            classify_bash_command(read_unset_cmd),
+            ToolCapability::Read,
+            "expected Read for safe unset wrapper `{read_unset_cmd}`"
+        );
+    }
+
+    for write_unset_cmd in [
+        "env -u BASH_ENV cargo test -p alan-shell",
+        "env --unset=BASH_ENV cargo clippy --all-targets",
+        "env -uBASH_ENV cargo fmt --all -- --check",
+        "env -u BASH_ENV -- cargo check --workspace",
+    ] {
+        assert_eq!(
+            classify_bash_command(write_unset_cmd),
+            ToolCapability::Write,
+            "expected Write for safe unset wrapper `{write_unset_cmd}`"
+        );
+    }
+
+    for network_unset_cmd in [
+        "env -u BASH_ENV curl https://example.com",
+        "env -u BASH_ENV cargo install ripgrep",
+    ] {
+        assert_eq!(
+            classify_bash_command(network_unset_cmd),
+            ToolCapability::Network,
+            "expected Network for safe unset wrapper `{network_unset_cmd}`"
         );
     }
 }
