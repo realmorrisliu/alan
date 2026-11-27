@@ -114,7 +114,10 @@ function loadDocs(): DocPage[] {
         // man-page cross references, e.g. alan9(7), become links to sibling pages
         .replace(/\b(alan|alan9|agentfs|q|install)\((\d)\)(?![^<]*<\/code>)/g, '<a href="/docs/$1">$1($2)</a>')
         // `--flag`\n: description  ->  a definition list, as in an OPTIONS section
-        .replace(/<p>(<code>[\s\S]*?)\n: ([\s\S]*?)<\/p>/g, '<dl class="opt"><dt>$1</dt><dd>$2</dd></dl>')
+        .replace(/<p>([\s\S]*?)<\/p>/g, (full, inner: string) => {
+          const opt = /^(<code>[^\n]*)\n: ([\s\S]*)$/.exec(inner)
+          return opt ? `<dl class="opt"><dt>${opt[1]}</dt><dd>${opt[2]}</dd></dl>` : full
+        })
       return {
         name: meta.name,
         section: meta.section,

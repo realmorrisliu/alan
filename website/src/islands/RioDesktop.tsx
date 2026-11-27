@@ -1,4 +1,4 @@
-import { createSignal, For, Show } from 'solid-js'
+import { createSignal, For, onCleanup, Show } from 'solid-js'
 
 import { Alan9Shell, type OutputTone } from '../lib/alan9fs'
 
@@ -85,6 +85,7 @@ export function RioDesktop() {
       inputEl?.focus({ preventScroll: true })
     }
     window.addEventListener('alan:exec', handle)
+    onCleanup(() => window.removeEventListener('alan:exec', handle))
     queueMicrotask(handle)
   }
 

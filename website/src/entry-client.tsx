@@ -75,8 +75,9 @@ async function boot() {
     const path = location.pathname.replace(/\/$/, '') || '/'
     const { renderDev } = await import('./dev')
     renderDev(root, path)
+  } else {
+    mountIslands()
   }
-  mountIslands()
   installAnalytics()
 }
 
