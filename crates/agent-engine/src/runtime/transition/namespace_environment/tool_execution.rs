@@ -117,6 +117,22 @@ impl NamespaceToolExecution {
             .unwrap_or(alan_agent_protocol::ToolCapability::Unknown)
     }
 
+    /// Whether the Tool declares this exact invocation safe to repeat.
+    ///
+    /// The lookup is namespace-scoped: it resolves the same registered Tool the
+    /// Process would execute, never a package-supplied capability claim.
+    pub(crate) fn allows_idempotent_retry(
+        &self,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+    ) -> bool {
+        self.tool_process_context.as_ref().is_some_and(|context| {
+            context
+                .tool_runner
+                .allows_idempotent_retry_for_tool(tool_name, arguments)
+        })
+    }
+
     /// Discover model-callable Tools from complete packages visible in this namespace.
     pub(crate) async fn discover_packages(&self) -> Result<Vec<ToolPackageManifest>> {
         let client = self.client();

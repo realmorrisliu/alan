@@ -199,3 +199,63 @@ async fn lifecycle_commits_failed_terminal_status() {
         Some("tool reported failure in payload")
     );
 }
+
+#[test]
+fn idempotent_retry_skip_applies_only_to_write_capability() {
+    assert!(ToolEffectLifecycle::skips_idempotent_write(
+        ToolCapability::Write,
+        true
+    ));
+    assert!(!ToolEffectLifecycle::skips_idempotent_write(
+        ToolCapability::Write,
+        false
+    ));
+    assert!(!ToolEffectLifecycle::skips_idempotent_write(
+        ToolCapability::Read,
+        true
+    ));
+    assert!(!ToolEffectLifecycle::skips_idempotent_write(
+        ToolCapability::Network,
+        true
+    ));
+    assert!(!ToolEffectLifecycle::skips_idempotent_write(
+        ToolCapability::Unknown,
+        true
+    ));
+}
+
+#[test]
+fn non_idempotent_write_keeps_effect_tracking() {
+    let machine = AgentMachine::new();
+    let arguments = json!({"command": "cargo fmt"});
+    let lifecycle = ToolEffectLifecycle::for_call(
+        &machine,
+        "/proc/1",
+        "call-1",
+        "bash",
+        &arguments,
+        ToolCapability::Write,
+    )
+    .expect("non-idempotent write must keep an effect lifecycle");
+    assert_eq!(lifecycle.effect_type(), "process");
+    assert!(!ToolEffectLifecycle::skips_idempotent_write(
+        ToolCapability::Write,
+        false
+    ));
+
+    let idempotent_arguments = json!({"command": "cargo fmt --all -- --check"});
+    let idempotent = ToolEffectLifecycle::for_call(
+        &machine,
+        "/proc/1",
+        "call-2",
+        "bash",
+        &idempotent_arguments,
+        ToolCapability::Write,
+    )
+    .expect("idempotent write is still Write; skip is decided at the call site");
+    assert_eq!(idempotent.effect_type(), "process");
+    assert!(ToolEffectLifecycle::skips_idempotent_write(
+        ToolCapability::Write,
+        true
+    ));
+}

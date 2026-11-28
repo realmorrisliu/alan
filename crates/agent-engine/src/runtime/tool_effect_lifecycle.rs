@@ -55,6 +55,16 @@ pub(super) struct ToolEffectLifecycle {
 }
 
 impl ToolEffectLifecycle {
+    /// Duplicate-effect bookkeeping is skipped only for a `Write` Tool call whose
+    /// concrete invocation the Tool declares idempotent. Policy and sandbox
+    /// authority still apply to the call.
+    pub(super) fn skips_idempotent_write(
+        capability: ToolCapability,
+        allows_idempotent_retry: bool,
+    ) -> bool {
+        capability == ToolCapability::Write && allows_idempotent_retry
+    }
+
     pub(super) fn for_call(
         machine: &AgentMachine,
         process_path: impl Into<String>,

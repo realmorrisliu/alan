@@ -93,14 +93,14 @@ impl ProgressThresholds {
     const fn for_calibration(calibration: CalibrationKind) -> Self {
         match calibration {
             CalibrationKind::Calibrated => Self {
-                converging_min_yes: 0.80,
-                verdict_extend_min_prob: 0.80,
-                min_confidence: 0.75,
+                converging_min_yes: 0.70,
+                verdict_extend_min_prob: 0.75,
+                min_confidence: 0.70,
             },
             CalibrationKind::Uncalibrated => Self {
-                converging_min_yes: 0.90,
-                verdict_extend_min_prob: 0.90,
-                min_confidence: 0.85,
+                converging_min_yes: 0.75,
+                verdict_extend_min_prob: 0.80,
+                min_confidence: 0.75,
             },
         }
     }
