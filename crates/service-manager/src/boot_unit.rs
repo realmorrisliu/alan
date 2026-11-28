@@ -14,6 +14,17 @@ pub enum RestartPolicy {
     Always,
 }
 
+/// Restart scope applied when a supervised Boot Unit recovers after exit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SupervisionStrategy {
+    /// Restart only this unit behind its [`SupervisedHandle`](crate::SupervisedHandle).
+    #[default]
+    OneForOne,
+    /// Restart this unit and any downstream dependents in topological order.
+    RestForOne,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BootDescriptor {
@@ -51,6 +62,8 @@ pub struct BootUnit {
     pub required: bool,
     pub timeout_ms: u64,
     pub restart: RestartPolicy,
+    #[serde(default)]
+    pub supervision: SupervisionStrategy,
     pub restart_limit: u32,
     pub initial_backoff_ms: u64,
     pub max_backoff_ms: u64,
@@ -85,6 +98,12 @@ impl BootUnit {
         ensure!(
             self.restart_limit <= MAX_RESTART_ATTEMPTS,
             "Boot Unit `{}` restart budget is too large",
+            self.name
+        );
+        ensure!(
+            self.supervision != SupervisionStrategy::RestForOne
+                || self.restart != RestartPolicy::Never,
+            "Boot Unit `{}` cannot combine rest-for-one supervision with restart = \"never\"",
             self.name
         );
         ensure!(

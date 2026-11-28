@@ -6,120 +6,37 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use alan_agent_engine::ToolRegistry;
-use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat,
-};
+use alan_ap::{FileServer, InProcessTransport};
 use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid, Status};
 use anyhow::{Context, Result, ensure};
-use async_trait::async_trait;
 
 use crate::{
     BootManifest, BootUnit, ConnectionService, HostMountService, LocalEntryService, ManagerState,
-    PackageService, RestartDecision,
+    PackageService, RestartDecision, SupervisedHandle,
     agent_runtime::{AgentRuntimeService, RootAgentProcess, RootAgentTemplate},
     process_spawn::spawn_unit_process,
     quartermaster::QUARTERMASTER_EXECUTABLE,
 };
 
-/// A stable namespace mount whose backing File-Server exists only while its
-/// owning service Process is running. Rebinding installs a fresh server so
-/// buffered fids from a previous service lifetime cannot commit after restart.
-pub(super) struct SwitchableFileServer {
-    inner: tokio::sync::RwLock<Option<Arc<dyn FileServer>>>,
-}
+pub(super) const SERVICE_MANAGER_SRV_HANDLE: &str = "service-manager";
 
-impl SwitchableFileServer {
-    pub(super) fn new() -> Arc<Self> {
-        Arc::new(Self {
-            inner: tokio::sync::RwLock::new(None),
-        })
-    }
-
-    async fn bind(&self, inner: Arc<dyn FileServer>) {
-        *self.inner.write().await = Some(inner);
-    }
-
-    async fn deactivate(&self) {
-        *self.inner.write().await = None;
-    }
-
-    pub(super) async fn while_bound_async<T, F>(&self, action: impl FnOnce() -> F) -> Result<T>
-    where
-        F: std::future::Future<Output = Result<T>>,
+pub(super) fn create_supervised_handles(
+    manifest: &BootManifest,
+) -> BTreeMap<String, Arc<SupervisedHandle>> {
+    let mut handles = BTreeMap::new();
+    handles.insert(
+        SERVICE_MANAGER_SRV_HANDLE.to_string(),
+        SupervisedHandle::new(),
+    );
+    for handle in manifest
+        .ordered()
+        .flat_map(|unit| unit.published_handles.iter())
     {
-        let inner = self.inner.read().await;
-        ensure!(inner.is_some(), "Package Service is unavailable");
-        action().await
+        handles
+            .entry(handle.clone())
+            .or_insert_with(SupervisedHandle::new);
     }
-}
-
-#[async_trait]
-impl FileServer for SwitchableFileServer {
-    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner
-            .as_ref()
-            .ok_or(ErrorCode::NoAccess)?
-            .walk(fid, newfid, names)
-            .await
-    }
-
-    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner
-            .as_ref()
-            .ok_or(ErrorCode::NoAccess)?
-            .open(fid, mode)
-            .await
-    }
-
-    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner
-            .as_ref()
-            .ok_or(ErrorCode::NoAccess)?
-            .read(fid, offset, count)
-            .await
-    }
-
-    async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner
-            .as_ref()
-            .ok_or(ErrorCode::NoAccess)?
-            .write(fid, offset, data)
-            .await
-    }
-
-    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner.as_ref().ok_or(ErrorCode::NoAccess)?.stat(fid).await
-    }
-
-    async fn create(
-        &self,
-        fid: Fid,
-        newfid: Fid,
-        name: &str,
-        kind: FileKind,
-    ) -> Result<Qid, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner
-            .as_ref()
-            .ok_or(ErrorCode::NoAccess)?
-            .create(fid, newfid, name, kind)
-            .await
-    }
-
-    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
-        let inner = self.inner.read().await;
-        inner.as_ref().ok_or(ErrorCode::NoAccess)?.remove(fid).await
-    }
-
-    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
-        let inner = self.inner.read().await;
-        inner.as_ref().ok_or(ErrorCode::NoAccess)?.clunk(fid).await
-    }
+    handles
 }
 
 #[derive(Clone, Copy)]
@@ -143,7 +60,7 @@ pub(super) struct SupervisorEnvironment {
     pub(super) host_mount: Arc<HostMountService>,
     pub(super) connection: Arc<ConnectionService>,
     pub(super) package: Arc<PackageService>,
-    pub(super) package_handle: Arc<SwitchableFileServer>,
+    pub(super) supervised_handles: BTreeMap<String, Arc<SupervisedHandle>>,
     pub(super) active_units: BTreeMap<String, ActiveUnit>,
     pub(super) manager_pid: Pid,
     pub(super) local_entry: Arc<LocalEntryService>,
@@ -166,7 +83,7 @@ pub(super) struct SupervisorRuntime {
     host_mount: Arc<HostMountService>,
     connection: Arc<ConnectionService>,
     package: Arc<PackageService>,
-    package_handle: Arc<SwitchableFileServer>,
+    supervised_handles: BTreeMap<String, Arc<SupervisedHandle>>,
     local_entry: Arc<LocalEntryService>,
     root: Option<RootAgentProcess>,
     root_pid: Arc<AtomicU64>,
@@ -235,7 +152,7 @@ impl SupervisorRuntime {
             host_mount: assembled.host_mount,
             connection: assembled.connection,
             package: assembled.package,
-            package_handle: assembled.package_handle,
+            supervised_handles: assembled.supervised_handles,
             local_entry: assembled.local_entry,
             root: Some(assembled.root),
             root_pid,
@@ -542,7 +459,7 @@ impl SupervisorRuntime {
                 host_mount: &self.host_mount,
                 connection: &self.connection,
                 package: &self.package,
-                package_handle: &self.package_handle,
+                supervised_handles: &self.supervised_handles,
                 local_entry: Some(&self.local_entry),
             },
         )
@@ -603,8 +520,8 @@ impl SupervisorRuntime {
     async fn invalidate_handles(&self, name: &str) {
         if let Some(unit) = self.manifest.get(name) {
             for handle in &unit.published_handles {
-                if handle == "package" {
-                    self.package_handle.deactivate().await;
+                if let Some(supervised) = self.supervised_handles.get(handle) {
+                    supervised.deactivate();
                 }
                 self.srvfs.unpost(handle).await;
             }
@@ -612,7 +529,6 @@ impl SupervisorRuntime {
     }
 
     async fn stop(mut self) -> Result<()> {
-        self.package_handle.deactivate().await;
         let sessions_result = self.agent_runtime.shutdown_sessions().await;
         if let Some(root) = self.root.take() {
             self.agent_runtime.shutdown_root(root).await?;
@@ -622,9 +538,16 @@ impl SupervisorRuntime {
             self.procfs.record_exit(active.pid, 0).await;
             if let Some(unit) = self.manifest.get(&name) {
                 for handle in &unit.published_handles {
+                    if let Some(supervised) = self.supervised_handles.get(handle) {
+                        supervised.deactivate();
+                    }
                     self.srvfs.unpost(handle).await;
                 }
             }
+        }
+        for (name, handle) in &self.supervised_handles {
+            handle.deactivate();
+            self.srvfs.unpost(name).await;
         }
         Ok(())
     }
@@ -638,7 +561,7 @@ pub(super) struct SystemServiceHandles<'a> {
     pub(super) host_mount: &'a Arc<HostMountService>,
     pub(super) connection: &'a Arc<ConnectionService>,
     pub(super) package: &'a Arc<PackageService>,
-    pub(super) package_handle: &'a Arc<SwitchableFileServer>,
+    pub(super) supervised_handles: &'a BTreeMap<String, Arc<SupervisedHandle>>,
     pub(super) local_entry: Option<&'a Arc<LocalEntryService>>,
 }
 
@@ -647,31 +570,37 @@ pub(super) async fn publish_unit_handles(
     services: &SystemServiceHandles<'_>,
 ) -> Result<()> {
     for handle in &unit.published_handles {
-        let tree = match handle.as_str() {
-            "route" => InProcessTransport::new(services.routefs.clone()),
-            "llm" => InProcessTransport::new(services.llmfs.clone()),
-            "agent-runtime" => InProcessTransport::new(services.agent_root.clone()),
-            "connection" => InProcessTransport::new(services.connection.file_server()),
-            "package" => {
-                services
-                    .package_handle
-                    .bind(services.package.file_server())
-                    .await;
-                InProcessTransport::new(services.package_handle.clone())
-            }
-            "host-mount" => InProcessTransport::new(services.host_mount.file_server()),
-            "local-entry" => InProcessTransport::new(
-                services
-                    .local_entry
-                    .context("Local Entry Service has no Process")?
-                    .clone(),
-            ),
+        let server: Arc<dyn FileServer> = match handle.as_str() {
+            "route" => services.routefs.clone(),
+            "llm" => services.llmfs.clone(),
+            "agent-runtime" => services.agent_root.clone(),
+            "connection" => services.connection.file_server(),
+            "package" => services.package.file_server(),
+            "host-mount" => services.host_mount.file_server(),
+            "local-entry" => services
+                .local_entry
+                .context("Local Entry Service has no Process")?
+                .clone(),
             other => anyhow::bail!(
                 "Boot Unit `{}` publishes unknown handle `{other}`",
                 unit.name
             ),
         };
-        services.srvfs.post(handle, tree, Access::ReadWrite).await;
+        let supervised = services.supervised_handles.get(handle).with_context(|| {
+            format!(
+                "Boot Unit `{}` handle `{handle}` has no SupervisedHandle",
+                unit.name
+            )
+        })?;
+        supervised.bind(server);
+        services
+            .srvfs
+            .post(
+                handle,
+                InProcessTransport::new(supervised.clone()),
+                Access::ReadWrite,
+            )
+            .await;
     }
     Ok(())
 }

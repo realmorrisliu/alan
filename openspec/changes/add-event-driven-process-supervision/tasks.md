@@ -6,8 +6,8 @@
 - [x] 1.3 Add `crates/kernel` unit tests covering pre-exit blocking read, post-exit immediate read, write-open `ErrorCode::NoAccess`, and multi-level `link_parent` cascade cancellation.
 
 ## 2. `SupervisedHandle`, Reverse Shutdown & Event-Driven `ServiceManager` (`crates/service-manager`)
-- [ ] 2.1 Generalize `SwitchableFileServer` into `SupervisedHandle` with monotonic `generation: u64` tracking across all `/srv/*` service handles so stale pre-restart fids fail cleanly with `ErrorCode::Io`.
-- [ ] 2.2 Add `SupervisionStrategy::{OneForOne, RestForOne}` (default `OneForOne`) to `BootUnit` TOML schema and validation (`crates/service-manager/src/boot_unit.rs`).
+- [x] 2.1 Generalize `SwitchableFileServer` into `SupervisedHandle` with monotonic `generation: u64` tracking across all `/srv/*` service handles so stale pre-restart fids fail cleanly with `ErrorCode::Io`.
+- [x] 2.2 Add `SupervisionStrategy::{OneForOne, RestForOne}` (default `OneForOne`) to `BootUnit` TOML schema and validation (`crates/service-manager/src/boot_unit.rs`).
 - [ ] 2.3 Refactor `SupervisorRuntime` (`crates/service-manager/src/runtime/supervisor.rs`) to drive unit supervision and readiness from `/proc/<pid>/wait` instead of `25ms` ticks and `10ms` `wait_unit_ready` polling; implement strict reverse-topological `stop()` and opt-in `RestForOne` cascade restarts.
 - [ ] 2.4 Expose `generation`, `restarts`, `backoff_until`, and `last_exit_reason` under `/mnt/service-manager/units/<name>/`.
 - [ ] 2.5 Add `crates/service-manager` tests for reverse-order shutdown, `OneForOne` leaf self-healing without dropping `root-agent`, opt-in `RestForOne` cascade, and stale-generation fid rejection.

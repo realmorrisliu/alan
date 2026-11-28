@@ -33,16 +33,17 @@ pub(crate) use packages::{namespace_with_package_references, validate_package_re
 use packages::{overlaps_package_namespace, project_package_reference};
 
 use supervisor::{
-    ActiveUnit, SupervisorEnvironment, SupervisorRuntime, SwitchableFileServer,
-    SystemServiceHandles, mount_boot_units, mount_service_handles, mount_standard_namespace_roots,
-    mount_system_executables, mount_tool_packages, publish_unit_handles, verify_readiness,
-    wait_unit_ready,
+    ActiveUnit, SERVICE_MANAGER_SRV_HANDLE, SupervisorEnvironment, SupervisorRuntime,
+    SystemServiceHandles, create_supervised_handles, mount_boot_units, mount_service_handles,
+    mount_standard_namespace_roots, mount_system_executables, mount_tool_packages,
+    publish_unit_handles, verify_readiness, wait_unit_ready,
 };
 
 use crate::{
     BootManifest, ConnectionService, ConnectionStoreBindings, ConnectionsFile,
     HostMountExportAdapter, HostMountService, LocalEntryService, ManagerState, PackageService,
-    ProcessLaunchContext, RestartDecision, ServiceManagerFs, UnavailableHostMountExportAdapter,
+    ProcessLaunchContext, RestartDecision, ServiceManagerFs, SupervisedHandle,
+    UnavailableHostMountExportAdapter,
     agent_runtime::{AgentRuntimeService, RootAgentTemplate},
     process_spawn::{spawn_process, spawn_unit_process},
 };
@@ -233,7 +234,7 @@ pub struct ServiceManager {
     host_mount: Arc<HostMountService>,
     connection: Arc<ConnectionService>,
     package: Arc<PackageService>,
-    package_handle: Arc<SwitchableFileServer>,
+    supervised_handles: BTreeMap<String, Arc<SupervisedHandle>>,
     fileserver_manager: Arc<crate::FileserverManager>,
     tool_secret_resolver: Option<Arc<dyn alan_agent_engine::tools::ToolSecretResolver>>,
     #[cfg(test)]
@@ -412,7 +413,7 @@ impl ServiceManager {
         let host_mount = assembled.host_mount.clone();
         let connection = assembled.connection.clone();
         let package = assembled.package.clone();
-        let package_handle = assembled.package_handle.clone();
+        let supervised_handles = assembled.supervised_handles.clone();
         let fileserver_manager = assembled.fileserver_manager.clone();
         let root = assembled.root.namespace();
         let mut runtime = SupervisorRuntime::from_assembled(assembled, root_pid.clone());
@@ -441,7 +442,7 @@ impl ServiceManager {
             host_mount,
             connection,
             package,
-            package_handle,
+            supervised_handles,
             fileserver_manager,
             tool_secret_resolver,
             #[cfg(test)]
@@ -487,8 +488,12 @@ impl ServiceManager {
         {
             launch_context.set_tool_secret_resolver(resolver);
         }
-        self.package_handle
-            .while_bound_async(|| {
+        let package_handle = self
+            .supervised_handles
+            .get("package")
+            .context("Package Service is unavailable")?;
+        package_handle
+            .while_bound_async("Package Service is unavailable", || {
                 packages::project_package_reference_async(&self.package, launch_context, package_id)
             })
             .await
@@ -643,7 +648,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     let state = Arc::new(tokio::sync::Mutex::new(ManagerState::new(manifest.clone())));
     let manager_fs = Arc::new(ServiceManagerFs::new(state.clone()));
     let host_mount_service = HostMountService::new(host_mount_adapter);
-    let package_handle = SwitchableFileServer::new();
+    let supervised_handles = create_supervised_handles(&manifest);
     let agent_runtime = AgentRuntimeService::new(
         procfs.clone(),
         agent_root.clone(),
@@ -716,10 +721,12 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         ))),
         Access::ReadWrite,
     );
+    let manager_handle = supervised_handles[SERVICE_MANAGER_SRV_HANDLE].clone();
+    manager_handle.bind(manager_fs);
     srvfs
         .post(
-            "service-manager",
-            InProcessTransport::new(manager_fs),
+            SERVICE_MANAGER_SRV_HANDLE,
+            InProcessTransport::new(manager_handle),
             Access::ReadWrite,
         )
         .await;
@@ -772,7 +779,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
                         host_mount: &host_mount_service,
                         connection: &connection_service,
                         package: &package_service,
-                        package_handle: &package_handle,
+                        supervised_handles: &supervised_handles,
                         local_entry: local_entry.as_ref(),
                     },
                 )
@@ -813,6 +820,9 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
                             })?;
                     }
                     for handle in &unit.published_handles {
+                        if let Some(supervised) = supervised_handles.get(handle) {
+                            supervised.deactivate();
+                        }
                         srvfs.unpost(handle).await;
                     }
                     let mut manager = state.lock().await;
@@ -942,7 +952,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
             host_mount: host_mount_service,
             connection: connection_service,
             package: package_service,
-            package_handle,
+            supervised_handles,
             active_units,
             manager_pid,
             local_entry,

@@ -973,6 +973,9 @@ mod lifecycle_contention;
 
 #[path = "tests/agent_work.rs"]
 mod agent_work;
+
+#[path = "tests/supervised_handles.rs"]
+mod supervised_handles;
 mod unavailable_command;
 
 mod boot_namespace;
