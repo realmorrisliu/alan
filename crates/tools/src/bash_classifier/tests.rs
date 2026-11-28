@@ -789,3 +789,97 @@ fn test_is_idempotent_verification_command_rejects_effectful_and_opaque_forms() 
         );
     }
 }
+
+#[test]
+fn test_classify_bash_command_env_assignment_hygiene_write() {
+    use alan_agent_protocol::ToolCapability;
+    for cmd in [
+        "env -u BASH_ENV CARGO_NET_OFFLINE=true cargo clippy --all-targets",
+        "env -u BASH_ENV RUST_BACKTRACE=1 RUST_LOG=info,alan_tools=debug cargo test -p alan-tools",
+        "env CARGO_NET_OFFLINE=true cargo check --workspace",
+        "env -u BASH_ENV RUST_LOG=\"info,alan=debug\" cargo test -p alan-tools",
+    ] {
+        assert_eq!(
+            classify_bash_command(cmd),
+            ToolCapability::Write,
+            "expected Write for `{cmd}`"
+        );
+    }
+}
+
+#[test]
+fn test_classify_bash_command_env_assignment_hygiene_read() {
+    use alan_agent_protocol::ToolCapability;
+    for cmd in [
+        "env NO_COLOR=1 rg TODO src",
+        "env -u BASH_ENV NO_COLOR=1 rg TODO src",
+    ] {
+        assert_eq!(
+            classify_bash_command(cmd),
+            ToolCapability::Read,
+            "expected Read for `{cmd}`"
+        );
+    }
+}
+
+#[test]
+fn test_classify_bash_command_env_assignment_hygiene_network() {
+    use alan_agent_protocol::ToolCapability;
+    let cap =
+        classify_bash_command("env -u BASH_ENV CARGO_NET_OFFLINE=true curl https://example.com");
+    assert_eq!(cap, ToolCapability::Network);
+}
+
+#[test]
+fn test_classify_bash_command_env_assignment_hygiene_fails_closed() {
+    use alan_agent_protocol::ToolCapability;
+    for cmd in [
+        "env -u BASH_ENV PATH=/tmp/evil cargo test",
+        "env -u BASH_ENV LD_PRELOAD=/tmp/evil.so cargo test",
+        "env -u BASH_ENV DYLD_INSERT_LIBRARIES=/tmp/evil.dylib cargo test",
+        "env -u BASH_ENV RUSTFLAGS=-Cdebuginfo=0 cargo clippy",
+        "env -u BASH_ENV CARGO_TARGET_DIR=/tmp/out cargo test",
+        "env -u BASH_ENV NODE_OPTIONS=--require=/tmp/evil.js cargo test",
+        "env -u BASH_ENV BASH_ENV=/tmp/evil cargo test",
+        "env -u BASH_ENV CARGO_NET_OFFLINE=$(id) cargo test",
+        "env -u BASH_ENV CARGO_NET_OFFLINE=true -u FOO cargo test",
+        "env -- CARGO_NET_OFFLINE=true cargo test",
+        "env -u BASH_ENV CARGO_NET_OFFLINE=true sh -c 'rm -rf .'",
+    ] {
+        assert_eq!(
+            classify_bash_command(cmd),
+            ToolCapability::Unknown,
+            "expected Unknown for `{cmd}`"
+        );
+    }
+}
+
+#[test]
+fn test_is_idempotent_verification_command_allows_safe_env_assignments() {
+    for command in [
+        "env -u BASH_ENV CARGO_NET_OFFLINE=true cargo clippy --all-targets",
+        "env -u BASH_ENV RUST_BACKTRACE=1 cargo test -p alan-tools",
+        "env CARGO_NET_OFFLINE=true cargo fmt --all -- --check",
+        "env NO_COLOR=1 rg TODO src",
+    ] {
+        assert!(
+            is_idempotent_verification_command(command),
+            "expected idempotent verification for `{command}`"
+        );
+    }
+}
+
+#[test]
+fn test_is_idempotent_verification_command_rejects_unsafe_env_assignments() {
+    for command in [
+        "env -u BASH_ENV CARGO_NET_OFFLINE=true cargo build",
+        "env -u BASH_ENV FOO=bar cargo clippy",
+        "env -u BASH_ENV RUSTFLAGS=-Cdebuginfo=0 cargo clippy",
+        "env -u BASH_ENV CARGO_NET_OFFLINE=true curl https://example.com",
+    ] {
+        assert!(
+            !is_idempotent_verification_command(command),
+            "expected non-idempotent classification for `{command}`"
+        );
+    }
+}
