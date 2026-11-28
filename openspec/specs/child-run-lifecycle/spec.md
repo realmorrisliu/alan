@@ -5,7 +5,9 @@ Define delegated child-run lifecycle behavior: registration before first
 submission, liveness and timeout classification, progress metadata, projection
 authority relative to `/proc` and the agent overlay, and governed
 parent-initiated termination.
+
 ## Requirements
+
 ### Requirement: Child Run Registration
 Alan SHALL register each delegated child as a child Agent Process before its initial turn. The
 record SHALL contain parent and child Process paths or pids, Process Launch Context and namespace
@@ -149,3 +151,14 @@ Every interactive resumption or scheduled Stateful Cron Stream execution targeti
 #### Scenario: Concurrent stream resume is prevented by per-stream lease lock
 - **WHEN** an interactive session holds the lease lock for a named stream and a second caller attempts to resume that same stream
 - **THEN** the second caller observes lock contention and aborts or queues without corrupting the active checkpoint
+
+### Requirement: Delegated child and workstream supervision waits on kernel and agent event streams
+`DelegatedChildRunSupervisor` and `async_workstreams` SHALL wait on `/proc/<pid>/wait` and `/agent/<pid>/events` streams rather than fixed `10–250ms` sleep polling, and parent-owned child launches SHALL set `link_parent: true`.
+
+#### Scenario: Child run supervisor reacts to child exit or yield without sleep polling
+- **WHEN** a delegated child agent pauses on a request or exits
+- **THEN** `DelegatedChildRunSupervisor` wakes directly from `/agent/<child_pid>/events` or `/proc/<child_pid>/wait` within timeout/cancellation bounds
+
+#### Scenario: Parent cancellation cascades to linked child agent
+- **WHEN** a parent agent is aborted or exits while supervising a `link_parent: true` child agent
+- **THEN** the kernel cancels the child process deterministically and workstream quiescence observes completion without fixed polling ticks

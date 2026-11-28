@@ -4,7 +4,9 @@
 Defines `routefs` typed-message routing by file-backed rules, clunk-committed
 message framing, auditable delivery, blocking receiver streams, and its role as
 a composition mechanism rather than a control path.
+
 ## Requirements
+
 ### Requirement: Routefs routes typed messages by rule, sender decoupled
 alan9 SHALL provide `routefs`, a file server where a sender writes a typed
 message to a `send` file and rule files route it by content/type to a destination
@@ -85,3 +87,17 @@ When a focused child workstream receives input or discovers a dependency belongi
 #### Scenario: Cross-stream handoff never widens authority
 - **WHEN** stream A triggers a handoff to stream B
 - **THEN** stream B executes strictly under its own validated Host Mount grants and `task_budget` without inheriting extra privileges from stream A
+
+### Requirement: Routefs executes as a crash-isolated ActorFileServer
+`alan-routefs` SHALL execute its routing state inside a single-owner
+`FileServerActor` spawned via `spawn_file_actor`, preserving all rule-matching,
+`DEAD_LETTER_PORT`, and `MAX_HANDOFF_HOPS` semantics without holding shared
+`tokio::sync::Mutex` guards across `.await`.
+
+#### Scenario: Blocked port readers do not stall send commits on RouteFs
+- **WHEN** a subscriber blocks reading `/mnt/route/ports/root` while senders commit documents to `/mnt/route/send`
+- **THEN** `send` commits complete immediately and wake the blocked port reader with the routed record
+
+#### Scenario: RouteFs panic isolates failure cleanly
+- **WHEN** the `RouteFs` actor encounters an injected panic inside its mailbox loop
+- **THEN** in-flight and new `RouteFs` calls fail with `ErrorCode::Io` without poisoning kernel mounts and notify `ActorExitHandle`

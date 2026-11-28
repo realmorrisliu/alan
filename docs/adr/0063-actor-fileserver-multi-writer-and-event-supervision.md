@@ -1,15 +1,16 @@
 # Actor-isolated FileServers, multi-writer boundaries, and event-driven process supervision
 
-Status: proposed 2026-11-27 (Wave 2 planning; not implemented).
+Status: implemented 2026-11-28 (PR #1197 and PR #1200 merged on `main`; canonical specs synced and changes archived).
 Refines [ADR-0024](0024-plan9-kernel-substrate.md),
 [ADR-0026](0026-wire-transport-replaces-in-process-shortcuts.md),
 [ADR-0043](0043-boot-unit-and-restart-policy.md), and
 [ADR-0062](0062-project-workstreams-ledger-and-stateful-cron-streams.md), while
 preserving [ADR-0055](0055-agent-machine-composes-typed-capabilities.md) and
 [ADR-0061](0061-terminal-native-os-boundary-quartermaster-and-first-party-providers.md).
-Tracks architecture direction for GitHub Issues `#1187` and `#1190`. Planning and
-documentation only; no behavior below is claimed shipped until its owning change
-lands, passes review, and syncs into canonical specs.
+Records the shipped architecture for GitHub Issues `#1187` and `#1190`, implemented by
+PR `#1197` (`harden-ap-multi-writer-and-actor-substrate`) and PR `#1200`
+(`add-event-driven-process-supervision`), synced into canonical specs and archived on
+`2026-11-28`.
 
 ## Context
 
@@ -129,6 +130,6 @@ Wave 2 splits cleanly into two independent OpenSpec changes:
 
 ## Owning changes
 
-- [Multi-writer & Actor substrate OpenSpec proposal](../../openspec/changes/harden-ap-multi-writer-and-actor-substrate/proposal.md)
-- [Event-driven process supervision OpenSpec proposal](../../openspec/changes/add-event-driven-process-supervision/proposal.md)
+- [Multi-writer & Actor substrate archived OpenSpec proposal](../../openspec/changes/archive/2026-11-28-harden-ap-multi-writer-and-actor-substrate/proposal.md)
+- [Event-driven process supervision archived OpenSpec proposal](../../openspec/changes/archive/2026-11-28-add-event-driven-process-supervision/proposal.md)
 - [Personal daily-use roadmap](../../openspec/changes/qualify-personal-daily-development/roadmap.md)
