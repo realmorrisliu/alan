@@ -443,6 +443,7 @@ async fn spawn_proc_entry(procfs: &ProcFs) -> u64 {
         args: Vec::new(),
         namespace: ExecNamespaceManifest::default(),
         descriptors: Default::default(),
+        link_parent: false,
     };
     procfs
         .write(fid, 0, &serde_json::to_vec(&exec).unwrap())

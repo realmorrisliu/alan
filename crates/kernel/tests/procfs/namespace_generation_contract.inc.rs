@@ -127,6 +127,7 @@ async fn clone_rejects_a_stale_live_namespace_generation_and_accepts_a_fresh_ret
             stale_generation,
         ),
         descriptors: Default::default(),
+        link_parent: false,
     };
     spawner
         .write(Fid(80), 0, &serde_json::to_vec(&stale_exec).unwrap())
@@ -156,6 +157,7 @@ async fn clone_rejects_a_stale_live_namespace_generation_and_accepts_a_fresh_ret
             fresh_generation,
         ),
         descriptors: Default::default(),
+        link_parent: false,
     };
     spawner
         .write(Fid(81), 0, &serde_json::to_vec(&fresh_exec).unwrap())

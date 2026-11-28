@@ -394,6 +394,7 @@ async fn ambient_host_skill_directories_and_remote_urls_are_rejected() {
                     args: vec!["install".to_string(), remote_url.to_string()],
                     namespace: alan_kernel::ExecNamespaceManifest::default(),
                     descriptors: BTreeMap::new(),
+                    link_parent: false,
                 },
             })
             .await;

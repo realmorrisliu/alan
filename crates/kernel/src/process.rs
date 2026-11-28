@@ -14,11 +14,15 @@
 //! [`discard`](ProcessTable::discard) drops a pending slot so a failed spawn
 //! leaks nothing into `/proc`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use alan_ap::VersionTable;
 
 use crate::{Access, Namespace};
+
+/// Conventional exit code assigned when a process is cancelled via `/proc/<pid>/ctl`
+/// or via `link_parent` cascade cancellation.
+pub const CANCELLED_EXIT_CODE: i32 = 130;
 
 /// A process identity. Ephemeral: never reused as a durable reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -58,6 +62,10 @@ pub struct ExecSpec {
     /// Numeric Process descriptors bound to paths in the committed namespace.
     #[serde(default)]
     pub descriptors: BTreeMap<u32, String>,
+    /// When true, exiting this process's parent for any reason deterministically
+    /// cancels this process.
+    #[serde(default)]
+    pub link_parent: bool,
 }
 
 /// The versioned namespace mount set a spawner expects a `/proc/clone` commit
@@ -167,6 +175,62 @@ pub enum Status {
     Exited,
 }
 
+/// Why a process terminated, rendered in `/proc/<pid>/wait`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExitReason {
+    Normal,
+    Failed,
+    Cancelled,
+}
+
+impl ExitReason {
+    /// Classify a non-cancellation exit code into `Normal` (`0`) or `Failed` (non-zero).
+    pub fn from_exit_code(code: i32) -> Self {
+        if code == 0 {
+            Self::Normal
+        } else {
+            Self::Failed
+        }
+    }
+}
+
+/// One process termination recorded by [`ProcessTable::exit_with_reason`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessExit {
+    pub pid: Pid,
+    pub exit_code: i32,
+    pub reason: ExitReason,
+}
+
+/// Terminal JSON record published on `/proc/<pid>/wait`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct ProcessWaitRecord {
+    pub pid: u64,
+    pub status: String,
+    pub exit_code: i32,
+    pub reason: ExitReason,
+}
+
+impl ProcessWaitRecord {
+    pub fn from_exit(exit: ProcessExit) -> Self {
+        Self {
+            pid: exit.pid.0,
+            status: "exited".to_string(),
+            exit_code: exit.exit_code,
+            reason: exit.reason,
+        }
+    }
+
+    /// Encode this record as a single newline-delimited JSON line.
+    pub fn to_json_line(&self) -> Vec<u8> {
+        let mut bytes =
+            serde_json::to_vec(self).expect("ProcessWaitRecord serialization is infallible");
+        bytes.push(b'\n');
+        bytes
+    }
+}
+
 /// One process-table entry — the whole kernel ontology of a running thing.
 pub struct Process {
     pub pid: Pid,
@@ -176,6 +240,7 @@ pub struct Process {
     pub exec: ExecSpec,
     pub status: Status,
     pub exit_code: Option<i32>,
+    pub exit_reason: Option<ExitReason>,
 }
 
 /// A pending process slot allocated by clone-begin but not yet committed. It
@@ -290,8 +355,26 @@ impl ProcessTable {
 
     /// Commit a pending slot with its exec spec, starting the process and making
     /// `/proc/<pid>` public. Returns `None` if `slot` is not a pending slot.
+    ///
+    /// If `exec.link_parent` is `true` and the spawning parent has already
+    /// exited before commit, the child commits directly into the cancelled
+    /// terminal state so no race window can leave a linked orphan running.
     pub fn commit(&mut self, slot: Pid, exec: ExecSpec) -> Option<Pid> {
         let pending = self.pending.remove(&slot)?;
+        let parent_already_exited = exec.link_parent
+            && pending
+                .parent
+                .and_then(|parent_pid| self.processes.get(&parent_pid))
+                .is_some_and(|parent| parent.status == Status::Exited);
+        let (status, exit_code, exit_reason) = if parent_already_exited {
+            (
+                Status::Exited,
+                Some(CANCELLED_EXIT_CODE),
+                Some(ExitReason::Cancelled),
+            )
+        } else {
+            (Status::Running, None, None)
+        };
         self.processes.insert(
             slot,
             Process {
@@ -300,8 +383,9 @@ impl ProcessTable {
                 credentials: pending.credentials,
                 namespace: pending.namespace,
                 exec,
-                status: Status::Running,
-                exit_code: None,
+                status,
+                exit_code,
+                exit_reason,
             },
         );
         // A process became public: the /proc listing changed.
@@ -334,18 +418,85 @@ impl ProcessTable {
         Some(())
     }
 
-    /// Record a process's termination. Terminal state is recorded once: a later
-    /// cancel/termination notification for an already-exited process is ignored,
-    /// so the real exit code is not clobbered.
+    /// Record a process's termination and cascade cancellation to any live
+    /// descendants linked via [`ExecSpec::link_parent`].
+    ///
+    /// Terminal state is recorded once: a later cancel/termination notification
+    /// for an already-exited process is ignored, so the real exit code is not
+    /// clobbered.
     pub fn exit(&mut self, pid: Pid, code: i32) {
-        if let Some(proc) = self.processes.get_mut(&pid)
-            && proc.status != Status::Exited
-        {
-            proc.status = Status::Exited;
-            proc.exit_code = Some(code);
-            // The process's status/exit changed: bump its per-process generation.
-            self.versions.bump(pid.0);
+        self.exit_with_reason(pid, code, ExitReason::from_exit_code(code));
+    }
+
+    /// Cancel a live process (`exit_code = 130`, `reason = Cancelled`) and
+    /// cascade cancellation to any live descendants linked via
+    /// [`ExecSpec::link_parent`].
+    pub fn cancel(&mut self, pid: Pid) -> Vec<ProcessExit> {
+        self.exit_with_reason(pid, CANCELLED_EXIT_CODE, ExitReason::Cancelled)
+    }
+
+    /// Record a process's termination with an explicit [`ExitReason`],
+    /// deterministically cascading cancellation in breadth-first `Pid` order to
+    /// all live descendants linked via [`ExecSpec::link_parent`].
+    ///
+    /// Returns every process that transitioned from `Running` to `Exited` (empty
+    /// if `pid` was absent or already exited).
+    pub fn exit_with_reason(
+        &mut self,
+        pid: Pid,
+        code: i32,
+        reason: ExitReason,
+    ) -> Vec<ProcessExit> {
+        let Some(proc) = self.processes.get_mut(&pid) else {
+            return Vec::new();
+        };
+        if proc.status == Status::Exited {
+            return Vec::new();
         }
+        proc.status = Status::Exited;
+        proc.exit_code = Some(code);
+        proc.exit_reason = Some(reason);
+        // The process's status/exit changed: bump its per-process generation.
+        self.versions.bump(pid.0);
+
+        let mut exited = vec![ProcessExit {
+            pid,
+            exit_code: code,
+            reason,
+        }];
+        let mut queue = VecDeque::from([pid]);
+
+        while let Some(exited_parent) = queue.pop_front() {
+            let linked_children: Vec<Pid> = self
+                .processes
+                .iter()
+                .filter_map(|(&child_pid, child)| {
+                    (child.status != Status::Exited
+                        && child.parent == Some(exited_parent)
+                        && child.exec.link_parent)
+                        .then_some(child_pid)
+                })
+                .collect();
+
+            for child_pid in linked_children {
+                if let Some(child) = self.processes.get_mut(&child_pid)
+                    && child.status != Status::Exited
+                {
+                    child.status = Status::Exited;
+                    child.exit_code = Some(CANCELLED_EXIT_CODE);
+                    child.exit_reason = Some(ExitReason::Cancelled);
+                    self.versions.bump(child_pid.0);
+                    exited.push(ProcessExit {
+                        pid: child_pid,
+                        exit_code: CANCELLED_EXIT_CODE,
+                        reason: ExitReason::Cancelled,
+                    });
+                    queue.push_back(child_pid);
+                }
+            }
+        }
+
+        exited
     }
 
     /// The publicly visible pids, in pid order. Pending slots are excluded.

@@ -13,6 +13,7 @@ fn invocation(namespace: Namespace, args: &[&str]) -> ProcessInvocation {
             args: args.iter().map(|s| (*s).into()).collect(),
             namespace: Default::default(),
             descriptors: BTreeMap::new(),
+            link_parent: false,
         },
     }
 }

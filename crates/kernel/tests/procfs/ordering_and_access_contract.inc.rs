@@ -86,6 +86,7 @@ async fn procfs_open_rejects_write_modes_on_read_only_nodes_at_dial_time() {
         vec![pid.clone(), "io".into(), "events".into()],
         vec![pid.clone(), "status".into()],
         vec![pid.clone(), "exit".into()],
+        vec![pid.clone(), "wait".into()],
         vec![pid.clone(), "parent".into()],
         vec![pid.clone(), "credentials".into()],
         vec![pid.clone(), "namespace".into()],

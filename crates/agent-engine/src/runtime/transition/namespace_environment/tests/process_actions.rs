@@ -171,6 +171,7 @@ async fn engine_retries_tool_spawn_after_a_live_namespace_generation_race() {
         args: Vec::new(),
         namespace: ExecNamespaceManifest::from_namespace(&process_namespace),
         descriptors: Default::default(),
+        link_parent: false,
     };
     bootstrap
         .write(Fid(9_998), 0, &serde_json::to_vec(&parent_exec).unwrap())

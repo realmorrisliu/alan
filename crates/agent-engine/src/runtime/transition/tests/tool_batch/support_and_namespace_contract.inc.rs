@@ -709,6 +709,7 @@ async fn spawn_parent_process(procfs: &ProcFs, namespace: &Namespace, process_pi
             args: Vec::new(),
             namespace: ExecNamespaceManifest::from_namespace(namespace),
             descriptors: Default::default(),
+            link_parent: false,
         };
         spawner
             .write(fid, 0, &serde_json::to_vec(&exec).unwrap())

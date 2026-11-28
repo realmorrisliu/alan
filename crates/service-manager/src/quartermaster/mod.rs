@@ -81,6 +81,7 @@ pub async fn run_q_command_with_package_service(
                 args: args.to_vec(),
                 namespace: alan_kernel::ExecNamespaceManifest::default(),
                 descriptors: BTreeMap::new(),
+                link_parent: false,
             },
         })
         .await;

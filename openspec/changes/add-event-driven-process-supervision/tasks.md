@@ -1,9 +1,9 @@
 # Tasks
 
 ## 1. Kernel Wait Stream & Declarative Parent Link (`crates/kernel`)
-- [ ] 1.1 Add `/proc/<pid>/wait` (and `/proc/self/wait`) as a read-only `FileKind::Stream` backed by `alan_ap::Stream`, publishing single-line terminal JSON (`pid`, `status`, `exit_code`, `reason`) race-free for both live and already-exited processes.
-- [ ] 1.2 Add `#[serde(default)] pub link_parent: bool` to `ExecSpec` and wire deterministic cascade cancellation in `ProcessTable`/`ProcFs` on any parent exit (normal, failed, or cancelled).
-- [ ] 1.3 Add `crates/kernel` unit tests covering pre-exit blocking read, post-exit immediate read, write-open `ErrorCode::NoAccess`, and multi-level `link_parent` cascade cancellation.
+- [x] 1.1 Add `/proc/<pid>/wait` (and `/proc/self/wait`) as a read-only `FileKind::Stream` backed by `alan_ap::Stream`, publishing single-line terminal JSON (`pid`, `status`, `exit_code`, `reason`) race-free for both live and already-exited processes.
+- [x] 1.2 Add `#[serde(default)] pub link_parent: bool` to `ExecSpec` and wire deterministic cascade cancellation in `ProcessTable`/`ProcFs` on any parent exit (normal, failed, or cancelled).
+- [x] 1.3 Add `crates/kernel` unit tests covering pre-exit blocking read, post-exit immediate read, write-open `ErrorCode::NoAccess`, and multi-level `link_parent` cascade cancellation.
 
 ## 2. `SupervisedHandle`, Reverse Shutdown & Event-Driven `ServiceManager` (`crates/service-manager`)
 - [ ] 2.1 Generalize `SwitchableFileServer` into `SupervisedHandle` with monotonic `generation: u64` tracking across all `/srv/*` service handles so stale pre-restart fids fail cleanly with `ErrorCode::Io`.
