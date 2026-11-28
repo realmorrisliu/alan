@@ -21,7 +21,7 @@ SUPPORTED_TARGETS = (
 )
 SUPPORTED_CHANNELS = ("stable", "beta")
 
-DEFAULT_REPO = "realmorrisliu/alan"
+DEFAULT_REPO = "thinksmart-systems/alan"
 DEFAULT_INSTALLER_URL = "https://alanworks.app/install.sh"
 SHA256_LINE_RE = re.compile(r"^([0-9a-fA-F]{64})(?:[ \t]+\*?(.+))?$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")

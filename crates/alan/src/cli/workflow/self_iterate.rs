@@ -520,7 +520,7 @@ mod tests {
         TriggerEvent {
             event_id: event_id.to_string(),
             kind: TriggerEventKind::IssueLabeled,
-            repo: "realmorrisliu/alan".to_string(),
+            repo: "thinksmart-systems/alan".to_string(),
             actor: actor.to_string(),
             author: Some(actor.to_string()),
             labels: labels.iter().map(|s| (*s).to_string()).collect(),
@@ -539,7 +539,7 @@ mod tests {
         for bad_repo in [
             "",
             "alan",
-            "https://github.com/realmorrisliu/alan",
+            "https://github.com/thinksmart-systems/alan",
             "a/b/c",
             "../alan",
             "owner/repo ",
@@ -630,7 +630,7 @@ mod tests {
             TriggerDecision::Accept(AcceptedTriggerDispatch {
                 workflow_id: "self-iterate".to_string(),
                 event_id: "evt-1".to_string(),
-                repo: "realmorrisliu/alan".to_string(),
+                repo: "thinksmart-systems/alan".to_string(),
                 actor: "Morris".to_string(),
                 trust: WorkflowTrustPosture::Governed,
                 mounts: vec!["alan-repo".to_string()],

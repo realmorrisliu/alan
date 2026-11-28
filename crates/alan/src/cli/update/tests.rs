@@ -460,7 +460,9 @@ fn passive_check_skip_conditions_and_24h_cache_evaluation_work() {
         channel: "stable".to_string(),
         latest_version: "0.1.1".to_string(),
         tag: "v0.1.1".to_string(),
-        release_url: Some("https://github.com/realmorrisliu/alan/releases/tag/v0.1.1".to_string()),
+        release_url: Some(
+            "https://github.com/thinksmart-systems/alan/releases/tag/v0.1.1".to_string(),
+        ),
     };
     std::fs::write(&cache_path, serde_json::to_vec(&fresh).unwrap()).unwrap();
     assert_eq!(
@@ -504,7 +506,9 @@ fn passive_check_skip_conditions_and_24h_cache_evaluation_work() {
         channel: "beta".to_string(),
         latest_version: "0.1.6-beta.20261123.42".to_string(),
         tag: "beta".to_string(),
-        release_url: Some("https://github.com/realmorrisliu/alan/releases/tag/beta".to_string()),
+        release_url: Some(
+            "https://github.com/thinksmart-systems/alan/releases/tag/beta".to_string(),
+        ),
     };
     std::fs::write(&cache_path, serde_json::to_vec(&beta_fresh).unwrap()).unwrap();
     assert_eq!(

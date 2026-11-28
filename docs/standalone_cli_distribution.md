@@ -104,8 +104,8 @@ release.
 
 Two release channels share `schema_version: 1`:
 
-- `stable` (`https://alanworks.app/latest.json`, cached `max-age=300`): proxies `https://github.com/realmorrisliu/alan/releases/latest/download/latest.json` for tagged `v<version>` releases.
-- `beta` (`https://alanworks.app/beta.json`, cached `max-age=60`): proxies `https://github.com/realmorrisliu/alan/releases/download/beta/latest.json` for rolling pre-releases built from `main` (`<next_patch>-beta.<YYYYMMDD>.<run_number>`, rolling `beta` tag, retaining the current + 1 previous archive version).
+- `stable` (`https://alanworks.app/latest.json`, cached `max-age=300`): proxies `https://github.com/thinksmart-systems/alan/releases/latest/download/latest.json` for tagged `v<version>` releases.
+- `beta` (`https://alanworks.app/beta.json`, cached `max-age=60`): proxies `https://github.com/thinksmart-systems/alan/releases/download/beta/latest.json` for rolling pre-releases built from `main` (`<next_patch>-beta.<YYYYMMDD>.<run_number>`, rolling `beta` tag, retaining the current + 1 previous archive version).
 
 Release builds inject `ALAN_BUILD_VERSION`, `ALAN_BUILD_CHANNEL`, and
 `ALAN_BUILD_COMMIT` at compile time via `crates/alan/build.rs` without mutating
@@ -123,13 +123,13 @@ and per-archive `.sha256` files:
   "tag": "v0.1.0",
   "commit": "6c1dfd7",
   "published_at": "2026-11-20T00:00:00Z",
-  "release_url": "https://github.com/realmorrisliu/alan/releases/tag/v0.1.0",
-  "notes_url": "https://github.com/realmorrisliu/alan/releases/tag/v0.1.0",
+  "release_url": "https://github.com/thinksmart-systems/alan/releases/tag/v0.1.0",
+  "notes_url": "https://github.com/thinksmart-systems/alan/releases/tag/v0.1.0",
   "installer_url": "https://alanworks.app/install.sh",
   "targets": {
     "aarch64-apple-darwin": {
       "asset": "alan-0.1.0-aarch64-apple-darwin.tar.gz",
-      "url": "https://github.com/realmorrisliu/alan/releases/download/v0.1.0/alan-0.1.0-aarch64-apple-darwin.tar.gz",
+      "url": "https://github.com/thinksmart-systems/alan/releases/download/v0.1.0/alan-0.1.0-aarch64-apple-darwin.tar.gz",
       "sha256": "<64-hex>",
       "size": 12345678,
       "signed": true,

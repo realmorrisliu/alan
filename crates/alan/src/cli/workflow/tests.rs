@@ -378,7 +378,7 @@ printf '{{"type":"turn_finished","status":"completed","answer":"Found 2 notes; s
 pub(super) fn sample_self_iterate_args() -> InitSelfIterateArgs {
     InitSelfIterateArgs {
         id: "self-iterate".to_string(),
-        repo: "realmorrisliu/alan".to_string(),
+        repo: "thinksmart-systems/alan".to_string(),
         allowed_actors: vec!["morris".to_string()],
         required_labels: vec![],
         ignored_actors: vec![],
@@ -434,7 +434,7 @@ async fn cli_init_self_iterate_and_release_prep_require_grants_and_render_safe_p
             "workflow",
             "init-self-iterate",
             "--repo",
-            "realmorrisliu/alan",
+            "thinksmart-systems/alan",
             "--allowed-actor",
             "morris",
         ])
@@ -457,7 +457,7 @@ async fn cli_init_self_iterate_and_release_prep_require_grants_and_render_safe_p
         "workflow",
         "init-self-iterate",
         "--repo",
-        "realmorrisliu/alan",
+        "thinksmart-systems/alan",
         "--allowed-actor",
         "morris",
         "--grant",
@@ -530,7 +530,7 @@ async fn cli_init_self_iterate_and_release_prep_require_grants_and_render_safe_p
         "workflow",
         "init-release-prep",
         "--repo",
-        "realmorrisliu/alan",
+        "thinksmart-systems/alan",
         "--allowed-actor",
         "morris",
         "--grant",
@@ -700,7 +700,7 @@ async fn cli_evaluate_trigger_and_check_release_gate_enforce_fail_closed_gates()
     let accepted_payload = serde_json::json!({
         "event_id": "evt-cli-1",
         "kind": "issue_labeled",
-        "repo": "realmorrisliu/alan",
+        "repo": "thinksmart-systems/alan",
         "actor": "morris",
         "labels": ["alan:auto"]
     })
@@ -729,7 +729,7 @@ async fn cli_evaluate_trigger_and_check_release_gate_enforce_fail_closed_gates()
     let rejected_payload = serde_json::json!({
         "event_id": "evt-cli-2",
         "kind": "issue_opened",
-        "repo": "realmorrisliu/alan",
+        "repo": "thinksmart-systems/alan",
         "actor": "stranger",
         "labels": [],
         "untrusted_body": "alan:auto --unsafe-host-account"
@@ -816,7 +816,7 @@ async fn workflow_manifest_forwards_explicit_packages_and_fileservers_in_isolate
         "workflow",
         "init-self-iterate",
         "--repo",
-        "realmorrisliu/alan",
+        "thinksmart-systems/alan",
         "--allowed-actor",
         "morris",
         "--grant",

@@ -142,7 +142,7 @@ afterward; no frozen v4 result or classification criterion is changed.
 
 ## Delivery receipt — 2026-10-09
 
-[PR #1040](https://github.com/realmorrisliu/alan/pull/1040) merged at
+[PR #1040](https://github.com/thinksmart-systems/alan/pull/1040) merged at
 00:46:51 UTC, merge `498f97e9f3604bfbc4462ea5a93155736d2591de`, from reviewed
 head `aa648f2a89a295b2e562e6da1d7b469d487e1f8a`. Its tree matches the reviewed
 head. All 16 final-head checks passed; independent Spec and Standards reviews
@@ -157,14 +157,14 @@ Future automatic-routing deltas remain unimplemented. Measured v4 source remains
 `07b8c351` with freeze `dac7802f`; delivery of later reader corrections does not
 requalify that measured candidate or attribute its numbers to the final head.
 
-Post-merge verification on the exact merge SHA passed: [CI](https://github.com/realmorrisliu/alan/actions/runs/37866506690)
+Post-merge verification on the exact merge SHA passed: [CI](https://github.com/thinksmart-systems/alan/actions/runs/37866506690)
 (including Linux/macOS tests, release builds, blocking harnesses, quality and
-OpenSpec), [CodeQL](https://github.com/realmorrisliu/alan/actions/runs/37866506653)
-and [Cargo Audit](https://github.com/realmorrisliu/alan/actions/runs/37866506654).
+OpenSpec), [CodeQL](https://github.com/thinksmart-systems/alan/actions/runs/37866506653)
+and [Cargo Audit](https://github.com/thinksmart-systems/alan/actions/runs/37866506654).
 The local strict OpenSpec check passed all 65 current surfaces.
 
-A separate [Dependabot update run](https://github.com/realmorrisliu/alan/actions/runs/37866517917)
+A separate [Dependabot update run](https://github.com/thinksmart-systems/alan/actions/runs/37866517917)
 failed with `security_update_not_needed` while selecting rand 0.10.3. This does
-not establish that all locked rand versions are safe: [alert #8](https://github.com/realmorrisliu/alan/security/dependabot/8)
+not establish that all locked rand versions are safe: [alert #8](https://github.com/thinksmart-systems/alan/security/dependabot/8)
 remains open for locked rand 0.9.2 (low severity, GHSA-cq8v-f236-94qc, first fixed
 in 0.9.3). No dependency update or alert dismissal is part of this delivery.

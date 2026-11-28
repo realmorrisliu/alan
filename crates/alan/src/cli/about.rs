@@ -114,7 +114,7 @@ pub fn render_about_for_theme(theme: Theme) -> String {
     alan connection add <provider> --profile <name>\n\
     alan\n\
     alan man alan9\n\n\
-  {d}https://alanworks.app · https://github.com/realmorrisliu/alan · Apache-2.0{x}\n"
+  {d}https://alanworks.app · https://github.com/thinksmart-systems/alan · Apache-2.0{x}\n"
     )
 }
 
@@ -135,7 +135,7 @@ QUICKSTART\n\
   alan connection add <provider> --profile <name>\n\
   alan\n\
   alan man alan9\n\n\
-https://alanworks.app · https://github.com/realmorrisliu/alan · Apache-2.0\n"
+https://alanworks.app · https://github.com/thinksmart-systems/alan · Apache-2.0\n"
     )
 }
 
