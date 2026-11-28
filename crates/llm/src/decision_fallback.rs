@@ -275,6 +275,10 @@ pub fn build_fallback_generation_request(request: &DecisionRequest) -> Result<Ge
         .with_system_prompt(system_prompt)
         .with_user_message(user_payload)
         .with_temperature(0.0)
+        // Tier 2 rubric evaluation is a small structured answer; keep reasoning
+        // models bounded so the fallback stays fast instead of exhausting the
+        // request timeout on extended thinking.
+        .with_reasoning_effort(crate::ReasoningEffort::Low)
         .with_max_tokens(max_tokens)
         .with_response_schema(build_decision_json_schema(request)))
 }

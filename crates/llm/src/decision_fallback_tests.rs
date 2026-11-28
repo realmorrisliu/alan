@@ -5,7 +5,7 @@ use serde_json::json;
 use super::*;
 use crate::{
     ChoiceEvaluationRequest, DecisionLevel, DecisionOption, EvaluationCandidate,
-    EvaluationSelection, MockLlmProvider, TokenUsage, ToolCall,
+    EvaluationSelection, MockLlmProvider, ReasoningEffort, TokenUsage, ToolCall,
 };
 
 fn multi_question_request() -> DecisionRequest {
@@ -295,10 +295,19 @@ async fn fallback_evaluator_supports_evaluate_choice_via_decide_delegation() {
     assert_eq!(eval_resp.usage, None);
 }
 
-#[tokio::test]
-async fn build_fallback_generation_request_reserves_thinking_headroom() {
+#[test]
+fn build_fallback_generation_request_reserves_thinking_headroom() {
     let request = multi_question_request();
     let gen_req = build_fallback_generation_request(&request).unwrap();
+    assert_eq!(
+        gen_req.reasoning.effort,
+        Some(ReasoningEffort::Low),
+        "Tier-2 rubric fallback must pin low reasoning effort to stay bounded"
+    );
+    assert!(
+        gen_req.tools.is_empty(),
+        "fallback decisions must send zero tools"
+    );
     assert!(
         gen_req.max_tokens.unwrap() >= 2048,
         "expected >= 2048 max_tokens for thinking headroom, got {:?}",

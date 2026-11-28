@@ -517,6 +517,57 @@ fn test_classify_bash_command_cargo_test_is_write() {
 }
 
 #[test]
+fn test_classify_bash_command_openspec_read_subcommands_are_read() {
+    use alan_agent_protocol::ToolCapability;
+    for cmd in [
+        "openspec validate --strict",
+        "openspec list",
+        "openspec show add-event-driven-plan",
+        "openspec status",
+        "openspec doctor",
+        "openspec view",
+        "openspec --help",
+        "openspec -V",
+        "openspec --version",
+    ] {
+        assert_eq!(
+            classify_bash_command(cmd),
+            ToolCapability::Read,
+            "expected Read for `{cmd}`"
+        );
+    }
+}
+
+#[test]
+fn test_classify_bash_command_openspec_validate_mixed_with_echo_is_read() {
+    let cap = classify_bash_command("echo validating && openspec validate --strict");
+    assert_eq!(cap, alan_agent_protocol::ToolCapability::Read);
+}
+
+#[test]
+fn test_classify_bash_command_openspec_mutating_subcommands_are_not_read() {
+    use alan_agent_protocol::ToolCapability;
+    for cmd in [
+        "openspec archive -y",
+        "openspec init",
+        "openspec update",
+        "openspec install",
+        "openspec new change",
+        "openspec config list",
+        "openspec store list",
+        "openspec change archive",
+    ] {
+        let cap = classify_bash_command(cmd);
+        assert_ne!(cap, ToolCapability::Read, "expected non-Read for `{cmd}`");
+        assert_ne!(
+            cap,
+            ToolCapability::Network,
+            "expected non-Network for `{cmd}`"
+        );
+    }
+}
+
+#[test]
 fn test_classify_project_local_dev_build_format_and_git_commands() {
     use alan_agent_protocol::ToolCapability;
     for cmd in [
