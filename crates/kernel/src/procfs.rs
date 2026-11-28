@@ -13,6 +13,7 @@
 //!     parent              # parent pid, or "" for none
 //!     credentials         # uname
 //!     exit                # exit code once exited, else ""
+//!     wait                # read-only exit stream (single terminal JSON line)
 //!     ctl                 # write "interrupt"/"cancel" (generic process control)
 //!     io/input            # the process's input stream
 //!     io/output           # the process's output stream
@@ -45,7 +46,10 @@ use alan_ap::{
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::{Access, Credentials, ExecSpec, LiveNamespace, Namespace, Pid, ProcessTable, Status};
+use crate::{
+    Access, Credentials, ExecSpec, ExitReason, LiveNamespace, Namespace, Pid, ProcessExit,
+    ProcessTable, ProcessWaitRecord, Status,
+};
 
 /// One committed process invocation handed to user-space execution.
 #[derive(Clone)]
@@ -94,6 +98,7 @@ enum Node {
     Parent(Pid),
     Credentials(Pid),
     Exit(Pid),
+    Wait(Pid),
     Ctl(Pid),
     IoDir(Pid),
     Input(Pid),
@@ -177,6 +182,7 @@ struct State {
     inputs: HashMap<Pid, Stream>,
     outputs: HashMap<Pid, Stream>,
     io_events: HashMap<Pid, Stream>,
+    wait_streams: HashMap<Pid, Stream>,
     /// Per-PID serializer ensuring `io/{input,output}`, `io/events`, and bridged
     /// process events commit in identical order without blocking unrelated PIDs
     /// or stream readers.
@@ -187,6 +193,37 @@ struct State {
     input_observers: HashMap<Pid, Vec<Arc<dyn ProcessInputEventSink>>>,
     output_observers: HashMap<Pid, Vec<Arc<dyn ProcessOutputEventSink>>>,
     runner_tasks: HashMap<Pid, JoinHandle<()>>,
+}
+
+impl State {
+    fn apply_exit_locked(
+        &mut self,
+        pid: Pid,
+        exit_code: i32,
+        reason: ExitReason,
+        abort_origin_task: bool,
+    ) -> (Vec<ProcessExit>, Vec<JoinHandle<()>>) {
+        let exits = self.table.exit_with_reason(pid, exit_code, reason);
+        let mut tasks_to_abort = Vec::new();
+        if exits.is_empty() {
+            if abort_origin_task && let Some(task) = self.runner_tasks.remove(&pid) {
+                tasks_to_abort.push(task);
+            }
+            return (exits, tasks_to_abort);
+        }
+        for exit in &exits {
+            if let Some(task) = self.runner_tasks.remove(&exit.pid)
+                && (abort_origin_task || exit.pid != pid)
+            {
+                tasks_to_abort.push(task);
+            }
+            if let Some(wait_stream) = self.wait_streams.get(&exit.pid) {
+                let record = ProcessWaitRecord::from_exit(*exit).to_json_line();
+                wait_stream.append_sync(&record);
+            }
+        }
+        (exits, tasks_to_abort)
+    }
 }
 
 struct OrderedProcessEventObserver {
@@ -304,6 +341,7 @@ impl ProcFs {
                 inputs: HashMap::new(),
                 outputs: HashMap::new(),
                 io_events: HashMap::new(),
+                wait_streams: HashMap::new(),
                 io_locks: HashMap::new(),
                 event_history: HashMap::new(),
                 event_observers: HashMap::new(),
@@ -408,22 +446,31 @@ impl ProcFs {
     /// conventional cancellation exit code. A host that observes its process
     /// complete normally must preserve the actual result instead.
     pub async fn record_exit(&self, pid: Pid, exit_code: i32) {
-        let (transitioned, runner_task) = {
+        self.finalize_exit(pid, exit_code, ExitReason::from_exit_code(exit_code), true)
+            .await;
+    }
+
+    async fn finalize_exit(
+        &self,
+        pid: Pid,
+        exit_code: i32,
+        reason: ExitReason,
+        abort_origin_task: bool,
+    ) {
+        let (exits, tasks_to_abort) = {
             let mut state = self.state.lock().await;
-            let transitioned = state
-                .table
-                .get(pid)
-                .is_some_and(|process| process.status != Status::Exited);
-            let runner_task = state.runner_tasks.remove(&pid);
-            state.table.exit(pid, exit_code);
-            (transitioned, runner_task)
+            state.apply_exit_locked(pid, exit_code, reason, abort_origin_task)
         };
-        if let Some(task) = runner_task {
+        self.finish_exits(exits, tasks_to_abort).await;
+    }
+
+    async fn finish_exits(&self, exits: Vec<ProcessExit>, tasks_to_abort: Vec<JoinHandle<()>>) {
+        for task in tasks_to_abort {
             task.abort();
         }
-        if transitioned {
+        for exit in exits {
             self.publish_process_event(
-                pid,
+                exit.pid,
                 ProcessEvent::Status {
                     status: "exited".to_string(),
                 },

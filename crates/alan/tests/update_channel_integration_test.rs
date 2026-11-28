@@ -184,8 +184,8 @@ fn manifest_bytes(spec: ManifestSpec<'_>) -> Vec<u8> {
         "version": spec.version,
         "tag": spec.tag,
         "published_at": "2026-11-23T00:00:00Z",
-        "release_url": format!("https://github.com/realmorrisliu/alan/releases/tag/{}", spec.tag),
-        "notes_url": format!("https://github.com/realmorrisliu/alan/releases/tag/{}", spec.tag),
+        "release_url": format!("https://github.com/thinksmart-systems/alan/releases/tag/{}", spec.tag),
+        "notes_url": format!("https://github.com/thinksmart-systems/alan/releases/tag/{}", spec.tag),
         "installer_url": "https://alanworks.app/install.sh",
         "targets": {
             spec.target: {

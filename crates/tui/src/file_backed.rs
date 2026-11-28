@@ -206,7 +206,7 @@ pub struct FileBackedRunConfig {
     pub settings_control: Option<SettingsControlHandler>,
     /// Host-local `/issue` submission handler supplied by the CLI to the TUI.
     pub issue_control: Option<IssueControlHandler>,
-    /// Optional target `owner/repo` slug for `/issue` (defaults to `realmorrisliu/alan`).
+    /// Optional target `owner/repo` slug for `/issue` (defaults to `thinksmart-systems/alan`).
     pub issue_repo: Option<String>,
     /// Automatically enter First-Run Setup Wizard on launch when unconfigured.
     pub auto_setup_on_unconfigured: bool,

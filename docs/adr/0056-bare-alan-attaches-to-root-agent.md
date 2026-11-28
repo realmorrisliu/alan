@@ -38,9 +38,9 @@ the authority for Agent input, output, status, and UI state. Agent-originated
 effects continue through Agent Runtime governance and existing namespace,
 mount, credential, and sandbox boundaries.
 
-Implementation evidence: PR [#1009](https://github.com/realmorrisliu/alan/pull/1009)
+Implementation evidence: PR [#1009](https://github.com/thinksmart-systems/alan/pull/1009)
 ships CLI-only foreground startup; PR
-[#1011](https://github.com/realmorrisliu/alan/pull/1011) verifies independent
+[#1011](https://github.com/thinksmart-systems/alan/pull/1011) verifies independent
 simultaneous endpoints, input streams, shutdown, and Tool Process cwd bindings.
 Both are merged. PR #1032 records the subsequent explicit recovery, terminal
 view-detach, revocation and no-repeat acceptance; broader or different host/authority

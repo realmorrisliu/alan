@@ -4,7 +4,9 @@
 Defines alan9 Kernel as the ephemeral namespace, Process-table, `/proc`, and
 `/srv` substrate over aP, including file/stream semantics, Process creation,
 access rights, network transparency, and dependency isolation.
+
 ## Requirements
+
 ### Requirement: Kernel owns only namespace, process table, and synthetic devices
 alan9 Kernel SHALL consist of exactly the namespace engine, the process table, and
 the synthetic devices `/proc` and `/srv`. The aP file-server contract
@@ -403,3 +405,75 @@ remain ignorant of Boot Unit, service policy, and renderer transport details.
 - **WHEN** a fresh Kernel has no committed Processes
 - **THEN** Host creates Service Manager through normal Process creation
 - **AND** later services appear as ordinary Process table entries
+
+### Requirement: Protocol-layer exclusive write lease survives namespace interposition
+`alan-ap` SHALL provide `OpenMode::WriteExclusive` bound to fid open/clunk and
+connection lifetime, and `alan-kernel` SHALL enforce active exclusive leases
+at the `Namespace`/`MountFs` boundary so interposing file servers cannot grant
+conflicting writes to `machine/tape`, `io/output`, or `machine/ui/events`.
+
+#### Scenario: An interposing file server cannot bypass an active exclusive lease
+- **WHEN** the owning Engine holds an `OpenMode::WriteExclusive` fid on `machine/tape` and an interposing `FileServer` is mounted ahead of `/agent`
+- **THEN** any second `Write`, `WriteExclusive`, or `ReadWrite` open targeting that path fails at dial time with `ErrorCode::NoAccess`
+- **AND** once the holder clunks the fid or drops its connection, a new exclusive open succeeds
+
+#### Scenario: Readers continue tailing during an active exclusive write lease
+- **WHEN** an Engine holds `OpenMode::WriteExclusive` on `io/output` or `machine/tape`
+- **THEN** concurrent `OpenMode::Read` callers succeed and tail newly appended bytes without blocking
+
+### Requirement: In-process FileServers MAY execute through a single-owner ActorFileServer
+`crates/ap` SHALL expose a `FileServerActor` abstraction and `spawn_file_actor`
+adapter wrapping a bounded `mpsc` mailbox with async backpressure, non-blocking
+`ReadStream` offload outside the actor loop, panic-to-`ErrorCode::Io` isolation,
+and an `ActorExitHandle`.
+
+#### Scenario: Blocked stream readers do not stall the actor mailbox
+- **WHEN** a reader opens a `FileKind::Stream` on an `ActorFileServer` and blocks waiting for future bytes
+- **THEN** the actor returns `ActorOutcome::ReadStream` and awaits completion outside the mailbox loop
+- **AND** concurrent `walk`, `stat`, and `write` calls continue completing without starvation
+
+#### Scenario: Actor panic is isolated to the failing server lifetime
+- **WHEN** a `FileServerActor` panics inside its isolated Tokio task
+- **THEN** owned actor state drops cleanly without poisoning any shared mutex
+- **AND** in-flight and subsequent calls receive `ErrorCode::Io` while `ActorExitHandle` reports the failure
+
+### Requirement: ProcFs enforces dial-time NoAccess and serialized cross-stream IO ordering
+`ProcFs::open` SHALL reject `Write`, `WriteExclusive`, or `ReadWrite` opens on
+read-only `/proc` nodes (including `io/events`) at dial time with
+`ErrorCode::NoAccess`, and `ProcFs` SHALL serialize per-PID IO commits across
+`io/{input,output}`, `io/events`, and bridged process events.
+
+#### Scenario: Dial-time write open on io/events fails immediately
+- **WHEN** a caller opens `/proc/<pid>/io/events` with `OpenMode::Write`, `WriteExclusive`, or `ReadWrite`
+- **THEN** `open` returns `ErrorCode::NoAccess` before any `write` occurs
+
+#### Scenario: Concurrent io/input clunks preserve cross-stream ordering
+- **WHEN** two writers concurrently commit framed payloads to `/proc/<pid>/io/input`
+- **THEN** the byte appends in `io/input`, records in `io/events`, and bridged events in `/agent/<pid>/events` appear in identical commit order
+
+### Requirement: Process exit observation uses a race-free /proc/<pid>/wait stream
+`/proc/<pid>/wait` (and `/proc/self/wait`) SHALL be exposed as a read-only
+`FileKind::Stream` backed by `alan_ap::Stream`. Reading blocks while the
+process is alive and returns a single terminal JSON exit record on termination
+or immediately from offset `0` if the process has already exited.
+
+#### Scenario: Live wait unblocks immediately upon process exit
+- **WHEN** a supervisor reads `/proc/<pid>/wait` at offset `0` while process `<pid>` is running and `<pid>` subsequently exits
+- **THEN** the blocked read completes immediately with a single terminal JSON line containing `pid`, `status`, `exit_code`, and `reason`
+- **AND** no periodic polling timer is required
+
+#### Scenario: Attaching to wait after exit remains race-free
+- **WHEN** process `<pid>` finishes before any consumer reads `/proc/<pid>/wait`
+- **THEN** a subsequent read from offset `0` succeeds immediately with the retained terminal JSON record
+- **AND** write-intent opens on `/proc/<pid>/wait` fail at dial time with `ErrorCode::NoAccess`
+
+### Requirement: ExecSpec supports declarative link_parent cascade cancellation
+`ExecSpec` SHALL include `link_parent: bool` (defaulting to `false`). When
+`link_parent` is `true`, exiting the spawning parent process for any reason
+(normal completion, failure, or cancellation) SHALL deterministically cancel
+all linked child processes in `alan-kernel`.
+
+#### Scenario: Linked child is cancelled when parent exits normally or abnormally
+- **WHEN** a child process is spawned with `link_parent: true` and its parent exits
+- **THEN** the kernel cancels the linked child process and publishes termination on `/proc/<child_pid>/wait`
+- **AND** processes spawned with `link_parent: false` remain unaffected by parent exit

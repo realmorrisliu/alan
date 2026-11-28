@@ -3,12 +3,16 @@
 use std::sync::Arc;
 
 use super::{Node, ProcFid, ProcFidKey, ProcFs, ProcessInvocation, State, parse_pid};
-use crate::{ExecSpec, LiveNamespace, Pid, Status};
+use crate::{
+    CANCELLED_EXIT_CODE, ExecSpec, ExitReason, LiveNamespace, Pid, ProcessExit, ProcessWaitRecord,
+    Status,
+};
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, ProcessEvent, Qid, Stat, Stream,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 const MAX_EXEC_SPEC_BYTES: usize = 1 << 16; // 64 KiB
 const MAX_PROCESS_INPUT_BYTES: usize = 1 << 20; // 1 MiB
@@ -43,7 +47,7 @@ impl State {
         let version = match node {
             Node::Root => self.table.listing_generation(),
             Node::Clone | Node::Output(_) => 0,
-            Node::Input(_) | Node::IoEvents(_) => 0,
+            Node::Input(_) | Node::IoEvents(_) | Node::Wait(_) => 0,
             Node::SelfProc(p)
             | Node::Proc(p)
             | Node::IoDir(p)
@@ -93,6 +97,7 @@ impl State {
                 "parent" => Ok(Node::Parent(*pid)),
                 "credentials" => Ok(Node::Credentials(*pid)),
                 "exit" => Ok(Node::Exit(*pid)),
+                "wait" => Ok(Node::Wait(*pid)),
                 "ctl" => Ok(Node::Ctl(*pid)),
                 "io" => Ok(Node::IoDir(*pid)),
                 "namespace" => Ok(Node::NamespaceInfo(*pid)),
@@ -104,6 +109,7 @@ impl State {
                 "parent" => Ok(Node::Parent(*pid)),
                 "credentials" => Ok(Node::Credentials(*pid)),
                 "exit" => Ok(Node::Exit(*pid)),
+                "wait" => Ok(Node::Wait(*pid)),
                 "ctl" => Ok(Node::Ctl(*pid)),
                 "io" => Ok(Node::IoDir(*pid)),
                 "namespace" => Ok(Node::SelfNamespace),
@@ -137,7 +143,7 @@ impl State {
                 names.join("\n").into_bytes()
             }
             Node::SelfProc(_) | Node::Proc(_) => {
-                "status\nparent\ncredentials\nexit\nctl\nio\nnamespace\ndescriptors"
+                "status\nparent\ncredentials\nexit\nwait\nctl\nio\nnamespace\ndescriptors"
                     .to_string()
                     .into_bytes()
             }
@@ -188,9 +194,14 @@ impl State {
                 let process = self.table.get(*pid).ok_or(ErrorCode::NotFound)?;
                 serde_json::to_vec(&process.exec.descriptors).map_err(|_| ErrorCode::Io)?
             }
-            // `clone`/`ctl` are write surfaces; IO streams are served directly in
-            // `read`, not here.
-            Node::Clone | Node::Ctl(_) | Node::Input(_) | Node::Output(_) | Node::IoEvents(_) => {
+            // `clone`/`ctl` are write surfaces; IO and wait streams are served
+            // directly in `read`, not here.
+            Node::Clone
+            | Node::Ctl(_)
+            | Node::Input(_)
+            | Node::Output(_)
+            | Node::IoEvents(_)
+            | Node::Wait(_) => {
                 return Err(ErrorCode::Unsupported);
             }
         };
@@ -205,8 +216,9 @@ enum ProcStreamWrite {
         stream: Stream,
         events: Stream,
     },
-    Status {
-        pid: Pid,
+    Exits {
+        exits: Vec<ProcessExit>,
+        tasks_to_abort: Vec<JoinHandle<()>>,
     },
 }
 
@@ -249,8 +261,8 @@ impl FileServer for ProcFs {
             return Err(ErrorCode::BadRequest);
         }
         // Dial-time access check: reject any write-intent open on read-only
-        // `/proc` nodes (including `io/events`, `status`, `exit`, `parent`,
-        // `credentials`, `namespace`, `descriptors`, and directories).
+        // `/proc` nodes (including `wait`, `io/events`, `status`, `exit`,
+        // `parent`, `credentials`, `namespace`, `descriptors`, and directories).
         if is_write_intent(mode) && !is_writable(&node) {
             return Err(ErrorCode::NoAccess);
         }
@@ -309,6 +321,11 @@ impl FileServer for ProcFs {
                     .get(&pid)
                     .cloned()
                     .ok_or(ErrorCode::NotFound)?,
+                Node::Wait(pid) => state
+                    .wait_streams
+                    .get(&pid)
+                    .cloned()
+                    .ok_or(ErrorCode::NotFound)?,
                 other => {
                     return Ok(slice(
                         state.file_bytes(
@@ -356,14 +373,19 @@ impl FileServer for ProcFs {
                     }
                     match data {
                         b"cancel" | b"interrupt" => {
-                            if let Some(task) = state.runner_tasks.remove(&pid) {
-                                task.abort();
+                            let (exits, tasks_to_abort) = state.apply_exit_locked(
+                                pid,
+                                CANCELLED_EXIT_CODE,
+                                ExitReason::Cancelled,
+                                true,
+                            );
+                            ProcStreamWrite::Exits {
+                                exits,
+                                tasks_to_abort,
                             }
-                            state.table.exit(pid, 130);
                         }
                         _ => return Err(ErrorCode::BadRequest),
                     }
-                    ProcStreamWrite::Status { pid }
                 }
                 // Process input is a stream owned by `/proc`; parents, shells,
                 // and hosts write to it, and process descriptors read from it.
@@ -416,14 +438,11 @@ impl FileServer for ProcFs {
                 self.commit_io_output(pid, io_lock, stream, events, data, count)
                     .await;
             }
-            ProcStreamWrite::Status { pid } => {
-                self.publish_process_event(
-                    pid,
-                    ProcessEvent::Status {
-                        status: "exited".to_string(),
-                    },
-                )
-                .await;
+            ProcStreamWrite::Exits {
+                exits,
+                tasks_to_abort,
+            } => {
+                self.finish_exits(exits, tasks_to_abort).await;
             }
         }
         Ok(count)
@@ -438,6 +457,7 @@ impl FileServer for ProcFs {
             Node::Input(pid) => state.inputs.get(pid).map_or(0, Stream::len_sync),
             Node::Output(pid) => state.outputs.get(pid).map_or(0, Stream::len_sync),
             Node::IoEvents(pid) => state.io_events.get(pid).map_or(0, Stream::len_sync),
+            Node::Wait(pid) => state.wait_streams.get(pid).map_or(0, Stream::len_sync),
             Node::Clone | Node::Ctl(_) => 0,
             other => state
                 .file_bytes(
@@ -534,6 +554,12 @@ impl FileServer for ProcFs {
                         let committed =
                             state.table.commit(pid, exec).ok_or(ErrorCode::BadRequest)?;
                         let process = state.table.get(committed).ok_or(ErrorCode::Io)?;
+                        let immediate_exit =
+                            (process.status == Status::Exited).then(|| ProcessExit {
+                                pid: committed,
+                                exit_code: process.exit_code.unwrap_or(CANCELLED_EXIT_CODE),
+                                reason: process.exit_reason.unwrap_or(ExitReason::Cancelled),
+                            });
                         let invocation = ProcessInvocation {
                             pid: process.pid,
                             parent: process.parent,
@@ -544,16 +570,29 @@ impl FileServer for ProcFs {
                         let input = Stream::new();
                         let output = Stream::new();
                         let io_events = Stream::new();
+                        let wait_stream = Stream::new();
+                        if let Some(exit) = immediate_exit {
+                            wait_stream
+                                .append_sync(&ProcessWaitRecord::from_exit(exit).to_json_line());
+                        }
                         let io_lock = Arc::new(Mutex::new(()));
                         state.inputs.insert(committed, input);
                         state.outputs.insert(committed, output.clone());
                         state.io_events.insert(committed, io_events.clone());
+                        state.wait_streams.insert(committed, wait_stream);
                         state.io_locks.insert(committed, io_lock.clone());
                         state.event_history.insert(committed, Vec::new());
-                        let runner_launch = self.runner.clone().map(|runner| {
-                            (runner, io_lock, output, io_events, invocation, self.clone())
-                        });
-                        (Some((committed, runner_launch)), None)
+                        let runner_launch = if immediate_exit.is_some() {
+                            None
+                        } else {
+                            self.runner.clone().map(|runner| {
+                                (runner, io_lock, output, io_events, invocation, self.clone())
+                            })
+                        };
+                        (
+                            Some((committed, immediate_exit.is_some(), runner_launch)),
+                            None,
+                        )
                     }
                     Err(_) => {
                         // Reject at commit and discard the fid-private slot — it was
@@ -588,52 +627,70 @@ impl FileServer for ProcFs {
             self.commit_io_input(pid, io_lock, stream, events, &framed, count)
                 .await;
         }
-        if let Some((committed, runner_launch)) = committed_process {
-            self.publish_process_event(
-                committed,
-                ProcessEvent::Status {
-                    status: "running".to_string(),
-                },
-            )
-            .await;
-            if let Some((runner, io_lock, output, io_events, invocation, events)) = runner_launch {
-                let state = self.state.clone();
-                let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
-                let task = tokio::spawn(async move {
-                    let _ = start_rx.await;
-                    let outcome = runner.run(invocation.clone()).await;
-                    if !outcome.output.is_empty() {
-                        let count = outcome.output.len() as u32;
+        if let Some((committed, immediate_exit, runner_launch)) = committed_process {
+            if immediate_exit {
+                self.publish_process_event(
+                    committed,
+                    ProcessEvent::Status {
+                        status: "exited".to_string(),
+                    },
+                )
+                .await;
+            } else {
+                self.publish_process_event(
+                    committed,
+                    ProcessEvent::Status {
+                        status: "running".to_string(),
+                    },
+                )
+                .await;
+                if let Some((runner, io_lock, output, io_events, invocation, events)) =
+                    runner_launch
+                {
+                    let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
+                    let task = tokio::spawn(async move {
+                        let _ = start_rx.await;
+                        let outcome = runner.run(invocation.clone()).await;
+                        if !outcome.output.is_empty() {
+                            let count = outcome.output.len() as u32;
+                            events
+                                .commit_io_output(
+                                    invocation.pid,
+                                    io_lock,
+                                    output,
+                                    io_events,
+                                    &outcome.output,
+                                    count,
+                                )
+                                .await;
+                        }
                         events
-                            .commit_io_output(
+                            .finalize_exit(
                                 invocation.pid,
-                                io_lock,
-                                output,
-                                io_events,
-                                &outcome.output,
-                                count,
+                                outcome.exit_code,
+                                ExitReason::from_exit_code(outcome.exit_code),
+                                false,
                             )
                             .await;
+                    });
+                    let should_start = {
+                        let mut state = self.state.lock().await;
+                        if state
+                            .table
+                            .get(committed)
+                            .is_some_and(|process| process.status != Status::Exited)
+                        {
+                            state.runner_tasks.insert(committed, task);
+                            true
+                        } else {
+                            task.abort();
+                            false
+                        }
+                    };
+                    if should_start {
+                        let _ = start_tx.send(());
                     }
-                    {
-                        let mut state = state.lock().await;
-                        state.runner_tasks.remove(&invocation.pid);
-                        state.table.exit(invocation.pid, outcome.exit_code);
-                    }
-                    events
-                        .publish_process_event(
-                            invocation.pid,
-                            ProcessEvent::Status {
-                                status: "exited".to_string(),
-                            },
-                        )
-                        .await;
-                });
-                {
-                    let mut state = self.state.lock().await;
-                    state.runner_tasks.insert(committed, task);
                 }
-                let _ = start_tx.send(());
             }
         }
         Ok(())
@@ -664,6 +721,7 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::Input(p) => (FileKind::Stream, tagged_identity(10, p.0)),
         Node::IoEvents(p) => (FileKind::Stream, tagged_identity(11, p.0)),
         Node::Descriptors(p) => (FileKind::File, tagged_identity(12, p.0)),
+        Node::Wait(p) => (FileKind::Stream, tagged_identity(15, p.0)),
     }
 }
 

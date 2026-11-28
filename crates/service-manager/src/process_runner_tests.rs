@@ -25,6 +25,7 @@ fn agent_invocation(mounted: bool) -> ProcessInvocation {
             args: Vec::new(),
             namespace: alan_kernel::ExecNamespaceManifest::default(),
             descriptors: BTreeMap::new(),
+            link_parent: false,
         },
     }
 }
@@ -99,6 +100,7 @@ async fn tool_dispatch_uses_actual_parent_and_invocation_namespace_without_host_
                     ],
                     namespace: alan_kernel::ExecNamespaceManifest::default(),
                     descriptors: BTreeMap::new(),
+                    link_parent: false,
                 },
             })
             .await;
@@ -266,6 +268,7 @@ async fn tool_dispatch_clamps_system_mounts_read_only_while_keeping_data_mounts_
                     args: vec![serde_json::json!({ "path": path }).to_string()],
                     namespace: alan_kernel::ExecNamespaceManifest::default(),
                     descriptors: BTreeMap::new(),
+                    link_parent: false,
                 },
             })
             .await;

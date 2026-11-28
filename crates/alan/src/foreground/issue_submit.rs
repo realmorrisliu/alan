@@ -396,9 +396,15 @@ mod tests {
     async fn missing_and_unauthenticated_gh_return_unavailable_without_error() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("no-such-gh");
-        let res = submit_via_gh_binary(missing.as_os_str(), "realmorrisliu/alan", "t", "b", &[])
-            .await
-            .unwrap();
+        let res = submit_via_gh_binary(
+            missing.as_os_str(),
+            "thinksmart-systems/alan",
+            "t",
+            "b",
+            &[],
+        )
+        .await
+        .unwrap();
         assert!(matches!(res, IssueSubmitResult::GhUnavailable { .. }));
 
         let unauth = write_script(
@@ -406,9 +412,10 @@ mod tests {
             "gh-unauth",
             "#!/bin/sh\nif [ \"$1\" = \"auth\" ]; then exit 1; fi\nexit 99\n",
         );
-        let res = submit_via_gh_binary(unauth.as_os_str(), "realmorrisliu/alan", "t", "b", &[])
-            .await
-            .unwrap();
+        let res =
+            submit_via_gh_binary(unauth.as_os_str(), "thinksmart-systems/alan", "t", "b", &[])
+                .await
+                .unwrap();
         assert!(matches!(res, IssueSubmitResult::GhUnavailable { .. }));
     }
 
@@ -418,14 +425,14 @@ mod tests {
         let args_log = dir.path().join("args.txt");
         let body_log = dir.path().join("body.txt");
         let script = format!(
-            "#!/bin/sh\nif [ \"$1\" = \"auth\" ]; then exit 0; fi\nprintf '%s\\n' \"$@\" > \"{}\"\ncat > \"{}\"\necho \"https://github.com/realmorrisliu/alan/issues/1234\"\n",
+            "#!/bin/sh\nif [ \"$1\" = \"auth\" ]; then exit 0; fi\nprintf '%s\\n' \"$@\" > \"{}\"\ncat > \"{}\"\necho \"https://github.com/thinksmart-systems/alan/issues/1234\"\n",
             args_log.display(),
             body_log.display()
         );
         let gh = write_script(dir.path(), "gh-ok", &script);
         let res = submit_via_gh_binary(
             gh.as_os_str(),
-            "realmorrisliu/alan",
+            "thinksmart-systems/alan",
             "Crash title",
             "Redacted body",
             &["alan:auto".to_string()],
@@ -436,11 +443,11 @@ mod tests {
             res,
             IssueSubmitResult::CreatedGhCli {
                 number: Some(1234),
-                url: "https://github.com/realmorrisliu/alan/issues/1234".to_string(),
+                url: "https://github.com/thinksmart-systems/alan/issues/1234".to_string(),
             }
         );
         let recorded_args = std::fs::read_to_string(&args_log).unwrap();
-        assert!(recorded_args.contains("--repo=realmorrisliu/alan"));
+        assert!(recorded_args.contains("--repo=thinksmart-systems/alan"));
         assert!(recorded_args.contains("--title=Crash title"));
         assert!(recorded_args.contains("--label=alan:auto"));
         assert!(recorded_args.contains("--body-file"));
@@ -452,13 +459,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let calls_log = dir.path().join("calls.txt");
         let script = format!(
-            "#!/bin/sh\nif [ \"$1\" = \"auth\" ]; then exit 0; fi\nprintf '%s\\n' \"$*\" >> \"{}\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    --label=*) echo \"'alan:auto' not found\" >&2; exit 1 ;;\n  esac\ndone\necho \"https://github.com/realmorrisliu/alan/issues/1235\"\n",
+            "#!/bin/sh\nif [ \"$1\" = \"auth\" ]; then exit 0; fi\nprintf '%s\\n' \"$*\" >> \"{}\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    --label=*) echo \"'alan:auto' not found\" >&2; exit 1 ;;\n  esac\ndone\necho \"https://github.com/thinksmart-systems/alan/issues/1235\"\n",
             calls_log.display(),
         );
         let gh = write_script(dir.path(), "gh-missing-label", &script);
         let res = submit_via_gh_binary(
             gh.as_os_str(),
-            "realmorrisliu/alan",
+            "thinksmart-systems/alan",
             "Missing label fallback",
             "Redacted body",
             &["alan:auto".to_string()],
@@ -469,7 +476,7 @@ mod tests {
             res,
             IssueSubmitResult::CreatedGhCli {
                 number: Some(1235),
-                url: "https://github.com/realmorrisliu/alan/issues/1235".to_string(),
+                url: "https://github.com/thinksmart-systems/alan/issues/1235".to_string(),
             }
         );
         let recorded = std::fs::read_to_string(&calls_log).unwrap();
@@ -494,9 +501,15 @@ mod tests {
         );
         // Include a large body too so EPIPE on fast-exiting child does not mask stderr.
         let large_body = "x".repeat(256 * 1024);
-        let err = submit_via_gh_binary(gh.as_os_str(), "realmorrisliu/alan", "t", &large_body, &[])
-            .await
-            .unwrap_err();
+        let err = submit_via_gh_binary(
+            gh.as_os_str(),
+            "thinksmart-systems/alan",
+            "t",
+            &large_body,
+            &[],
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("network unreachable"), "{err:#}");
     }
 

@@ -571,6 +571,7 @@ async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
             alan_agent_protocol::AGENT_DEFINITION_DESCRIPTOR,
             "/lib/agents/root".to_string(),
         )]),
+        link_parent: false,
     };
     let child_pid = shell
         .spawn(&serde_json::to_string(&exec).unwrap())
@@ -973,6 +974,9 @@ mod lifecycle_contention;
 
 #[path = "tests/agent_work.rs"]
 mod agent_work;
+
+#[path = "tests/supervised_handles.rs"]
+mod supervised_handles;
 mod unavailable_command;
 
 mod boot_namespace;

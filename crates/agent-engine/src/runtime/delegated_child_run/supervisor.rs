@@ -1,18 +1,24 @@
-use std::path::Path;
+#[path = "supervisor_helpers.rs"]
+mod helpers;
+
 use std::time::{Duration, Instant};
 
 use alan_agent_protocol::{AgentExecutableResult, AgentExecutableStatus, YieldKind};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use tokio_util::sync::CancellationToken;
 
-use super::{ChildRuntimePause, ChildRuntimeResult, ChildRuntimeStatus, InheritedPause};
+use super::{ChildRuntimePause, ChildRuntimeResult, ChildRuntimeStatus};
 use crate::runtime::child_runs::ChildRunRegistry;
-use crate::runtime::transition::{NamespaceAgentFiles, NamespaceProcessFiles};
-use crate::runtime::{ChildRunStatus, ChildRunTerminationMode, ChildRunTerminationRequest};
-
-const MAX_OBSERVED_CHILD_WARNINGS: usize = 32;
-const MAX_OBSERVED_CHILD_WARNING_CHARS: usize = 512;
-const MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL: Duration = Duration::from_millis(250);
+use crate::runtime::transition::{
+    ChildEventWake, ChildEventWatchers, NamespaceAgentFiles, NamespaceProcessFiles,
+};
+use crate::runtime::{ChildRunStatus, ChildRunTerminationMode};
+use helpers::{
+    agent_result_matches_exit_code, child_run_status_for_runtime_status, file_terminal_observation,
+    inherited_pause_from, invalid_agent_result_observation, parse_child_structured_output,
+    push_bounded_child_warning, read_latest_assistant_text_from_rollout, terminated_observation,
+    timed_out_observation,
+};
 
 /// Inputs retained after a delegated Child Run has been launched and registered.
 pub(crate) struct DelegatedChildRunSupervision {
@@ -35,14 +41,14 @@ pub(crate) struct ChildProcessStartup {
 }
 
 #[derive(Debug)]
-struct ObservedChildTerminalEvent {
-    output_text: String,
-    turn_summary: Option<String>,
-    structured_output: Option<serde_json::Value>,
-    warnings: Vec<String>,
-    error_message: Option<String>,
-    pause: Option<ChildRuntimePause>,
-    status: ChildRuntimeStatus,
+pub(super) struct ObservedChildTerminalEvent {
+    pub(super) output_text: String,
+    pub(super) turn_summary: Option<String>,
+    pub(super) structured_output: Option<serde_json::Value>,
+    pub(super) warnings: Vec<String>,
+    pub(super) error_message: Option<String>,
+    pub(super) pause: Option<ChildRuntimePause>,
+    pub(super) status: ChildRuntimeStatus,
 }
 
 enum ChildRuntimeWaitOutcome {
@@ -283,7 +289,11 @@ impl DelegatedChildRunSupervisor {
         {
             push_bounded_child_warning(&mut warnings, warning);
         }
-        self.await_process_terminal().await;
+        // A paused child may stay alive waiting for an answer; only await
+        // `/proc/<pid>/wait` exit for terminal outcomes.
+        if observed.status != ChildRuntimeStatus::Paused {
+            self.await_process_terminal().await;
+        }
         let output_text = observed.output_text;
         let rollout_fallback_text = if output_text.trim().is_empty() {
             read_latest_assistant_text_from_rollout(self.startup.rollout_path.as_deref()).await
@@ -351,19 +361,18 @@ impl DelegatedChildRunSupervisor {
             return Ok(ChildRuntimeWaitOutcome::Cancelled);
         }
 
+        let mut watchers =
+            ChildEventWatchers::spawn(&self.process_files, &self.agent_files, &self.process_pid);
         let mut output_text = String::new();
         let mut warnings = Vec::new();
         let mut latest_liveness_at = Instant::now();
         let started_at = Instant::now();
         let wall_clock_cap = self.timeout.map(|timeout| timeout.saturating_mul(4));
-        let file_poll_interval = self
-            .timeout
-            .map(|timeout| (timeout / 4).min(MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL))
-            .unwrap_or(MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL)
-            .max(Duration::from_millis(10));
         let mut last_file_observation = None;
+        let mut streams_closed_observed = false;
 
         loop {
+            watchers.mark_events_seen();
             let observation = self.observe_files().await?;
             if last_file_observation.as_ref() != Some(&observation) {
                 latest_liveness_at = Instant::now();
@@ -397,144 +406,18 @@ impl DelegatedChildRunSupervisor {
                 }
             }
             output_text.clone_from(&observation.output_text);
-            if let Some(result) = observation.process_result.as_ref() {
-                for warning in &result.warnings {
-                    push_bounded_child_warning(&mut warnings, warning.clone());
-                }
-                // A paused child whose request is an inherited stop must keep
-                // its ancestor identity, or the parent degrades it back to the
-                // old uncontinuable pause.
-                let pause_inherited = match result.pause.as_ref() {
-                    Some(pause)
-                        if matches!(&pause.kind, YieldKind::Custom(kind)
-                            if kind == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE) =>
-                    {
-                        let details = match pause.payload.clone() {
-                            Some(details) => Some(details),
-                            None => {
-                                self.agent_files
-                                    .read_request_details(&pause.request_id)
-                                    .await?
-                            }
-                        };
-                        details.map(|details| inherited_pause_from(&details))
-                    }
-                    _ => None,
-                };
-                let (status, error_message, pause) = match result.status {
-                    AgentExecutableStatus::Completed => (ChildRuntimeStatus::Completed, None, None),
-                    AgentExecutableStatus::Paused => (
-                        ChildRuntimeStatus::Paused,
-                        None,
-                        result.pause.as_ref().map(|pause| ChildRuntimePause {
-                            request_id: pause.request_id.clone(),
-                            kind: pause.kind.clone(),
-                            inherited: pause_inherited.clone(),
-                        }),
-                    ),
-                    AgentExecutableStatus::Failed => (
-                        ChildRuntimeStatus::Failed,
-                        result
-                            .error_message
-                            .clone()
-                            .or_else(|| Some("Child Agent Process reported failure".to_string())),
-                        None,
-                    ),
-                };
-                let observed = pause
-                    .as_ref()
-                    .and_then(|pause| pause.inherited.as_ref())
-                    .map(|inherited| inherited.checkpoint_id.clone());
-                let waited =
-                    self.awaits_resume_answer(observed.as_deref(), observation.process_exited);
-                if waited {
-                    tokio::time::sleep(file_poll_interval).await;
-                    continue;
-                }
-                return Ok(ChildRuntimeWaitOutcome::Observed(
-                    file_terminal_observation(
-                        result.output_text.clone(),
-                        warnings,
-                        status,
-                        error_message,
-                        pause,
-                    ),
-                ));
-            }
-            if observation.process_exited {
-                let exit_code = observation.process_exit_code.unwrap_or(1);
-                if exit_code == 130 {
-                    return Ok(ChildRuntimeWaitOutcome::Observed(
-                        self.externally_stopped_observed_event(&observation.output_text, &warnings),
-                    ));
-                }
-                return Ok(ChildRuntimeWaitOutcome::Observed(
-                    invalid_agent_result_observation(exit_code, observation.output_text, warnings),
-                ));
-            }
-            if observation.activity.state == alan_agent_protocol::UiActivityState::Paused
-                && let Some(request_id) = observation.pending_request_id.as_ref()
+
+            if let Some(outcome) = self
+                .evaluate_observation(&observation, &mut warnings)
+                .await?
             {
-                let kind = self.agent_files.read_request_kind(request_id).await?;
-                let kind = match kind.as_str() {
-                    "confirmation" => YieldKind::Confirmation,
-                    "structured_input" => YieldKind::StructuredInput,
-                    other => YieldKind::Custom(other.to_string()),
-                };
-                let inherited = if matches!(
-                    &kind,
-                    YieldKind::Custom(name)
-                        if name == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE
-                ) {
-                    self.agent_files
-                        .read_request_details(request_id)
-                        .await?
-                        .map(|details| inherited_pause_from(&details))
-                } else {
-                    None
-                };
-                let observed = inherited
-                    .as_ref()
-                    .map(|inherited| inherited.checkpoint_id.clone());
-                let waited =
-                    self.awaits_resume_answer(observed.as_deref(), observation.process_exited);
-                if waited {
-                    tokio::time::sleep(file_poll_interval).await;
-                    continue;
-                }
-                return Ok(ChildRuntimeWaitOutcome::Observed(
-                    file_terminal_observation(
-                        observation.output_text,
-                        warnings,
-                        ChildRuntimeStatus::Paused,
-                        None,
-                        Some(ChildRuntimePause {
-                            request_id: request_id.clone(),
-                            kind,
-                            inherited,
-                        }),
-                    ),
-                ));
-            }
-            if observation.activity.state == alan_agent_protocol::UiActivityState::Idle
-                && observation.ui_events_offset > 0
-            {
-                let status = if observation.terminal_error.is_some() {
-                    ChildRuntimeStatus::Failed
-                } else {
-                    ChildRuntimeStatus::Completed
-                };
-                return Ok(ChildRuntimeWaitOutcome::Observed(
-                    file_terminal_observation(
-                        observation.output_text,
-                        warnings,
-                        status,
-                        observation.terminal_error,
-                        None,
-                    ),
-                ));
+                return Ok(outcome);
             }
             last_file_observation = Some(observation);
+
+            let term_notified = self.child_run_registry.termination_notified();
+            tokio::pin!(term_notified);
+            term_notified.as_mut().enable();
 
             if let Some(request) = self
                 .child_run_registry
@@ -563,53 +446,232 @@ impl DelegatedChildRunSupervisor {
                 )));
             }
 
-            if let Some(timeout) = self.timeout {
-                let deadline = latest_liveness_at + timeout;
-                let idle_remaining = deadline.saturating_duration_since(Instant::now());
-                if let Some(cancel) = cancel {
-                    tokio::select! {
-                        _ = cancel.cancelled() => {
-                            self.terminate_runtime().await;
-                            return Ok(ChildRuntimeWaitOutcome::Cancelled);
-                        }
-                        _ = tokio::time::sleep(idle_remaining) => {
-                            self.terminate_process_and_reconcile().await;
-                            return Ok(ChildRuntimeWaitOutcome::Observed(timed_out_observation(
-                                "Delegated Child Run idle timed out",
-                                &output_text,
-                                &warnings,
-                            )));
-                        }
-                        _ = tokio::time::sleep(file_poll_interval) => continue,
-                    }
+            let next_timeout = self.timeout.map(|timeout| {
+                let idle_remaining =
+                    (latest_liveness_at + timeout).saturating_duration_since(Instant::now());
+                let cap_remaining = wall_clock_cap
+                    .map(|cap| (started_at + cap).saturating_duration_since(Instant::now()));
+                match cap_remaining {
+                    Some(cap_rem) if cap_rem <= idle_remaining => (cap_rem, true),
+                    _ => (idle_remaining, false),
+                }
+            });
+            if let Some((remaining, is_cap)) = next_timeout
+                && remaining.is_zero()
+            {
+                self.terminate_process_and_reconcile().await;
+                let message = if is_cap {
+                    "Delegated Child Run wall-clock cap exceeded"
                 } else {
-                    tokio::select! {
-                        _ = tokio::time::sleep(idle_remaining) => {
-                            self.terminate_process_and_reconcile().await;
-                            return Ok(ChildRuntimeWaitOutcome::Observed(timed_out_observation(
-                                "Delegated Child Run idle timed out",
-                                &output_text,
-                                &warnings,
-                            )));
+                    "Delegated Child Run idle timed out"
+                };
+                return Ok(ChildRuntimeWaitOutcome::Observed(timed_out_observation(
+                    message,
+                    &output_text,
+                    &warnings,
+                )));
+            }
+
+            let timeout_deadline = next_timeout.map(|(rem, _)| tokio::time::Instant::now() + rem);
+            let timeout_is_cap = next_timeout.is_some_and(|(_, is_cap)| is_cap);
+
+            tokio::select! {
+                biased;
+                _ = async {
+                    match cancel {
+                        Some(token) => token.cancelled().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.terminate_runtime().await;
+                    return Ok(ChildRuntimeWaitOutcome::Cancelled);
+                }
+                _ = &mut term_notified => continue,
+                _ = async {
+                    match timeout_deadline {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.terminate_process_and_reconcile().await;
+                    let message = if timeout_is_cap {
+                        "Delegated Child Run wall-clock cap exceeded"
+                    } else {
+                        "Delegated Child Run idle timed out"
+                    };
+                    return Ok(ChildRuntimeWaitOutcome::Observed(timed_out_observation(
+                        message,
+                        &output_text,
+                        &warnings,
+                    )));
+                }
+                wake = watchers.next_wake(), if watchers.has_open_stream() => {
+                    match wake {
+                        ChildEventWake::ProcessExited(_) | ChildEventWake::AgentEvents => continue,
+                        ChildEventWake::StreamsClosed => {
+                            if streams_closed_observed {
+                                bail!(
+                                    "Child Agent Process {} event and wait streams closed before terminal state",
+                                    self.process_pid
+                                );
+                            }
+                            streams_closed_observed = true;
+                            continue;
                         }
-                        _ = tokio::time::sleep(file_poll_interval) => continue,
                     }
                 }
-            } else if let Some(cancel) = cancel {
-                tokio::select! {
-                    _ = cancel.cancelled() => {
-                        self.terminate_runtime().await;
-                        return Ok(ChildRuntimeWaitOutcome::Cancelled);
-                    }
-                    _ = tokio::time::sleep(file_poll_interval) => continue,
-                }
-            } else {
-                tokio::time::sleep(file_poll_interval).await;
             }
         }
     }
 
-    async fn terminate_runtime(&mut self) {
+    async fn evaluate_observation(
+        &self,
+        observation: &ChildFileObservation,
+        warnings: &mut Vec<String>,
+    ) -> Result<Option<ChildRuntimeWaitOutcome>> {
+        if let Some(result) = observation.process_result.as_ref() {
+            for warning in &result.warnings {
+                push_bounded_child_warning(warnings, warning.clone());
+            }
+            // A paused child whose request is an inherited stop must keep
+            // its ancestor identity, or the parent degrades it back to the
+            // old uncontinuable pause.
+            let pause_inherited = match result.pause.as_ref() {
+                Some(pause)
+                    if matches!(&pause.kind, YieldKind::Custom(kind)
+                        if kind == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE) =>
+                {
+                    let details = match pause.payload.clone() {
+                        Some(details) => Some(details),
+                        None => {
+                            self.agent_files
+                                .read_request_details(&pause.request_id)
+                                .await?
+                        }
+                    };
+                    details.map(|details| inherited_pause_from(&details))
+                }
+                _ => None,
+            };
+            let (status, error_message, pause) = match result.status {
+                AgentExecutableStatus::Completed => (ChildRuntimeStatus::Completed, None, None),
+                AgentExecutableStatus::Paused => (
+                    ChildRuntimeStatus::Paused,
+                    None,
+                    result.pause.as_ref().map(|pause| ChildRuntimePause {
+                        request_id: pause.request_id.clone(),
+                        kind: pause.kind.clone(),
+                        inherited: pause_inherited.clone(),
+                    }),
+                ),
+                AgentExecutableStatus::Failed => (
+                    ChildRuntimeStatus::Failed,
+                    result
+                        .error_message
+                        .clone()
+                        .or_else(|| Some("Child Agent Process reported failure".to_string())),
+                    None,
+                ),
+            };
+            let observed = pause
+                .as_ref()
+                .and_then(|pause| pause.inherited.as_ref())
+                .map(|inherited| inherited.checkpoint_id.clone());
+            if self.awaits_resume_answer(observed.as_deref(), observation.process_exited) {
+                return Ok(None);
+            }
+            return Ok(Some(ChildRuntimeWaitOutcome::Observed(
+                file_terminal_observation(
+                    result.output_text.clone(),
+                    std::mem::take(warnings),
+                    status,
+                    error_message,
+                    pause,
+                ),
+            )));
+        }
+
+        if observation.process_exited {
+            let exit_code = observation.process_exit_code.unwrap_or(1);
+            if exit_code == 130 {
+                return Ok(Some(ChildRuntimeWaitOutcome::Observed(
+                    self.externally_stopped_observed_event(&observation.output_text, warnings),
+                )));
+            }
+            return Ok(Some(ChildRuntimeWaitOutcome::Observed(
+                invalid_agent_result_observation(
+                    exit_code,
+                    observation.output_text.clone(),
+                    std::mem::take(warnings),
+                ),
+            )));
+        }
+
+        if observation.activity.state == alan_agent_protocol::UiActivityState::Paused
+            && let Some(request_id) = observation.pending_request_id.as_ref()
+        {
+            let kind = self.agent_files.read_request_kind(request_id).await?;
+            let kind = match kind.as_str() {
+                "confirmation" => YieldKind::Confirmation,
+                "structured_input" => YieldKind::StructuredInput,
+                other => YieldKind::Custom(other.to_string()),
+            };
+            let inherited = if matches!(
+                &kind,
+                YieldKind::Custom(name)
+                    if name == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE
+            ) {
+                self.agent_files
+                    .read_request_details(request_id)
+                    .await?
+                    .map(|details| inherited_pause_from(&details))
+            } else {
+                None
+            };
+            let observed = inherited
+                .as_ref()
+                .map(|inherited| inherited.checkpoint_id.clone());
+            if self.awaits_resume_answer(observed.as_deref(), observation.process_exited) {
+                return Ok(None);
+            }
+            return Ok(Some(ChildRuntimeWaitOutcome::Observed(
+                file_terminal_observation(
+                    observation.output_text.clone(),
+                    std::mem::take(warnings),
+                    ChildRuntimeStatus::Paused,
+                    None,
+                    Some(ChildRuntimePause {
+                        request_id: request_id.clone(),
+                        kind,
+                        inherited,
+                    }),
+                ),
+            )));
+        }
+
+        if observation.activity.state == alan_agent_protocol::UiActivityState::Idle
+            && observation.ui_events_offset > 0
+        {
+            let status = if observation.terminal_error.is_some() {
+                ChildRuntimeStatus::Failed
+            } else {
+                ChildRuntimeStatus::Completed
+            };
+            return Ok(Some(ChildRuntimeWaitOutcome::Observed(
+                file_terminal_observation(
+                    observation.output_text.clone(),
+                    std::mem::take(warnings),
+                    status,
+                    observation.terminal_error.clone(),
+                    None,
+                ),
+            )));
+        }
+
+        Ok(None)
+    }
+
+    async fn terminate_runtime(&self) {
         self.terminate_process_and_reconcile().await;
     }
 
@@ -631,21 +693,12 @@ impl DelegatedChildRunSupervisor {
     }
 
     async fn await_process_terminal(&self) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if self
-                .process_files
-                .read_process_exit_code(&self.process_pid)
-                .await
-                .ok()
-                .flatten()
-                .is_some()
-            {
-                self.reconcile_exited_process().await;
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        let _ = tokio::time::timeout(
+            Duration::from_secs(5),
+            self.process_files.wait_for_process_exit(&self.process_pid),
+        )
+        .await;
+        self.reconcile_exited_process().await;
     }
 
     async fn reconcile_exited_process(&self) {
@@ -677,278 +730,6 @@ impl DelegatedChildRunSupervisor {
     }
 }
 
-fn agent_result_matches_exit_code(exit_code: Option<i32>, result: &AgentExecutableResult) -> bool {
-    matches!(
-        (exit_code, result.status),
-        (Some(0), AgentExecutableStatus::Completed)
-            | (
-                Some(1),
-                AgentExecutableStatus::Paused | AgentExecutableStatus::Failed
-            )
-    )
-}
-
-fn push_bounded_child_warning(warnings: &mut Vec<String>, warning: String) {
-    while warnings.len() >= MAX_OBSERVED_CHILD_WARNINGS {
-        warnings.remove(0);
-    }
-    warnings.push(truncate_child_text_with_suffix(
-        &warning,
-        MAX_OBSERVED_CHILD_WARNING_CHARS,
-        "...",
-    ));
-}
-
-fn truncate_child_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-
-    let suffix_len = suffix.chars().count();
-    if max_chars <= suffix_len {
-        return suffix.chars().take(max_chars).collect();
-    }
-
-    let mut truncated = text
-        .chars()
-        .take(max_chars.saturating_sub(suffix_len))
-        .collect::<String>();
-    truncated.push_str(suffix);
-    truncated
-}
-
-fn parse_child_structured_output(text: &str) -> Option<serde_json::Value> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    serde_json::from_str::<serde_json::Value>(trimmed)
-        .ok()
-        .or_else(|| parse_last_json_fenced_block(trimmed))
-}
-
-fn file_terminal_observation(
-    output_text: String,
-    warnings: Vec<String>,
-    status: ChildRuntimeStatus,
-    error_message: Option<String>,
-    pause: Option<ChildRuntimePause>,
-) -> ObservedChildTerminalEvent {
-    ObservedChildTerminalEvent {
-        structured_output: parse_child_structured_output(&output_text),
-        output_text,
-        turn_summary: None,
-        warnings,
-        error_message,
-        pause,
-        status,
-    }
-}
-
-fn invalid_agent_result_observation(
-    exit_code: i32,
-    output_text: String,
-    warnings: Vec<String>,
-) -> ObservedChildTerminalEvent {
-    file_terminal_observation(
-        output_text,
-        warnings,
-        ChildRuntimeStatus::Failed,
-        Some(format!(
-            "Child Agent Process exited with code {exit_code} without a valid terminal result"
-        )),
-        None,
-    )
-}
-
-fn timed_out_observation(
-    message: &str,
-    output_text: &str,
-    warnings: &[String],
-) -> ObservedChildTerminalEvent {
-    ObservedChildTerminalEvent {
-        output_text: output_text.to_string(),
-        turn_summary: None,
-        structured_output: parse_child_structured_output(output_text),
-        warnings: warnings.to_vec(),
-        error_message: Some(message.to_string()),
-        pause: None,
-        status: ChildRuntimeStatus::TimedOut,
-    }
-}
-
-fn terminated_observation(
-    request: ChildRunTerminationRequest,
-    output_text: &str,
-    warnings: &[String],
-) -> ObservedChildTerminalEvent {
-    ObservedChildTerminalEvent {
-        output_text: output_text.to_string(),
-        turn_summary: None,
-        structured_output: parse_child_structured_output(output_text),
-        warnings: warnings.to_vec(),
-        error_message: Some(format!(
-            "Delegated Child Run terminated by {} with {:?} mode: {}",
-            request.actor, request.mode, request.reason
-        )),
-        pause: None,
-        status: ChildRuntimeStatus::Terminated,
-    }
-}
-
-fn child_run_status_for_runtime_status(status: ChildRuntimeStatus) -> ChildRunStatus {
-    match status {
-        ChildRuntimeStatus::Completed => ChildRunStatus::Completed,
-        // A paused child is blocked, not failed: its decision may still be
-        // resolved by whoever owns it.
-        ChildRuntimeStatus::Paused => ChildRunStatus::Blocked,
-        ChildRuntimeStatus::Cancelled => ChildRunStatus::Cancelled,
-        ChildRuntimeStatus::TimedOut => ChildRunStatus::TimedOut,
-        ChildRuntimeStatus::Terminated => ChildRunStatus::Terminated,
-        ChildRuntimeStatus::Failed => ChildRunStatus::Failed,
-    }
-}
-
-async fn read_latest_assistant_text_from_rollout(rollout_path: Option<&Path>) -> Option<String> {
-    let rollout_path = rollout_path?;
-    let contents = tokio::fs::read_to_string(rollout_path).await.ok()?;
-    extract_latest_assistant_text_from_rollout(contents.as_str())
-}
-
-fn extract_latest_assistant_text_from_rollout(contents: &str) -> Option<String> {
-    let mut last_text = None;
-
-    for line in contents.lines().filter(|line| !line.trim().is_empty()) {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        let Some(object) = value.as_object() else {
-            continue;
-        };
-        if object.get("type").and_then(serde_json::Value::as_str) != Some("message") {
-            continue;
-        }
-        if object.get("role").and_then(serde_json::Value::as_str) != Some("assistant") {
-            continue;
-        }
-
-        let direct_content = object
-            .get("content")
-            .and_then(serde_json::Value::as_str)
-            .and_then(non_empty_trimmed);
-        if direct_content.is_some() {
-            last_text = direct_content;
-            continue;
-        }
-
-        let nested_parts = object
-            .get("message")
-            .and_then(|message| message.get("parts"))
-            .and_then(serde_json::Value::as_array)
-            .map(|parts| {
-                parts
-                    .iter()
-                    .filter_map(|part| {
-                        if part.get("type").and_then(serde_json::Value::as_str) == Some("text") {
-                            part.get("text")
-                                .and_then(serde_json::Value::as_str)
-                                .map(str::trim)
-                                .filter(|text| !text.is_empty())
-                                .map(ToOwned::to_owned)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .filter(|parts| !parts.is_empty())
-            .map(|parts| parts.join("\n"));
-        if nested_parts.is_some() {
-            last_text = nested_parts;
-        }
-    }
-
-    last_text
-}
-
-fn non_empty_trimmed(text: &str) -> Option<String> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn parse_last_json_fenced_block(text: &str) -> Option<serde_json::Value> {
-    let mut remainder = text;
-    let mut last_match = None;
-
-    while let Some(start_idx) = remainder.find("```") {
-        let fence_remainder = &remainder[start_idx + 3..];
-        let Some(newline_idx) = fence_remainder.find('\n') else {
-            break;
-        };
-        let info_string = fence_remainder[..newline_idx].trim().to_ascii_lowercase();
-        let content_start = start_idx + 3 + newline_idx + 1;
-        let content_remainder = &remainder[content_start..];
-        let Some(end_idx) = content_remainder.find("```") else {
-            break;
-        };
-        if info_string.is_empty() || info_string == "json" {
-            last_match = Some(content_remainder[..end_idx].trim().to_string());
-        }
-        remainder = &content_remainder[end_idx + 3..];
-    }
-
-    last_match.and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-}
-
-/// The inherited identity a paused child reported in its decision details.
-fn inherited_pause_from(details: &serde_json::Value) -> InheritedPause {
-    InheritedPause {
-        ancestor_task_id: details["ancestor_task_id"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
-        dimension: details["dimension"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string(),
-        checkpoint_id: details["checkpoint_id"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
-        rollout_path: details["rollout_path"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn process_exit_requires_a_matching_agent_executable_result() {
-        let completed = AgentExecutableResult::completed("done", Vec::new());
-        assert!(agent_result_matches_exit_code(Some(0), &completed));
-        assert!(!agent_result_matches_exit_code(Some(1), &completed));
-
-        let failed = AgentExecutableResult::failed("failed");
-        assert!(agent_result_matches_exit_code(Some(1), &failed));
-        assert!(!agent_result_matches_exit_code(Some(0), &failed));
-
-        let invalid = invalid_agent_result_observation(0, "raw".to_string(), Vec::new());
-        assert_eq!(invalid.status, ChildRuntimeStatus::Failed);
-        assert_eq!(invalid.output_text, "raw");
-        assert!(
-            invalid
-                .error_message
-                .unwrap()
-                .contains("without a valid terminal result")
-        );
-    }
-}
+#[path = "supervisor_tests.rs"]
+mod tests;

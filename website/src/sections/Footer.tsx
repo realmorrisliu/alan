@@ -32,7 +32,7 @@ export function Footer() {
               </For>
               <br />
               <a href={REPO} data-track="github_click">
-                github.com/realmorrisliu/alan
+                github.com/thinksmart-systems/alan
               </a>
               <br />
               <a href={ESSAYS}>Essays on Alan</a>

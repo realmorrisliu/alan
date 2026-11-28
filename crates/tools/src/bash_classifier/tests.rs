@@ -333,7 +333,8 @@ fn test_classify_bash_command_git_tag_list_with_global_options_is_read() {
 
 #[test]
 fn test_classify_bash_command_git_remote_add_is_write() {
-    let cap = classify_bash_command("git remote add origin git@github.com:realmorrisliu/Alan.git");
+    let cap =
+        classify_bash_command("git remote add origin git@github.com:thinksmart-systems/alan.git");
     assert_eq!(cap, alan_agent_protocol::ToolCapability::Write);
 }
 
@@ -560,7 +561,7 @@ fn test_classify_bash_command_gh_network_and_local_queries() {
         "gh issue list",
         "gh pr view",
         "gh pr view 123",
-        "/opt/homebrew/bin/gh api repos/realmorrisliu/alan",
+        "/opt/homebrew/bin/gh api repos/thinksmart-systems/alan",
         "GH_TOKEN=tok /opt/homebrew/bin/gh issue list",
     ] {
         assert_eq!(classify_bash_command(cmd), ToolCapability::Network, "{cmd}");

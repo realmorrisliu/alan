@@ -24,10 +24,12 @@ mod process_runner;
 mod process_spawn;
 mod quartermaster;
 mod runtime;
+mod supervised_handle;
 mod temporary_store;
 
 pub use boot_unit::{
     BootDescriptor, BootManifest, BootMount, BootUnit, MountAccess, RestartPolicy,
+    SupervisionStrategy,
 };
 pub use connection::{
     ConnectionService, NativeConnectionAction, NativeConnectionRequest, NativeConnectionResponse,
@@ -65,3 +67,4 @@ pub use runtime::{
     BOOT_ID_PATH, BOOT_STATE_PATH, InputShadowSelection, LlmClientFactory, ServiceManager,
     ServiceManagerConfig, SessionHandle, SessionLaunchOptions, prepare_fileserver_launch_grant,
 };
+pub use supervised_handle::SupervisedHandle;

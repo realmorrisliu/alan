@@ -151,8 +151,8 @@ payload = {
     "version": version,
     "tag": tag,
     "published_at": "2026-11-20T00:00:00Z",
-    "release_url": f"https://github.com/realmorrisliu/alan/releases/tag/{tag}",
-    "notes_url": f"https://github.com/realmorrisliu/alan/releases/tag/{tag}",
+    "release_url": f"https://github.com/thinksmart-systems/alan/releases/tag/{tag}",
+    "notes_url": f"https://github.com/thinksmart-systems/alan/releases/tag/{tag}",
     "installer_url": "https://alanworks.app/install.sh",
     "targets": targets,
 }

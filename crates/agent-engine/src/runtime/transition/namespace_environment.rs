@@ -14,9 +14,11 @@ mod child_launch;
 mod client;
 mod decision;
 mod evaluation;
+mod event_streams;
 mod evidence_read;
 pub(crate) use decision::NamespaceDecisionConnection;
 pub use decision::{NamespaceDecision, NamespaceDecisionFailure, NamespaceDecisionUncertainty};
+pub(crate) use event_streams::{ChildEventWake, ChildEventWatchers};
 pub(crate) use evidence_read::read_action_evidence;
 mod generation;
 pub use evaluation::{

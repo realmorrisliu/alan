@@ -15,7 +15,7 @@ import type { Plugin } from 'vite'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const CHANGELOG = path.resolve(here, '../CHANGELOG.md')
 const DOCS_DIR = path.resolve(here, 'content/docs')
-const REPO = 'https://github.com/realmorrisliu/alan'
+const REPO = 'https://github.com/thinksmart-systems/alan'
 
 export interface ReleaseItem {
   kind: string

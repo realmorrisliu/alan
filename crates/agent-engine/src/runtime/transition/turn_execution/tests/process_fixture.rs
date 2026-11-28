@@ -24,6 +24,7 @@ pub(super) async fn spawn_turn_test_parent(
         args: Vec::new(),
         namespace: alan_kernel::ExecNamespaceManifest::from_namespace(namespace),
         descriptors: Default::default(),
+        link_parent: false,
     };
     spawner
         .write(fid, 0, &serde_json::to_vec(&exec).unwrap())

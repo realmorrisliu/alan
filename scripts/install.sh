@@ -8,7 +8,7 @@ set -eu
 
 DEFAULT_MANIFEST_URL="https://alanworks.app/latest.json"
 DEFAULT_BETA_MANIFEST_URL="https://alanworks.app/beta.json"
-DEFAULT_RELEASE_BASE_URL="https://github.com/realmorrisliu/alan/releases/download"
+DEFAULT_RELEASE_BASE_URL="https://github.com/thinksmart-systems/alan/releases/download"
 
 CHANNEL="${ALAN_CHANNEL:-stable}"
 

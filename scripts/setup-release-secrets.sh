@@ -2,7 +2,7 @@
 # Idempotently configure the 6 Apple Developer ID & notarization secrets on GitHub Actions.
 set -euo pipefail
 
-DEFAULT_REPO="realmorrisliu/alan"
+DEFAULT_REPO="thinksmart-systems/alan"
 REQUIRED_SECRETS=(
     MACOS_CERT_P12_BASE64
     MACOS_CERT_P12_PASSWORD
@@ -26,11 +26,11 @@ secrets required by .github/workflows/release.yml using `gh secret set`:
   - ASC_API_ISSUER_ID
 
 Note: GitHub does not permit reading secret values back from another repository
-(such as realmorrisliu/slowpage). Reuse your local Developer ID .p12 and
+(such as thinksmart-systems/slowpage). Reuse your local Developer ID .p12 and
 App Store Connect AuthKey_*.p8 files or environment variables with this helper.
 
 Options:
-  --repo <owner/repo>       Target GitHub repository (default: realmorrisliu/alan)
+  --repo <owner/repo>       Target GitHub repository (default: thinksmart-systems/alan)
   --p12 <path>              Path to Developer ID Application .p12 certificate
   --p12-password <pass>     Password for the .p12 file (prefer MACOS_CERT_P12_PASSWORD env or prompt)
   --team-id <id>            10-char Apple Team ID (env: APPLE_TEAM_ID; auto-detected from .p12 if possible)
@@ -49,7 +49,7 @@ Examples:
 
   # Upload from local Slowpage/Apple Developer certificate and API key files:
   scripts/setup-release-secrets.sh \
-    --repo realmorrisliu/alan \
+    --repo thinksmart-systems/alan \
     --p12 ~/Certificates/DeveloperID.p12 \
     --p8 ~/Certificates/AuthKey_ABC123DEFG.p8 \
     --issuer-id 00000000-0000-0000-0000-000000000000
