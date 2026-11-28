@@ -260,13 +260,13 @@ impl FileServer for PtyMockGithubFs {
             ""
             | "repos"
             | "repos/realmorrisliu"
-            | "repos/realmorrisliu/alan"
-            | "repos/realmorrisliu/alan/issues" => Ok(Qid {
+            | "repos/thinksmart-systems/alan"
+            | "repos/thinksmart-systems/alan/issues" => Ok(Qid {
                 kind: FileKind::Dir,
                 path: 1,
                 version: 0,
             }),
-            "repos/realmorrisliu/alan/issues/new" => Ok(Qid {
+            "repos/thinksmart-systems/alan/issues/new" => Ok(Qid {
                 kind: FileKind::File,
                 path: 2,
                 version: 0,
@@ -287,7 +287,8 @@ impl FileServer for PtyMockGithubFs {
     }
 
     async fn read(&self, _fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        let receipt = br#"{"number":77,"url":"https://github.com/realmorrisliu/alan/issues/77"}"#;
+        let receipt =
+            br#"{"number":77,"url":"https://github.com/thinksmart-systems/alan/issues/77"}"#;
         let start = (offset as usize).min(receipt.len());
         let end = (start + count as usize).min(receipt.len());
         Ok(receipt[start..end].to_vec())
@@ -504,7 +505,7 @@ fn pty_e2e_issue_cancel_redaction_and_mounted_githubfs_submission() -> Result<()
         w.flush()?;
     }
     let preview = screen.wait_for("issue draft preview", Duration::from_secs(5), |s| {
-        s.contains("New Issue · realmorrisliu/alan")
+        s.contains("New Issue · thinksmart-systems/alan")
             && s.contains("Draft to cancel")
             && s.contains("Redacted Diagnostics")
             && s.contains("gpt-5.4")
@@ -541,7 +542,7 @@ fn pty_e2e_issue_cancel_redaction_and_mounted_githubfs_submission() -> Result<()
         w.flush()?;
     }
     screen.wait_for("bug alias draft preview", Duration::from_secs(5), |s| {
-        s.contains("New Issue · realmorrisliu/alan") && s.contains("PTY crash")
+        s.contains("New Issue · thinksmart-systems/alan") && s.contains("PTY crash")
     })?;
     {
         let mut w = master_write.lock().expect("write lock");
@@ -551,7 +552,7 @@ fn pty_e2e_issue_cancel_redaction_and_mounted_githubfs_submission() -> Result<()
     }
     screen.wait_for("githubfs created receipt", Duration::from_secs(5), |s| {
         s.contains("Issue #77 created via /mnt/github")
-            && s.contains("https://github.com/realmorrisliu/alan/issues/77")
+            && s.contains("https://github.com/thinksmart-systems/alan/issues/77")
     })?;
 
     let logged = std::fs::read_to_string(&log_path)?;
@@ -606,7 +607,7 @@ fn pty_e2e_issue_emits_bounded_web_fallback_when_unmounted_and_gh_unavailable() 
     screen.wait_for("prefilled web url rendered", Duration::from_secs(5), |s| {
         s.contains("browser URL fallback")
             && s.contains(
-                "https://github.com/realmorrisliu/alan/issues/new?title=Fallback%20URL%20check",
+                "https://github.com/thinksmart-systems/alan/issues/new?title=Fallback%20URL%20check",
             )
     })?;
 

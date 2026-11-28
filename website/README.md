@@ -1,6 +1,6 @@
 # Alan Website (`alanworks.app`)
 
-The official website and manual pages for [Alan](https://github.com/realmorrisliu/alan), designed as a **Plan 9 archive** technical journal issue: flat Klein blue (`#002fa7`) and paper (`#f3f2ec`), the Acme palette (`#ffffea` / `#eaffff` / `#99994c`), Go Sans & Go Mono typography, rio windows + Acme tag bars, man-page structure, troff footnotes, and a Bell System Technical Journal masthead.
+The official website and manual pages for [Alan](https://github.com/thinksmart-systems/alan), designed as a **Plan 9 archive** technical journal issue: flat Klein blue (`#002fa7`) and paper (`#f3f2ec`), the Acme palette (`#ffffea` / `#eaffff` / `#99994c`), Go Sans & Go Mono typography, rio windows + Acme tag bars, man-page structure, troff footnotes, and a Bell System Technical Journal masthead.
 
 ## Stack & Family Conventions
 
@@ -28,7 +28,7 @@ pnpm preview     # preview built Worker + prerendered assets locally
 
 ### Automatic deploy on `main` (Cloudflare Workers Builds)
 
-`alan-website` is connected directly to **Cloudflare Workers Builds** on `realmorrisliu/alan` (`main`) — no GitHub deployment secrets are used:
+`alan-website` is connected directly to **Cloudflare Workers Builds** on `thinksmart-systems/alan` (`main`) — no GitHub deployment secrets are used:
 
 - **Root directory**: `/website`
 - **Build command**: `pnpm run build`

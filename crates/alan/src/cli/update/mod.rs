@@ -39,7 +39,7 @@ pub const DEFAULT_MANIFEST_URL: &str = "https://alanworks.app/latest.json";
 pub const DEFAULT_BETA_MANIFEST_URL: &str = "https://alanworks.app/beta.json";
 /// Default tagged release download base URL when `--version` is requested without `--manifest-url`.
 pub const DEFAULT_RELEASE_BASE_URL: &str =
-    "https://github.com/realmorrisliu/alan/releases/download";
+    "https://github.com/thinksmart-systems/alan/releases/download";
 const MANIFEST_FETCH_TIMEOUT_SECS: u64 = 15;
 const ARCHIVE_CONNECT_TIMEOUT_SECS: u64 = 30;
 const ARCHIVE_CHUNK_IDLE_TIMEOUT_SECS: u64 = 30;

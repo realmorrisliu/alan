@@ -184,10 +184,10 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual(data["tag"], "v0.1.0")
         self.assertEqual(data["published_at"], "2026-11-20T00:00:00Z")
         self.assertEqual(
-            data["release_url"], "https://github.com/realmorrisliu/alan/releases/tag/v0.1.0"
+            data["release_url"], "https://github.com/thinksmart-systems/alan/releases/tag/v0.1.0"
         )
         self.assertEqual(
-            data["notes_url"], "https://github.com/realmorrisliu/alan/releases/tag/v0.1.0"
+            data["notes_url"], "https://github.com/thinksmart-systems/alan/releases/tag/v0.1.0"
         )
         self.assertEqual(data["installer_url"], "https://alanworks.app/install.sh")
         self.assertEqual(list(data["targets"].keys()), list(manifest_mod.SUPPORTED_TARGETS))
@@ -198,7 +198,7 @@ class ReleaseManifestTests(unittest.TestCase):
             self.assertEqual(entry["asset"], expected_asset)
             self.assertEqual(
                 entry["url"],
-                f"https://github.com/realmorrisliu/alan/releases/download/v0.1.0/{expected_asset}",
+                f"https://github.com/thinksmart-systems/alan/releases/download/v0.1.0/{expected_asset}",
             )
             self.assertEqual(entry["sha256"], digest)
             self.assertEqual(entry["size"], size)
@@ -479,14 +479,14 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual(data["tag"], "beta")
         self.assertEqual(data["commit"], "6c1dfd7")
         self.assertEqual(
-            data["release_url"], "https://github.com/realmorrisliu/alan/releases/tag/beta"
+            data["release_url"], "https://github.com/thinksmart-systems/alan/releases/tag/beta"
         )
         for target, (digest, size) in records.items():
             entry = data["targets"][target]
             expected_asset = f"alan-{beta_version}-{target}.tar.gz"
             self.assertEqual(
                 entry["url"],
-                f"https://github.com/realmorrisliu/alan/releases/download/beta/{expected_asset}",
+                f"https://github.com/thinksmart-systems/alan/releases/download/beta/{expected_asset}",
             )
             self.assertEqual(entry["sha256"], digest)
             self.assertEqual(entry["size"], size)

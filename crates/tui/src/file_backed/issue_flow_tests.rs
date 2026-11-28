@@ -29,13 +29,13 @@ impl FileServer for MockGithubFs {
             ""
             | "repos"
             | "repos/realmorrisliu"
-            | "repos/realmorrisliu/alan"
-            | "repos/realmorrisliu/alan/issues" => Ok(Qid {
+            | "repos/thinksmart-systems/alan"
+            | "repos/thinksmart-systems/alan/issues" => Ok(Qid {
                 kind: FileKind::Dir,
                 path: 1,
                 version: 0,
             }),
-            "repos/realmorrisliu/alan/issues/new" => Ok(Qid {
+            "repos/thinksmart-systems/alan/issues/new" => Ok(Qid {
                 kind: FileKind::File,
                 path: 2,
                 version: 0,
@@ -229,7 +229,7 @@ fn issue_and_bug_commands_require_confirm_edit_and_cancel_safely() {
         generation,
         Ok(IssueSubmissionOutcome::GhCli {
             number: Some(55),
-            url: "https://github.com/realmorrisliu/alan/issues/55".into(),
+            url: "https://github.com/thinksmart-systems/alan/issues/55".into(),
         }),
     );
     assert_eq!(app.transcript.len(), transcript_before);
@@ -240,7 +240,7 @@ async fn tiered_submission_prefers_writable_githubfs_then_gh_then_web_url() {
     let ghfs = Arc::new(MockGithubFs {
         writable: true,
         writes: Mutex::new(Vec::new()),
-        receipt: br#"{"number":42,"url":"https://github.com/realmorrisliu/alan/issues/42"}"#
+        receipt: br#"{"number":42,"url":"https://github.com/thinksmart-systems/alan/issues/42"}"#
             .to_vec(),
     });
     let mount = Arc::new(MountFs::new(Namespace::new()));
@@ -250,14 +250,14 @@ async fn tiered_submission_prefers_writable_githubfs_then_gh_then_web_url() {
         Access::ReadWrite,
     );
     let shell = alan_shell::Shell::new(alan_ap::InProcessTransport::new(mount));
-    let out = submit_issue_tiered(&shell, None, "realmorrisliu/alan", "Bug", "Body", &[])
+    let out = submit_issue_tiered(&shell, None, "thinksmart-systems/alan", "Bug", "Body", &[])
         .await
         .unwrap();
     assert_eq!(
         out,
         IssueSubmissionOutcome::MountedGithubFs {
             number: Some(42),
-            url: "https://github.com/realmorrisliu/alan/issues/42".into(),
+            url: "https://github.com/thinksmart-systems/alan/issues/42".into(),
         }
     );
     assert_eq!(ghfs.writes.lock().unwrap().len(), 1);
@@ -274,14 +274,14 @@ async fn tiered_submission_prefers_writable_githubfs_then_gh_then_web_url() {
         Box::pin(async {
             Ok(IssueSubmitResult::CreatedGhCli {
                 number: Some(99),
-                url: "https://github.com/realmorrisliu/alan/issues/99".into(),
+                url: "https://github.com/thinksmart-systems/alan/issues/99".into(),
             })
         })
     });
     let out2 = submit_issue_tiered(
         &ro_shell,
         Some(gh_handler),
-        "realmorrisliu/alan",
+        "thinksmart-systems/alan",
         "Bug",
         "Body",
         &[],
@@ -292,7 +292,7 @@ async fn tiered_submission_prefers_writable_githubfs_then_gh_then_web_url() {
         out2,
         IssueSubmissionOutcome::GhCli {
             number: Some(99),
-            url: "https://github.com/realmorrisliu/alan/issues/99".into(),
+            url: "https://github.com/thinksmart-systems/alan/issues/99".into(),
         }
     );
 
@@ -308,7 +308,7 @@ async fn tiered_submission_prefers_writable_githubfs_then_gh_then_web_url() {
     let out3 = submit_issue_tiered(
         &ro_shell,
         Some(unavail),
-        "realmorrisliu/alan",
+        "thinksmart-systems/alan",
         "Bug 1",
         &long_body,
         &[],
@@ -319,7 +319,7 @@ async fn tiered_submission_prefers_writable_githubfs_then_gh_then_web_url() {
         IssueSubmissionOutcome::WebFallback { url, reason } => {
             assert_eq!(reason, "not logged in");
             assert!(url.starts_with(
-                "https://github.com/realmorrisliu/alan/issues/new?title=Bug%201&body="
+                "https://github.com/thinksmart-systems/alan/issues/new?title=Bug%201&body="
             ));
             assert!(url.len() <= MAX_FALLBACK_URL_BYTES);
             assert!(url.ends_with("%0A...%28truncated%29"));
@@ -369,7 +369,7 @@ fn failed_issue_submission_preserves_draft_and_allows_retry() {
         g1,
         Ok(IssueSubmissionOutcome::GhCli {
             number: Some(999),
-            url: "https://github.com/realmorrisliu/alan/issues/999".into(),
+            url: "https://github.com/thinksmart-systems/alan/issues/999".into(),
         }),
     );
     assert!(app.issue.is_editing());
@@ -394,7 +394,7 @@ fn failed_issue_submission_preserves_draft_and_allows_retry() {
         g2,
         Ok(IssueSubmissionOutcome::GhCli {
             number: Some(77),
-            url: "https://github.com/realmorrisliu/alan/issues/77".into(),
+            url: "https://github.com/thinksmart-systems/alan/issues/77".into(),
         }),
     );
     assert!(!app.issue.is_active());
@@ -613,7 +613,7 @@ async fn ctrl_l_toggles_auto_label_and_forwards_across_all_submission_tiers() {
     let ghfs = Arc::new(MockGithubFs {
         writable: true,
         writes: Mutex::new(Vec::new()),
-        receipt: br#"{"number":12,"url":"https://github.com/realmorrisliu/alan/issues/12"}"#
+        receipt: br#"{"number":12,"url":"https://github.com/thinksmart-systems/alan/issues/12"}"#
             .to_vec(),
     });
     let mount = Arc::new(MountFs::new(Namespace::new()));
@@ -623,22 +623,31 @@ async fn ctrl_l_toggles_auto_label_and_forwards_across_all_submission_tiers() {
         Access::ReadWrite,
     );
     let shell = alan_shell::Shell::new(alan_ap::InProcessTransport::new(mount));
-    submit_issue_tiered(&shell, None, "realmorrisliu/alan", "Bug", "Body", &labels)
-        .await
-        .unwrap();
+    submit_issue_tiered(
+        &shell,
+        None,
+        "thinksmart-systems/alan",
+        "Bug",
+        "Body",
+        &labels,
+    )
+    .await
+    .unwrap();
     let payload: serde_json::Value =
         serde_json::from_slice(&ghfs.writes.lock().unwrap()[0]).unwrap();
     assert_eq!(payload["labels"], serde_json::json!(["alan:auto"]));
 
     // Tier 3 web URL includes encoded labels when non-empty and omits when empty.
-    let url_with_labels = build_prefilled_issue_url("realmorrisliu/alan", "Bug", "Body", &labels);
+    let url_with_labels =
+        build_prefilled_issue_url("thinksmart-systems/alan", "Bug", "Body", &labels);
     assert!(
         url_with_labels.contains("&labels=alan%3Aauto&body="),
         "{url_with_labels}"
     );
-    let url_without_labels = build_prefilled_issue_url("realmorrisliu/alan", "Bug", "Body", &[]);
+    let url_without_labels =
+        build_prefilled_issue_url("thinksmart-systems/alan", "Bug", "Body", &[]);
     assert_eq!(
         url_without_labels,
-        "https://github.com/realmorrisliu/alan/issues/new?title=Bug&body=Body"
+        "https://github.com/thinksmart-systems/alan/issues/new?title=Bug&body=Body"
     );
 }

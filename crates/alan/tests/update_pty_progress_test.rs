@@ -220,8 +220,8 @@ async fn pty_80_col_redraws_keep_progress_bar_on_single_row() {
         "version": "9.9.9",
         "tag": "v9.9.9",
         "published_at": "2026-11-20T00:00:00Z",
-        "release_url": "https://github.com/realmorrisliu/alan/releases/tag/v9.9.9",
-        "notes_url": "https://github.com/realmorrisliu/alan/releases/tag/v9.9.9",
+        "release_url": "https://github.com/thinksmart-systems/alan/releases/tag/v9.9.9",
+        "notes_url": "https://github.com/thinksmart-systems/alan/releases/tag/v9.9.9",
         "installer_url": "https://alanworks.app/install.sh",
         "targets": {
             target: {

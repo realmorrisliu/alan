@@ -77,7 +77,7 @@ const GROUPS: Array<{ label: string; actions: Action[] }> = [
         hint: 'copy the install command',
         run: () => void navigator.clipboard?.writeText(INSTALL_CMD),
       },
-      { value: 'github', label: ': open github', hint: 'realmorrisliu/alan', run: () => (location.href = REPO) },
+      { value: 'github', label: ': open github', hint: 'thinksmart-systems/alan', run: () => (location.href = REPO) },
     ],
   },
 ]

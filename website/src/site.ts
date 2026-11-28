@@ -1,7 +1,7 @@
 import data from 'virtual:site-data'
 
 export const SITE = 'https://alanworks.app'
-export const REPO = 'https://github.com/realmorrisliu/alan'
+export const REPO = 'https://github.com/thinksmart-systems/alan'
 export const INSTALL_CMD = 'curl -fsSL https://alanworks.app/install.sh | sh'
 export const ESSAYS = 'https://realmorrisliu.com/thoughts/tags/alan'
 export const AUTHOR = 'https://realmorrisliu.com'

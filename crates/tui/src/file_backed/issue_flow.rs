@@ -28,7 +28,7 @@ use diagnostics::{
 };
 
 /// Default target repository used by `/issue` and `/bug` when no override is configured.
-pub(in crate::file_backed) const DEFAULT_ISSUE_REPO: &str = "realmorrisliu/alan";
+pub(in crate::file_backed) const DEFAULT_ISSUE_REPO: &str = "thinksmart-systems/alan";
 const AUTO_ISSUE_LABEL: &str = "alan:auto";
 const MAX_AI_TITLE_CHARS: usize = 120;
 const MAX_AI_SUMMARY_CHARS: usize = 900;

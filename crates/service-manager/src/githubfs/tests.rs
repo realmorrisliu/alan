@@ -19,7 +19,7 @@ use super::{GithubFs, MAX_CTL_BYTES};
 
 #[test]
 fn slug_and_payload_validation_fail_closed() {
-    assert!(RepoSlug::parse("realmorrisliu/alan").is_ok());
+    assert!(RepoSlug::parse("thinksmart-systems/alan").is_ok());
     assert!(RepoSlug::parse("org.name/repo_1-2").is_ok());
     assert!(RepoSlug::parse("../alan").is_err());
     assert!(RepoSlug::parse("owner/..").is_err());
