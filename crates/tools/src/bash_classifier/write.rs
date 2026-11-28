@@ -270,7 +270,99 @@ fn is_verification_subcommand(arg: &str) -> bool {
     matches!(arg, "test" | "tests" | "check" | "clippy" | "verify")
 }
 
-fn contains_output_redirection(fragment: &str) -> bool {
+pub(super) fn is_idempotent_local_verification_command(tokens: &[&str]) -> bool {
+    let head = command_basename(tokens[0]);
+
+    if matches!(head, "pytest" | "py.test" | "nosetests" | "nosetests3") {
+        return true;
+    }
+
+    if head == "go" {
+        return tokens.get(1).copied() == Some("test");
+    }
+
+    if let Some(subcommand) = cargo_subcommand(tokens) {
+        return match subcommand {
+            "check" | "clippy" | "test" | "doc" => !has_mutating_verification_flag(tokens),
+            "fmt" => !has_mutating_verification_flag(tokens) && tokens.contains(&"--check"),
+            _ => false,
+        };
+    }
+
+    if matches!(head, "npm" | "pnpm" | "yarn") {
+        return package_manager_verification_script(tokens);
+    }
+
+    if head == "just" {
+        return just_read_only_or_verification_recipe(tokens);
+    }
+
+    false
+}
+
+fn has_mutating_verification_flag(tokens: &[&str]) -> bool {
+    tokens
+        .iter()
+        .any(|token| matches!(*token, "--fix" | "--open" | "--watch"))
+}
+
+fn package_manager_verification_script(tokens: &[&str]) -> bool {
+    if has_mutating_verification_flag(tokens) {
+        return false;
+    }
+
+    let mut index = 1;
+    while let Some(token) = tokens.get(index).copied() {
+        if matches!(token, "-C" | "--dir" | "--filter" | "--prefix" | "--cwd") {
+            index += 2;
+            continue;
+        }
+        if token.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        if token == "run" {
+            return tokens
+                .get(index + 1)
+                .copied()
+                .is_some_and(is_idempotent_node_script);
+        }
+        return is_idempotent_node_script(token);
+    }
+    false
+}
+
+fn is_idempotent_node_script(script: &str) -> bool {
+    matches!(
+        script,
+        "check" | "lint" | "typecheck" | "test" | "format:check"
+    )
+}
+
+fn just_read_only_or_verification_recipe(tokens: &[&str]) -> bool {
+    let Some(token) = tokens.get(1).copied() else {
+        return false;
+    };
+    if matches!(
+        token,
+        "--list" | "-l" | "--summary" | "--show" | "-s" | "--dump"
+    ) {
+        return true;
+    }
+    if token.starts_with('-') {
+        return false;
+    }
+    is_idempotent_just_recipe(token)
+}
+
+fn is_idempotent_just_recipe(recipe: &str) -> bool {
+    matches!(recipe, "check" | "quality" | "lint" | "test")
+        || recipe
+            .split_once('-')
+            .is_some_and(|(prefix, _)| matches!(prefix, "check" | "quality" | "lint" | "test"))
+}
+
+pub(super) fn contains_output_redirection(fragment: &str) -> bool {
     let mut in_single = false;
     let mut in_double = false;
     let mut escaped = false;

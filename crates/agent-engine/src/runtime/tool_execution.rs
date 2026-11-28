@@ -28,6 +28,10 @@ use super::{
 
 mod runtime_inputs;
 
+#[cfg(test)]
+#[path = "tool_execution/idempotent_retry_tests.rs"]
+mod idempotent_retry_tests;
+
 pub(super) use runtime_inputs::ToolExecutionRuntime;
 
 pub(super) struct ToolExecutionRequest<'a> {
@@ -69,14 +73,27 @@ where
         cancel,
         task_cancel,
     } = request;
-    let effect_lifecycle = ToolEffectLifecycle::for_call(
-        runtime.machine,
-        &runtime.process_path,
-        tool_call.id.clone(),
-        tool_call.name.clone(),
-        tool_arguments,
+    let skip_effect_lifecycle = ToolEffectLifecycle::skips_idempotent_write(
         tool_capability,
+        runtime
+            .tool_execution
+            .allows_idempotent_retry(&tool_call.name, tool_arguments),
     );
+    let effect_lifecycle = if skip_effect_lifecycle {
+        // An idempotent verification command has no externally observable side
+        // effect, so duplicate-effect replay bookkeeping adds friction without
+        // protecting anything. Policy and sandbox enforcement still ran.
+        None
+    } else {
+        ToolEffectLifecycle::for_call(
+            runtime.machine,
+            &runtime.process_path,
+            tool_call.id.clone(),
+            tool_call.name.clone(),
+            tool_arguments,
+            tool_capability,
+        )
+    };
     let effect_plan = effect_lifecycle
         .as_ref()
         .map(|effect| effect.plan(runtime.machine, allow_approved_unknown_effect_execution));

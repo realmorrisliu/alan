@@ -286,6 +286,51 @@ fn test_tool_registry_capability_for_tool() {
     assert_eq!(registry.capability_for_tool("nonexistent", &args), None);
 }
 
+struct IdempotentRetryTool;
+
+impl Tool for IdempotentRetryTool {
+    fn name(&self) -> &str {
+        "idempotent_retry"
+    }
+
+    fn description(&self) -> &str {
+        "Idempotent retry tool"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({"type": "object"})
+    }
+
+    fn allows_idempotent_retry(&self, arguments: &Value) -> bool {
+        arguments["idempotent"].as_bool() == Some(true)
+    }
+
+    fn execute(&self, _arguments: Value, _ctx: &ToolContext) -> ToolResult {
+        Box::pin(async move { Ok(serde_json::json!({"status": "ok"})) })
+    }
+}
+
+#[test]
+fn test_tool_registry_and_process_runner_expose_idempotent_retry_opt_in() {
+    let mut registry = ToolRegistry::new();
+    registry.register(IdempotentRetryTool);
+    registry.register(TestTool);
+
+    let idempotent = serde_json::json!({"idempotent": true});
+    let effectful = serde_json::json!({"idempotent": false});
+
+    assert!(registry.allows_idempotent_retry_for_tool("idempotent_retry", &idempotent));
+    assert!(!registry.allows_idempotent_retry_for_tool("idempotent_retry", &effectful));
+    // Default trait behavior stays fail-closed.
+    assert!(!registry.allows_idempotent_retry_for_tool("test_tool", &idempotent));
+    assert!(!registry.allows_idempotent_retry_for_tool("nonexistent", &idempotent));
+
+    let runner = ToolProcessRunner::from_registry(&registry);
+    assert!(runner.allows_idempotent_retry_for_tool("idempotent_retry", &idempotent));
+    assert!(!runner.allows_idempotent_retry_for_tool("idempotent_retry", &effectful));
+    assert!(!runner.allows_idempotent_retry_for_tool("test_tool", &idempotent));
+}
+
 #[test]
 fn process_runner_resolves_capability_from_concrete_arguments() {
     let mut registry = ToolRegistry::new();

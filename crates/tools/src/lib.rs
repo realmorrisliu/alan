@@ -21,7 +21,7 @@ pub use exploration_tools::{GlobTool, GrepTool, ListDirTool};
 pub use file_tools::{EditFileTool, ReadFileTool, WriteFileTool};
 
 use alan_agent_engine::tools::{Tool, ToolContext, ToolRegistry, ToolResult};
-use bash_classifier::classify_bash_command;
+use bash_classifier::{classify_bash_command, is_idempotent_verification_command};
 use serde_json::{Value, json};
 
 // ============================================================================
@@ -176,6 +176,11 @@ impl Tool for BashTool {
 
     fn capability_is_argument_dependent(&self) -> bool {
         true
+    }
+
+    fn allows_idempotent_retry(&self, args: &Value) -> bool {
+        let command = args["command"].as_str().unwrap_or("");
+        is_idempotent_verification_command(command)
     }
 
     fn timeout_secs(&self) -> usize {

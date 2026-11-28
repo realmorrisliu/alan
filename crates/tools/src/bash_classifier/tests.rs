@@ -1,4 +1,4 @@
-use super::classify_bash_command;
+use super::{classify_bash_command, is_idempotent_verification_command};
 
 #[test]
 fn test_classify_bash_command_priority_network_over_write() {
@@ -717,6 +717,75 @@ fn test_classify_bash_command_distinguishes_standalone_env_from_wrapper() {
             classify_bash_command(network_unset_cmd),
             ToolCapability::Network,
             "expected Network for safe unset wrapper `{network_unset_cmd}`"
+        );
+    }
+}
+
+#[test]
+fn test_is_idempotent_verification_command_allows_local_checks() {
+    for command in [
+        "cargo check --workspace",
+        "cargo clippy --all-targets --all-features -- -D warnings",
+        "cargo test -p alan-tools --all-targets",
+        "cargo doc --no-deps",
+        "cargo fmt --all -- --check",
+        "go test ./...",
+        "pytest -q",
+        "py.test tests",
+        "nosetests3",
+        "npm test",
+        "pnpm run lint",
+        "yarn run typecheck",
+        "npm run format:check",
+        "just check",
+        "just quality",
+        "just lint",
+        "just test",
+        "just --list",
+        "env -u BASH_ENV cargo fmt --all -- --check",
+        "cargo check && cargo test",
+        "rg TODO src",
+        "git status",
+    ] {
+        assert!(
+            is_idempotent_verification_command(command),
+            "expected idempotent verification for `{command}`"
+        );
+    }
+}
+
+#[test]
+fn test_is_idempotent_verification_command_rejects_effectful_and_opaque_forms() {
+    for command in [
+        "cargo fmt",
+        "cargo fmt --all",
+        "cargo clippy --fix",
+        "cargo build",
+        "cargo run",
+        "cargo install ripgrep",
+        "cargo test -- --watch",
+        "just fmt",
+        "just verify",
+        "just",
+        "npm run build",
+        "pnpm add left-pad",
+        "npm install",
+        "yarn dev",
+        "rm -rf target",
+        "write_file output.txt",
+        "curl https://example.com",
+        "git commit -m change",
+        "cargo test > out.txt",
+        "cargo test 2>&1 | tee out.txt",
+        "python3 script.py",
+        "bash -lc 'cargo test'",
+        "echo ok && rm -f artifact.txt",
+        "",
+        "   ",
+    ] {
+        assert!(
+            !is_idempotent_verification_command(command),
+            "expected non-idempotent classification for `{command}`"
         );
     }
 }

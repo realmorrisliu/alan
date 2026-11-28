@@ -263,19 +263,19 @@ async fn confined_smart_auto_extends_once_updates_ui_and_escalates_beyond_cap() 
     let (provider, calls) = MockBudgetDecisionProvider::new(vec![
         Ok(budget_decision_response(
             CalibrationKind::Calibrated,
-            (0.92, 0.89),
+            (0.78, 0.80),
             BUDGET_VERDICT_EXTEND,
-            0.91,
-            0.09,
-            0.88,
+            0.85,
+            0.15,
+            0.80,
         )),
         Ok(budget_decision_response(
             CalibrationKind::Calibrated,
-            (0.95, 0.92),
+            (0.85, 0.85),
             BUDGET_VERDICT_EXTEND,
-            0.94,
-            0.06,
-            0.91,
+            0.88,
+            0.12,
+            0.82,
         )),
     ]);
     let (mut state, shell, owner) =
@@ -475,33 +475,63 @@ fn progress_rubric_enforces_low_confidence_and_uncalibrated_thresholds() {
         ProgressDecision::Escalate { reason } if reason.contains("low_confidence")
     ));
 
-    let uncalibrated_borderline = ProgressAssessment::from_response(&budget_decision_response(
-        CalibrationKind::Uncalibrated,
-        (0.84, 0.80),
+    // 0.72 converging / 0.78 extend clears the relaxed Calibrated thresholds
+    // (0.70 / 0.75 / 0.70) but must still escalate under Uncalibrated (0.75 / 0.80 / 0.75).
+    let calibrated_moderate = ProgressAssessment::from_response(&budget_decision_response(
+        CalibrationKind::Calibrated,
+        (0.72, 0.76),
         BUDGET_VERDICT_EXTEND,
-        0.84,
-        0.16,
-        0.80,
+        0.78,
+        0.22,
+        0.76,
+    ))
+    .unwrap();
+    assert_eq!(
+        evaluate_progress_assessment(&calibrated_moderate),
+        ProgressDecision::Extend
+    );
+
+    let uncalibrated_moderate = ProgressAssessment::from_response(&budget_decision_response(
+        CalibrationKind::Uncalibrated,
+        (0.72, 0.76),
+        BUDGET_VERDICT_EXTEND,
+        0.78,
+        0.22,
+        0.76,
     ))
     .unwrap();
     assert!(matches!(
-        evaluate_progress_assessment(&uncalibrated_borderline),
-        ProgressDecision::Escalate { .. }
+        evaluate_progress_assessment(&uncalibrated_moderate),
+        ProgressDecision::Escalate { reason } if reason.contains("converging_healthy")
     ));
 
     let uncalibrated_strong = ProgressAssessment::from_response(&budget_decision_response(
         CalibrationKind::Uncalibrated,
-        (0.95, 0.90),
+        (0.78, 0.80),
         BUDGET_VERDICT_EXTEND,
-        0.95,
-        0.05,
-        0.90,
+        0.85,
+        0.15,
+        0.80,
     ))
     .unwrap();
     assert_eq!(
         evaluate_progress_assessment(&uncalibrated_strong),
         ProgressDecision::Extend
     );
+
+    let stuck_verdict = ProgressAssessment::from_response(&budget_decision_response(
+        CalibrationKind::Calibrated,
+        (0.95, 0.95),
+        BUDGET_VERDICT_ESCALATE,
+        0.10,
+        0.90,
+        0.95,
+    ))
+    .unwrap();
+    assert!(matches!(
+        evaluate_progress_assessment(&stuck_verdict),
+        ProgressDecision::Escalate { reason } if reason.contains("looping_or_stuck")
+    ));
 }
 
 #[tokio::test]
@@ -636,17 +666,18 @@ async fn tier2_uncalibrated_fallback_enforces_stricter_threshold_and_fails_close
         dimension: Dimension::ModelCalls,
     };
 
-    // 1. Generation-only provider with moderate scores (would pass Calibrated 0.80/0.75,
-    //    must escalate under stricter Uncalibrated 0.90/0.85 thresholds).
+    // 1. Generation-only provider with moderate scores (0.72 converging / 0.78 extend
+    //    clears Calibrated 0.70/0.75/0.70, but must escalate under stricter Uncalibrated
+    //    0.75/0.80/0.75 thresholds).
     let (provider, decide_calls) = MockBudgetDecisionProvider::new(vec![]);
     let (provider, gen_calls, _) = provider.with_tier2(
         false,
         vec![Ok(tier2_budget_json(
-            (0.84, 0.80),
+            (0.72, 0.76),
             BUDGET_VERDICT_EXTEND,
-            0.84,
-            0.16,
-            0.80,
+            0.78,
+            0.22,
+            0.76,
         ))],
     );
     let (mut state, shell, owner) =

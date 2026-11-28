@@ -11,7 +11,9 @@ use wrappers::{
     contains_nested_eval_wrapper, contains_unsupported_shell_form, effective_command_tokens,
     is_wrapper_query_command,
 };
-use write::is_write_command;
+use write::{
+    contains_output_redirection, is_idempotent_local_verification_command, is_write_command,
+};
 
 pub(super) fn classify_bash_command(command: &str) -> alan_agent_protocol::ToolCapability {
     let normalized = normalize_shell_line_continuations(command).to_lowercase();
@@ -39,6 +41,53 @@ pub(super) fn classify_bash_command(command: &str) -> alan_agent_protocol::ToolC
     } else {
         alan_agent_protocol::ToolCapability::Read
     }
+}
+
+/// Returns true only when every shell fragment is a read-only or strictly
+/// idempotent local verification command that produces no externally observable
+/// side effect when repeated.
+pub(super) fn is_idempotent_verification_command(command: &str) -> bool {
+    let normalized = normalize_shell_line_continuations(command).to_lowercase();
+    let fragments = split_shell_fragments(&normalized);
+
+    let mut saw_fragment = false;
+    for fragment in fragments {
+        let fragment = fragment.trim();
+        if fragment.is_empty() {
+            continue;
+        }
+        saw_fragment = true;
+        if !is_idempotent_verification_fragment(fragment) {
+            return false;
+        }
+    }
+    saw_fragment
+}
+
+fn is_idempotent_verification_fragment(fragment: &str) -> bool {
+    if contains_output_redirection(fragment) {
+        return false;
+    }
+
+    let tokens: Vec<&str> = fragment.split_whitespace().collect();
+    if tokens.is_empty() {
+        return false;
+    }
+    if contains_unsupported_shell_form(&tokens) {
+        return false;
+    }
+    if contains_nested_eval_wrapper(&tokens) {
+        return false;
+    }
+
+    let effective_tokens = effective_command_tokens(&tokens);
+    let effective_tokens = effective_tokens.as_slice();
+    if is_network_command(fragment, effective_tokens) {
+        return false;
+    }
+
+    is_safe_read_command(effective_tokens)
+        || is_idempotent_local_verification_command(effective_tokens)
 }
 
 fn classify_bash_fragment(fragment: &str) -> alan_agent_protocol::ToolCapability {
