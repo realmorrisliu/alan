@@ -309,6 +309,7 @@ impl HostBootConfig {
                 explicit_root_package_bindings: Vec::new(),
                 tool_secret_resolver: Some(Arc::new(secret_store)),
                 workspace_isolation_port: Some(cow_runtime.isolation_adapter().clone()),
+                boot_manifest: None,
             },
             ephemeral_rollout: false,
             no_resume_update: false,

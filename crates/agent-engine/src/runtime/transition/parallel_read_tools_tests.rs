@@ -153,6 +153,7 @@ async fn parallel_batch_state(runner: Arc<dyn ProcessRunner>) -> (RuntimeLoopSta
         args: Vec::new(),
         namespace: ExecNamespaceManifest::from_namespace(&ns),
         descriptors: Default::default(),
+        link_parent: false,
     };
     alan_ap::FileServer::write(&bootstrap, fid, 0, &serde_json::to_vec(&exec).unwrap())
         .await

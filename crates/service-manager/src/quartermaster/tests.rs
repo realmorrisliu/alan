@@ -92,6 +92,7 @@ fn invocation(namespace: Namespace, args: &[&str]) -> ProcessInvocation {
             args: args.iter().map(|value| (*value).to_string()).collect(),
             namespace: alan_kernel::ExecNamespaceManifest::default(),
             descriptors: BTreeMap::new(),
+            link_parent: false,
         },
     }
 }

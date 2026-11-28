@@ -353,6 +353,7 @@ impl EmbeddedConfig {
             explicit_root_package_bindings: Vec::new(),
             tool_secret_resolver,
             workspace_isolation_port: None,
+            boot_manifest: None,
         };
         Ok((sm_config, self.host_mounts_enabled))
     }

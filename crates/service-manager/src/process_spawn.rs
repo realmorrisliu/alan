@@ -123,6 +123,7 @@ async fn spawn_process_with_descriptors(
                 generation,
             ),
             descriptors: descriptors.clone(),
+            link_parent: false,
         };
         spawner
             .write(fid, 0, &serde_json::to_vec(&exec)?)

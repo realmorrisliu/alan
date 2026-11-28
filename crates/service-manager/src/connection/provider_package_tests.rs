@@ -438,6 +438,7 @@ async fn bundled_anthropic_provider_install_bind_invoke_and_uninstall_revokes_av
                 args: vec!["uninstall".to_string(), "anthropic-provider".to_string()],
                 namespace: alan_kernel::ExecNamespaceManifest::default(),
                 descriptors: BTreeMap::new(),
+                link_parent: false,
             },
         })
         .await;

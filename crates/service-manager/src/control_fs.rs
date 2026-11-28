@@ -3,10 +3,11 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
-use alan_kernel::Pid;
+use alan_kernel::{ExitReason, Pid};
 use async_trait::async_trait;
+use chrono::{Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 use crate::BootManifest;
 
@@ -39,6 +40,10 @@ pub struct UnitSnapshot {
     pub status: UnitStatus,
     pub pid: Option<u64>,
     pub attempts: u32,
+    pub generation: u64,
+    pub restarts: u64,
+    pub backoff_until: Option<String>,
+    pub last_exit_reason: Option<String>,
     pub error: Option<String>,
     pub degraded: bool,
 }
@@ -56,6 +61,10 @@ struct UnitState {
     status: UnitStatus,
     pid: Option<Pid>,
     attempts: u32,
+    generation: u64,
+    restarts: u64,
+    backoff_until: Option<String>,
+    last_exit_reason: Option<String>,
     error: Option<String>,
     degraded: bool,
     ready_once: bool,
@@ -67,6 +76,8 @@ pub struct ManagerState {
     status: SystemStatus,
     units: BTreeMap<String, UnitState>,
     retry_requests: Vec<String>,
+    retry_notify: Arc<Notify>,
+    shutdown_order: Vec<String>,
 }
 
 impl ManagerState {
@@ -80,6 +91,10 @@ impl ManagerState {
                         status: UnitStatus::Pending,
                         pid: None,
                         attempts: 0,
+                        generation: 0,
+                        restarts: 0,
+                        backoff_until: None,
+                        last_exit_reason: None,
                         error: None,
                         degraded: false,
                         ready_once: false,
@@ -92,6 +107,8 @@ impl ManagerState {
             status: SystemStatus::Booting,
             units,
             retry_requests: Vec::new(),
+            retry_notify: Arc::new(Notify::new()),
+            shutdown_order: Vec::new(),
         }
     }
 
@@ -99,11 +116,26 @@ impl ManagerState {
         self.status
     }
 
+    /// Return a notifier signalled whenever `/mnt/service-manager/ctl` queues a unit retry.
+    pub fn retry_notifier(&self) -> Arc<Notify> {
+        self.retry_notify.clone()
+    }
+
+    /// Return the exact sequence in which active units were stopped during shutdown.
+    pub fn shutdown_order(&self) -> &[String] {
+        &self.shutdown_order
+    }
+
     pub fn start_attempt(&mut self, name: &str, pid: Pid) -> Result<(), ErrorCode> {
         let state = self.units.get_mut(name).ok_or(ErrorCode::NotFound)?;
+        if state.generation > 0 {
+            state.restarts = state.restarts.saturating_add(1);
+        }
+        state.generation = state.generation.saturating_add(1);
         state.attempts = state.attempts.saturating_add(1);
         state.pid = Some(pid);
         state.status = UnitStatus::Starting;
+        state.backoff_until = None;
         state.error = None;
         Ok(())
     }
@@ -113,6 +145,7 @@ impl ManagerState {
         state.attempts = state.attempts.saturating_add(1);
         state.pid = None;
         state.status = UnitStatus::Starting;
+        state.backoff_until = None;
         state.error = Some(error.into());
         Ok(())
     }
@@ -121,6 +154,7 @@ impl ManagerState {
         let state = self.units.get_mut(name).ok_or(ErrorCode::NotFound)?;
         state.status = UnitStatus::Ready;
         state.ready_once = true;
+        state.backoff_until = None;
         state.error = None;
         if self
             .units
@@ -147,6 +181,21 @@ impl ManagerState {
         exit_code: i32,
         stable_for_ms: u64,
     ) -> Result<RestartDecision, ErrorCode> {
+        self.record_exit_with_reason(
+            name,
+            exit_code,
+            ExitReason::from_exit_code(exit_code),
+            stable_for_ms,
+        )
+    }
+
+    pub fn record_exit_with_reason(
+        &mut self,
+        name: &str,
+        exit_code: i32,
+        reason: ExitReason,
+        stable_for_ms: u64,
+    ) -> Result<RestartDecision, ErrorCode> {
         let unit = self.manifest.get(name).ok_or(ErrorCode::NotFound)?;
         let required = unit.required;
         let should_restart = unit.should_restart(exit_code);
@@ -154,34 +203,61 @@ impl ManagerState {
         let stable_reset_ms = unit.stable_reset_ms;
         let initial_backoff_ms = unit.initial_backoff_ms;
         let max_backoff_ms = unit.max_backoff_ms;
-        let (ready_once, attempts, terminal) = {
+        let exit_reason = format_exit_reason(reason, exit_code);
+        let (ready_once, delay_ms, terminal) = {
             let state = self.units.get_mut(name).ok_or(ErrorCode::NotFound)?;
             state.pid = None;
             state.error = Some(format!("exit {exit_code}"));
+            state.last_exit_reason = Some(exit_reason);
             if stable_for_ms >= stable_reset_ms {
                 state.attempts = 1;
             }
-            let terminal = if !should_restart {
+            if !should_restart {
                 state.status = UnitStatus::Exited;
-                true
+                state.backoff_until = None;
+                (state.ready_once, 0, true)
             } else if state.attempts > restart_limit {
                 state.status = UnitStatus::Failed;
-                true
+                state.backoff_until = None;
+                (state.ready_once, 0, true)
             } else {
+                let shift = state.attempts.saturating_sub(1).min(62);
+                let delay = initial_backoff_ms
+                    .saturating_mul(1_u64 << shift)
+                    .min(max_backoff_ms);
                 state.status = UnitStatus::Backoff;
-                false
-            };
-            (state.ready_once, state.attempts, terminal)
+                state.backoff_until = Some(backoff_deadline_rfc3339(delay));
+                (state.ready_once, delay, false)
+            }
         };
         if terminal {
             return Ok(self.terminal_decision(name, required, ready_once));
         }
-        let shift = attempts.saturating_sub(1).min(62);
-        Ok(RestartDecision::RestartAfterMs(
-            initial_backoff_ms
-                .saturating_mul(1_u64 << shift)
-                .min(max_backoff_ms),
-        ))
+        Ok(RestartDecision::RestartAfterMs(delay_ms))
+    }
+
+    /// Record that a downstream unit was cleanly stopped for a `RestForOne` cascade restart.
+    pub fn record_cascade_stop(&mut self, name: &str, trigger_unit: &str) -> Result<(), ErrorCode> {
+        let state = self.units.get_mut(name).ok_or(ErrorCode::NotFound)?;
+        state.pid = None;
+        state.status = UnitStatus::Pending;
+        state.backoff_until = None;
+        state.error = None;
+        state.last_exit_reason = Some(format!("rest-for-one cascade ({trigger_unit})"));
+        Ok(())
+    }
+
+    /// Record that a unit was stopped during graceful reverse-topological shutdown.
+    pub fn record_stopped(&mut self, name: &str, was_running: bool) -> Result<(), ErrorCode> {
+        let state = self.units.get_mut(name).ok_or(ErrorCode::NotFound)?;
+        if was_running {
+            state.pid = None;
+            state.status = UnitStatus::Exited;
+            state.backoff_until = None;
+            state.last_exit_reason = Some(format_exit_reason(ExitReason::Normal, 0));
+            self.shutdown_order.push(name.to_string());
+        }
+        Ok(())
     }
 
     fn terminal_decision(
@@ -212,9 +288,11 @@ impl ManagerState {
         }
         state.status = UnitStatus::Pending;
         state.attempts = 0;
+        state.backoff_until = None;
         state.error = None;
         state.degraded = false;
         self.retry_requests.push(name.to_string());
+        self.retry_notify.notify_one();
         self.status = if self.units.values().any(|unit| unit.degraded) {
             SystemStatus::Degraded
         } else {
@@ -234,6 +312,10 @@ impl ManagerState {
             status: state.status,
             pid: state.pid.map(|pid| pid.0),
             attempts: state.attempts,
+            generation: state.generation,
+            restarts: state.restarts,
+            backoff_until: state.backoff_until.clone(),
+            last_exit_reason: state.last_exit_reason.clone(),
             error: state.error.clone(),
             degraded: state.degraded,
         })
@@ -256,6 +338,10 @@ enum Node {
     UnitPid(String),
     UnitAttempts(String),
     UnitError(String),
+    UnitGeneration(String),
+    UnitRestarts(String),
+    UnitBackoffUntil(String),
+    UnitLastExitReason(String),
 }
 
 struct FidState {
@@ -311,6 +397,10 @@ impl ServiceManagerFs {
                 "pid" => Ok(Node::UnitPid(unit.clone())),
                 "attempts" => Ok(Node::UnitAttempts(unit.clone())),
                 "error" => Ok(Node::UnitError(unit.clone())),
+                "generation" => Ok(Node::UnitGeneration(unit.clone())),
+                "restarts" => Ok(Node::UnitRestarts(unit.clone())),
+                "backoff_until" => Ok(Node::UnitBackoffUntil(unit.clone())),
+                "last_exit_reason" => Ok(Node::UnitLastExitReason(unit.clone())),
                 _ => Err(ErrorCode::NotFound),
             },
             _ => Err(ErrorCode::NotDirectory),
@@ -325,7 +415,10 @@ impl ServiceManagerFs {
             Node::Degraded => format!("{}\n", state.status == SystemStatus::Degraded).into_bytes(),
             Node::Ctl => b"retry <unit>\n".to_vec(),
             Node::Units => state.unit_names().join("\n").into_bytes(),
-            Node::Unit(_) => b"status\npid\nattempts\nerror".to_vec(),
+            Node::Unit(_) => {
+                b"status\npid\nattempts\nerror\ngeneration\nrestarts\nbackoff_until\nlast_exit_reason"
+                    .to_vec()
+            }
             Node::UnitStatus(name) => format!(
                 "{}\n",
                 unit_status_name(state.units.get(name).ok_or(ErrorCode::NotFound)?.status)
@@ -349,6 +442,38 @@ impl ServiceManagerFs {
                     .get(name)
                     .ok_or(ErrorCode::NotFound)?
                     .error
+                    .as_deref()
+                    .unwrap_or("")
+            )
+            .into_bytes(),
+            Node::UnitGeneration(name) => format!(
+                "{}\n",
+                state.units.get(name).ok_or(ErrorCode::NotFound)?.generation
+            )
+            .into_bytes(),
+            Node::UnitRestarts(name) => format!(
+                "{}\n",
+                state.units.get(name).ok_or(ErrorCode::NotFound)?.restarts
+            )
+            .into_bytes(),
+            Node::UnitBackoffUntil(name) => format!(
+                "{}\n",
+                state
+                    .units
+                    .get(name)
+                    .ok_or(ErrorCode::NotFound)?
+                    .backoff_until
+                    .as_deref()
+                    .unwrap_or("")
+            )
+            .into_bytes(),
+            Node::UnitLastExitReason(name) => format!(
+                "{}\n",
+                state
+                    .units
+                    .get(name)
+                    .ok_or(ErrorCode::NotFound)?
+                    .last_exit_reason
                     .as_deref()
                     .unwrap_or("")
             )
@@ -519,6 +644,20 @@ fn unit_status_name(status: UnitStatus) -> &'static str {
     }
 }
 
+fn format_exit_reason(reason: ExitReason, exit_code: i32) -> String {
+    let label = match reason {
+        ExitReason::Normal => "normal",
+        ExitReason::Failed => "failed",
+        ExitReason::Cancelled => "cancelled",
+    };
+    format!("{label} (exit {exit_code})")
+}
+
+fn backoff_deadline_rfc3339(delay_ms: u64) -> String {
+    let delta = ChronoDuration::milliseconds(delay_ms.min(i64::MAX as u64) as i64);
+    (Utc::now() + delta).to_rfc3339()
+}
+
 fn qid(node: &Node) -> Qid {
     let kind = match node {
         Node::Root | Node::Units | Node::Unit(_) => FileKind::Dir,
@@ -576,6 +715,67 @@ mod tests {
         assert_eq!(
             manifest.get("route").unwrap().restart,
             crate::RestartPolicy::OnFailure
+        );
+    }
+
+    #[tokio::test]
+    async fn unit_telemetry_files_reflect_generation_restarts_backoff_and_exit_reason() {
+        let manifest = BootManifest::system().unwrap();
+        let state = Arc::new(Mutex::new(ManagerState::new(manifest)));
+        let fs = Arc::new(ServiceManagerFs::new(state.clone()));
+        let shell = Shell::new(InProcessTransport::new(fs));
+
+        {
+            let mut s = state.lock().await;
+            s.start_attempt("package", Pid(10)).unwrap();
+            s.mark_ready("package").unwrap();
+        }
+        assert_eq!(
+            shell.cat("/units/package/generation").await.unwrap(),
+            b"1\n"
+        );
+        assert_eq!(shell.cat("/units/package/restarts").await.unwrap(), b"0\n");
+        assert_eq!(
+            shell.cat("/units/package/backoff_until").await.unwrap(),
+            b"\n"
+        );
+        assert_eq!(
+            shell.cat("/units/package/last_exit_reason").await.unwrap(),
+            b"\n"
+        );
+
+        {
+            let mut s = state.lock().await;
+            let decision = s
+                .record_exit_with_reason("package", 130, ExitReason::Cancelled, 0)
+                .unwrap();
+            assert!(matches!(decision, RestartDecision::RestartAfterMs(_)));
+        }
+        let backoff =
+            String::from_utf8(shell.cat("/units/package/backoff_until").await.unwrap()).unwrap();
+        assert!(chrono::DateTime::parse_from_rfc3339(backoff.trim()).is_ok());
+        assert_eq!(
+            shell.cat("/units/package/last_exit_reason").await.unwrap(),
+            b"cancelled (exit 130)\n"
+        );
+
+        {
+            let mut s = state.lock().await;
+            s.start_attempt("package", Pid(11)).unwrap();
+            s.mark_ready("package").unwrap();
+        }
+        assert_eq!(
+            shell.cat("/units/package/generation").await.unwrap(),
+            b"2\n"
+        );
+        assert_eq!(shell.cat("/units/package/restarts").await.unwrap(), b"1\n");
+        assert_eq!(
+            shell.cat("/units/package/backoff_until").await.unwrap(),
+            b"\n"
+        );
+        assert_eq!(
+            shell.cat("/units/package/last_exit_reason").await.unwrap(),
+            b"cancelled (exit 130)\n"
         );
     }
 }

@@ -182,6 +182,7 @@ pub(super) async fn tool_test_root(runner: Arc<dyn ProcessRunner>) -> Arc<dyn Fi
         args: Vec::new(),
         namespace: ExecNamespaceManifest::from_namespace(&child_namespace),
         descriptors: Default::default(),
+        link_parent: false,
     };
     bootstrap
         .write(fid, 0, &serde_json::to_vec(&exec).unwrap())

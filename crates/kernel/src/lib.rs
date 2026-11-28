@@ -24,8 +24,9 @@ pub use bootstrap::KernelRoot;
 pub use mountfs::{LiveNamespace, MountFs};
 pub use namespace::{Access, Namespace, Resolved, Unreachable};
 pub use process::{
-    Credentials, ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount, ExecSpec, Pid,
-    Process, ProcessTable, Status,
+    CANCELLED_EXIT_CODE, Credentials, ExecNamespaceAccess, ExecNamespaceManifest,
+    ExecNamespaceMount, ExecSpec, ExitReason, Pid, Process, ProcessExit, ProcessTable,
+    ProcessWaitRecord, Status,
 };
 pub use procfs::{ProcFs, ProcessInvocation, ProcessOutcome, ProcessRunner};
 pub use srvfs::SrvFs;

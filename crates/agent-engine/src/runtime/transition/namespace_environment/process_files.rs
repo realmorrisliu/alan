@@ -178,6 +178,7 @@ impl NamespaceProcessFiles {
                     args.clone(),
                     namespace,
                     BTreeMap::new(),
+                    false,
                     retained,
                 )
                 .await
@@ -219,6 +220,7 @@ impl NamespaceProcessFiles {
                 mounts,
             },
             BTreeMap::new(),
+            false,
             &mut None,
         )
         .await
@@ -229,6 +231,7 @@ impl NamespaceProcessFiles {
         request: &AgentExecutableRequest,
         namespace: ProcessNamespaceManifest,
         descriptors: BTreeMap<u32, String>,
+        link_parent: bool,
     ) -> Result<String> {
         let request =
             serde_json::to_string(request).context("serialize /bin/alan-agent launch request")?;
@@ -237,6 +240,7 @@ impl NamespaceProcessFiles {
             vec![request],
             namespace,
             descriptors,
+            link_parent,
             &mut None,
         )
         .await
@@ -260,6 +264,7 @@ impl NamespaceProcessFiles {
         args: Vec<String>,
         namespace: ProcessNamespaceManifest,
         descriptors: BTreeMap<u32, String>,
+        link_parent: bool,
         retained: &mut Option<String>,
     ) -> Result<String> {
         let exec_spec = serde_json::to_vec(&ProcessExecSpec {
@@ -267,6 +272,7 @@ impl NamespaceProcessFiles {
             args,
             namespace,
             descriptors,
+            link_parent,
         })
         .context(CloneNotOpened)
         .context("serialize exec spec")?;
@@ -295,49 +301,27 @@ impl NamespaceProcessFiles {
 
     async fn read_process_result_until_exit(&self, pid: &str) -> Result<NamespaceProcessResult> {
         let client = self.client();
-        let status_path = format!("/proc/{pid}/status");
-        let exit_path = format!("/proc/{pid}/exit");
         let output_path = format!("/proc/{pid}/io/output");
-        loop {
-            let status = String::from_utf8(
+        let wait_event = self.wait_for_process_exit(pid).await?;
+        let exit_code = wait_event.exit_code;
+        let output = if client
+            .stat_path(&output_path)
+            .await
+            .with_context(|| format!("stat {output_path}"))?
+            .length
+            == 0
+        {
+            String::new()
+        } else {
+            String::from_utf8(
                 client
-                    .read_file(&status_path)
+                    .read_file(&output_path)
                     .await
-                    .with_context(|| format!("read {status_path}"))?,
+                    .with_context(|| format!("read {output_path}"))?,
             )
-            .context("process status is not utf8")?;
-            if status.trim() == "exited" {
-                let exit_code = String::from_utf8(
-                    client
-                        .read_file(&exit_path)
-                        .await
-                        .with_context(|| format!("read {exit_path}"))?,
-                )
-                .context("process exit code is not utf8")?
-                .trim()
-                .parse::<i32>()
-                .context("process exit code is not an integer")?;
-                let output = if client
-                    .stat_path(&output_path)
-                    .await
-                    .with_context(|| format!("stat {output_path}"))?
-                    .length
-                    == 0
-                {
-                    String::new()
-                } else {
-                    String::from_utf8(
-                        client
-                            .read_file(&output_path)
-                            .await
-                            .with_context(|| format!("read {output_path}"))?,
-                    )
-                    .context("process output is not utf8")?
-                };
-                return Ok(NamespaceProcessResult { output, exit_code });
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+            .context("process output is not utf8")?
+        };
+        Ok(NamespaceProcessResult { output, exit_code })
     }
 }
 

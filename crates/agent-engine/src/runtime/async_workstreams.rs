@@ -31,13 +31,14 @@ use super::subagent_tool::{
     ActionProgressTracker, PreparedChildKind, SlotExecutionError, TrackedWorkstream,
     finalize_action_record, finalize_tracked_workstream,
 };
-use super::transition::{NamespaceAgentFiles, NamespaceProcessFiles};
+use super::transition::{
+    ChildEventWake, ChildEventWatchers, NamespaceAgentFiles, NamespaceProcessFiles,
+};
 use super::write_isolation::{SharedWriteGuard, WorkspaceMergeHandoff};
 
 const MAX_RECENT_TERMINAL_WORKSTREAMS: usize = 64;
 const DEFAULT_GRACEFUL_QUIESCE_CAP: Duration = Duration::from_secs(3);
 const MIN_FORCE_QUIESCE_WAIT: Duration = Duration::from_millis(500);
-const QUIESCE_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DISCARD_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Lifecycle state of an in-instance asynchronously dispatched child workstream.
@@ -212,6 +213,7 @@ struct RegistryState {
 #[derive(Clone, Default)]
 pub struct AsyncWorkstreamRegistry {
     inner: Arc<Mutex<RegistryState>>,
+    active_changed: Arc<tokio::sync::Notify>,
 }
 
 impl std::fmt::Debug for AsyncWorkstreamRegistry {
@@ -289,6 +291,19 @@ impl AsyncWorkstreamRegistry {
             .expect("async workstream registry poisoned")
             .active
             .len()
+    }
+
+    /// Wait until no async workstreams remain active without polling.
+    pub async fn wait_until_idle(&self) {
+        loop {
+            let notified = self.active_changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.active_count() == 0 {
+                return;
+            }
+            notified.await;
+        }
     }
 
     /// Whether permanent shutdown has closed this registry to new background workstreams.
@@ -532,6 +547,8 @@ impl AsyncWorkstreamRegistry {
         entry.info.merge_handoff = merge_handoff;
         entry.info.finished_at_ms = Some(now_ms());
         push_recent_terminal(&mut state.recent_terminal, entry.info);
+        drop(state);
+        self.active_changed.notify_waiters();
     }
 
     /// Gracefully quiesce all active child workstreams, flush checkpoints, stop child
@@ -676,6 +693,8 @@ async fn graceful_stop_child(
         return;
     }
 
+    let mut watchers = ChildEventWatchers::spawn(process_files, agent_files, pid);
+
     if let Err(error) = cancel_pending_child_requests(agent_files).await {
         warn!(pid = %pid, %error, "Failed to cancel pending child requests before interrupt");
     }
@@ -687,21 +706,52 @@ async fn graceful_stop_child(
         return;
     }
 
-    let deadline = Instant::now() + grace_timeout;
+    let deadline = tokio::time::Instant::now() + grace_timeout;
     let mut last_discard_at: Option<Instant> = None;
-    while Instant::now() < deadline && !cancel.is_cancelled() {
+    while tokio::time::Instant::now() < deadline && !cancel.is_cancelled() {
+        watchers.mark_events_seen();
         if matches!(process_files.read_process_exit_code(pid).await, Ok(Some(_))) {
             return;
         }
         let _ = cancel_pending_child_requests(agent_files).await;
+        let mut discard_retry_deadline = None;
         if let Ok(activity) = agent_files.read_ui_activity_snapshot().await
             && activity.state == UiActivityState::Paused
-            && last_discard_at.is_none_or(|prev| prev.elapsed() >= DISCARD_RETRY_INTERVAL)
         {
-            let _ = agent_files.write_machine_ctl("queue-v1 discard").await;
-            last_discard_at = Some(Instant::now());
+            if last_discard_at.is_none_or(|prev| prev.elapsed() >= DISCARD_RETRY_INTERVAL) {
+                let _ = agent_files.write_machine_ctl("queue-v1 discard").await;
+                last_discard_at = Some(Instant::now());
+            }
+            if let Some(last) = last_discard_at {
+                let rem = DISCARD_RETRY_INTERVAL.saturating_sub(last.elapsed());
+                discard_retry_deadline = Some(tokio::time::Instant::now() + rem);
+            }
         }
-        tokio::time::sleep(QUIESCE_POLL_INTERVAL).await;
+
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return,
+            _ = tokio::time::sleep_until(deadline) => return,
+            wake = watchers.next_wake(), if watchers.has_open_stream() => {
+                match wake {
+                    ChildEventWake::ProcessExited(Ok(_)) => return,
+                    ChildEventWake::ProcessExited(Err(_)) | ChildEventWake::AgentEvents => {}
+                    ChildEventWake::StreamsClosed => {
+                        if matches!(process_files.read_process_exit_code(pid).await, Ok(Some(_))) {
+                            return;
+                        }
+                        cancel.cancel();
+                        return;
+                    }
+                }
+            }
+            _ = async {
+                match discard_retry_deadline {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending().await,
+                }
+            } => {}
+        }
     }
 }
 

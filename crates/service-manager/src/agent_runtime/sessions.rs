@@ -217,6 +217,7 @@ impl AgentRuntimeService {
                 namespace_generation,
             ),
             descriptors,
+            link_parent: false,
         };
         if let Err(error) = commit_clone(&spawner, fid, &exec).await {
             self.pending_roots

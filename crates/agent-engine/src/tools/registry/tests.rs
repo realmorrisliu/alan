@@ -453,6 +453,7 @@ async fn process_server_rejects_unmounted_tool() {
             args: vec!["{}".to_string()],
             namespace: alan_kernel::ExecNamespaceManifest::default(),
             descriptors: Default::default(),
+            link_parent: false,
         },
     };
 
@@ -501,6 +502,7 @@ async fn process_server_reconciles_late_bound_authority_before_tool_execution() 
             args: vec![r#"{"input":"hello"}"#.to_string()],
             namespace: alan_kernel::ExecNamespaceManifest::default(),
             descriptors: Default::default(),
+            link_parent: false,
         },
     };
 
@@ -555,6 +557,7 @@ async fn process_server_uses_spawning_agent_execution_binding() {
             args: vec!["{}".to_string()],
             namespace: alan_kernel::ExecNamespaceManifest::default(),
             descriptors: Default::default(),
+            link_parent: false,
         },
     };
 

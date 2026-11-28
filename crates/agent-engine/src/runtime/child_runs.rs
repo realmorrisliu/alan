@@ -144,6 +144,7 @@ impl ChildRunRecord {
 #[derive(Debug, Clone, Default)]
 pub struct ChildRunRegistry {
     inner: Arc<RwLock<HashMap<String, ChildRunRecord>>>,
+    termination_notify: Arc<tokio::sync::Notify>,
 }
 
 impl ChildRunRegistry {
@@ -305,7 +306,10 @@ impl ChildRunRegistry {
             mode,
             requested_at_ms: now,
         });
-        Ok(record.clone())
+        let updated = record.clone();
+        drop(records);
+        self.termination_notify.notify_waiters();
+        Ok(updated)
     }
 
     pub fn termination_request(&self, child_run_id: &str) -> Option<ChildRunTerminationRequest> {
@@ -314,6 +318,11 @@ impl ChildRunRegistry {
             .expect("child run registry poisoned")
             .get(child_run_id)
             .and_then(|record| record.termination.clone())
+    }
+
+    /// Wait for any explicit child termination request to be recorded.
+    pub(crate) fn termination_notified(&self) -> tokio::sync::futures::Notified<'_> {
+        self.termination_notify.notified()
     }
 
     fn update(&self, child_run_id: &str, update: impl FnOnce(&mut ChildRunRecord, u64)) {
