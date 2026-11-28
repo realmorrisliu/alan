@@ -6,15 +6,12 @@ Status: formal sample not started. Bounded read-only pilot outcomes are recorded
 | Repository | Representative work | Independent acceptance |
 | --- | --- | --- |
 | Alan | Rust repair, multi-file caller update, failure diagnosis, review, cancel/recover, long output | Relevant Rust checks, exact diff, lifecycle and native terminal evidence |
-| realmorrisliu.com | TypeScript logic/regression, Astro component/i18n/route, content/schema repair, failed-check diagnosis, review/recovery | Actual pnpm check, relevant Node tests, pnpm build when applicable, output and local visual checks |
+| Active TS/`pnpm` web repos (`thinksmart.systems`, `alan/website`, optional `realmorrisliu.com`) | TypeScript logic/regression, Vite/Solid/Astro/Tailwind component/route/shader/typecheck/build repair, failed-check diagnosis, review/recovery | Actual `pnpm typecheck` / `pnpm check`, relevant Node tests, `pnpm build` when applicable, output and local visual checks |
 
-Second repository: `/Users/morris/Developer/github.com/realmorrisliu/realmorrisliu.com`.
-At interview time its active branch had uncommitted work. Do not switch, stash or
-clean it. Record an approved source commit and create a separate worktree. Main
-pushes deploy the website; this pilot does not push, publish or deploy. Site builds
-may download prebuilt WASM/font assets; qualify those actual network needs without
-credentials or broad Host access. Rust WASM and Python tooling enter only for tasks
-that actually touch those areas. This document authorizes no website task itself.
+Second TS/`pnpm` web cohort (amended 2026-11-28 to match active work instead of `realmorrisliu.com`-only):
+- Primary active targets: `/Users/morris/Developer/github.com/thinksmart-systems/thinksmart.systems` and `alan/website/` (`alanworks.app`).
+- Optional secondary target: `/Users/morris/Developer/github.com/realmorrisliu/realmorrisliu.com` (at interview time its active branch had uncommitted work; do not switch, stash or clean it).
+Record approved source commits and create separate isolated worktrees. Production branch pushes deploy websites; qualification work does not push, publish or deploy. Site builds may download prebuilt WASM/font assets; qualify those actual network needs without credentials or broad Host access. Rust WASM and Python tooling enter only for tasks that actually touch those areas. This document authorizes no website task itself.
 
 Freeze before formal sampling: task-selection rubric, repository/family counts,
 expected behavior and protected paths per task, finite budgets, timeout semantics,
