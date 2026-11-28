@@ -1,3 +1,4 @@
+use super::catalog::build_gemini_thinking_config;
 use super::*;
 use crate::ReasoningEffort;
 
@@ -371,4 +372,61 @@ async fn express_mode_model_catalog_returns_none_while_baseline_exposes_gemini_2
     assert!(slugs.contains(&"gemini-3-flash-preview"));
     assert!(slugs.contains(&"gemini-3.1-pro-preview"));
     assert!(slugs.contains(&"gemini-3.1-flash-lite-preview"));
+}
+
+#[test]
+fn structured_schema_request_serializes_response_json_schema_and_bounds_thinking() {
+    let client = GoogleGeminiGenerateContentClient::with_params("p", "global", "gemini-4-neon");
+    let schema = serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["answers"],
+        "properties": {
+            "answers": { "type": "object" }
+        }
+    });
+    let req = crate::GenerationRequest::new()
+        .with_user_message("evaluate")
+        .with_max_tokens(3000)
+        .with_response_schema(schema.clone());
+    let built = client.build_request(req, false).unwrap();
+    let wire = serde_json::to_value(&built).unwrap();
+
+    assert_eq!(
+        wire["generationConfig"]["responseMimeType"],
+        "application/json"
+    );
+    assert_eq!(wire["generationConfig"]["responseJsonSchema"], schema);
+    assert!(wire["generationConfig"].get("responseSchema").is_none());
+    assert_eq!(
+        wire["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+        "low"
+    );
+    assert!(
+        wire["generationConfig"]["thinkingConfig"]
+            .get("includeThoughts")
+            .is_none()
+    );
+
+    let flash_cfg = build_gemini_request_thinking_config("gemini-3-flash-preview", None, true)
+        .unwrap()
+        .unwrap();
+    assert_eq!(flash_cfg.thinking_level.as_deref(), Some("minimal"));
+    assert_eq!(flash_cfg.include_thoughts, None);
+
+    let g25_flash_cfg = build_gemini_request_thinking_config("gemini-2.5-flash", None, true)
+        .unwrap()
+        .unwrap();
+    assert_eq!(g25_flash_cfg.thinking_budget, Some(0));
+
+    let g25_pro_cfg = build_gemini_request_thinking_config("gemini-2.5-pro", None, true)
+        .unwrap()
+        .unwrap();
+    assert_eq!(g25_pro_cfg.thinking_budget, Some(128));
+
+    assert!(
+        build_gemini_request_thinking_config("gemini-2.0-flash", None, true)
+            .unwrap()
+            .is_none()
+    );
 }

@@ -208,6 +208,50 @@ fn supported_actions_allow_generate_content(actions: &Value) -> bool {
     }
 }
 
+/// Build `thinkingConfig` for a `GenerateContent` request.
+///
+/// When `reasoning_effort` is omitted on a schema-constrained structured-output
+/// request (such as Tier 2 fallback decisions), bound thinking to the lowest
+/// model-supported setting and omit thought summaries so thinking tokens do not
+/// exhaust `maxOutputTokens` before JSON output is emitted.
+pub(super) fn build_gemini_request_thinking_config(
+    model: &str,
+    reasoning_effort: Option<ReasoningEffort>,
+    has_response_schema: bool,
+) -> Result<Option<ThinkingConfig>> {
+    if reasoning_effort.is_some() || !has_response_schema {
+        return build_gemini_thinking_config(model, reasoning_effort);
+    }
+
+    let version = parse_gemini_version(model);
+    if let Some(version) = version
+        && version.major >= 3
+    {
+        let level = if is_gemini_flash(model) {
+            "minimal"
+        } else {
+            "low"
+        };
+        return Ok(Some(ThinkingConfig {
+            include_thoughts: None,
+            thinking_level: Some(level.to_string()),
+            thinking_budget: None,
+        }));
+    }
+
+    if version == Some(GeminiVersion { major: 2, minor: 5 }) {
+        // Gemini 2.5 Pro rejects budget=0; 128 is its documented minimum budget.
+        let budget = if is_gemini_pro(model) { 128 } else { 0 };
+        return Ok(Some(ThinkingConfig {
+            include_thoughts: None,
+            thinking_level: None,
+            thinking_budget: Some(budget),
+        }));
+    }
+
+    Ok(None)
+}
+
 /// Map canonical [`ReasoningEffort`] to Vertex AI `thinkingConfig`.
 ///
 /// Sets `includeThoughts: true` whenever thinking is active so thought parts

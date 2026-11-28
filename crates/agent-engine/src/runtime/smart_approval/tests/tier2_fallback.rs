@@ -550,3 +550,101 @@ async fn tier2_double_failure_error_timeout_and_malformed_fail_closed_to_human()
     assert_eq!(sys1_4.escalations, 1);
     assert_eq!(sys1_4.calibration, UiSystem1Calibration::Unavailable);
 }
+
+#[tokio::test]
+async fn tier2_malformed_diagnostics_surface_finish_reason_without_leaking_secrets() {
+    let mut smart_empty =
+        MockSmartProvider::new(Err("decisions endpoint 404".into()), Ok("   ".to_string()));
+    smart_empty.generate_finish_reason = Some("MAX_TOKENS".to_string());
+    let auth1 = Arc::new(MockSmartAuthority {
+        smart: Ok(build_captured_profile("smart-eval", smart_empty)),
+        guardian: Err("unused".into()),
+    });
+    let (env1, mut machine1, _, _) = setup_smart_env_with_shell(
+        MockSmartProvider::new(Err("unused".into()), Err("unused".into())),
+        Some(auth1),
+        Arc::new(AtomicU64::new(1)),
+    )
+    .await;
+    let mut details1 = json!({"tool_name": "bash"});
+    let (out1, events1) = invoke_smart_review(
+        &env1,
+        &mut machine1,
+        "cargo test",
+        Some("smart-eval"),
+        None,
+        GuardianConfig::default(),
+        &mut details1,
+    )
+    .await;
+    assert_eq!(out1, EscalationReviewOutcome::Human);
+    let reason1 = details1["smart_approval"]["reason"].as_str().unwrap();
+    assert!(reason1.contains("empty response"), "{reason1}");
+    assert!(reason1.contains("finish_reason=MAX_TOKENS"), "{reason1}");
+    assert!(events1.iter().any(|ev| {
+        matches!(ev, Event::Warning { message } if message.contains("finish_reason=MAX_TOKENS"))
+    }));
+
+    let mut smart_secret = MockSmartProvider::new(
+        Err("decisions endpoint 404".into()),
+        Ok(r#"{"answers":{"verdict":"sk-leak-secret"}}"#.to_string()),
+    );
+    smart_secret.generate_finish_reason = Some("STOP".to_string());
+    let auth2 = Arc::new(MockSmartAuthority {
+        smart: Ok(build_captured_profile("smart-eval", smart_secret)),
+        guardian: Err("unused".into()),
+    });
+    let (env2, mut machine2, _, _) = setup_smart_env_with_shell(
+        MockSmartProvider::new(Err("unused".into()), Err("unused".into())),
+        Some(auth2),
+        Arc::new(AtomicU64::new(1)),
+    )
+    .await;
+    let mut details2 = json!({"tool_name": "bash"});
+    let (out2, events2) = invoke_smart_review(
+        &env2,
+        &mut machine2,
+        "cargo test",
+        Some("smart-eval"),
+        None,
+        GuardianConfig::default(),
+        &mut details2,
+    )
+    .await;
+    assert_eq!(out2, EscalationReviewOutcome::Human);
+    let reason2 = details2["smart_approval"]["reason"].as_str().unwrap();
+    assert!(reason2.contains("malformed"), "{reason2}");
+    assert!(!reason2.contains("sk-leak-secret"), "{reason2}");
+    for ev in events2 {
+        if let Event::Warning { message } = ev {
+            assert!(!message.contains("sk-leak-secret"), "{message}");
+        }
+    }
+}
+
+#[test]
+fn guardian_default_timeout_and_native_deadline_leave_tier2_headroom() {
+    use crate::runtime::smart_approval::tier2_fallback::{
+        MAX_NATIVE_DECISION_DEADLINE_MS, remaining_native_decision_ms,
+    };
+
+    let cfg = GuardianConfig::default();
+    assert_eq!(cfg.timeout_secs, 60);
+
+    let full_deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(cfg.timeout_secs);
+    let native_ms = remaining_native_decision_ms(full_deadline).expect("non-zero native deadline");
+    assert!(
+        native_ms <= MAX_NATIVE_DECISION_DEADLINE_MS,
+        "native deadline {native_ms} must stay capped at {MAX_NATIVE_DECISION_DEADLINE_MS}"
+    );
+    assert!(
+        (cfg.timeout_secs * 1000) - native_ms >= 45_000,
+        "Tier 2 must keep at least 45s headroom after a capped Tier 1 timeout"
+    );
+
+    let short_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    let short_native_ms =
+        remaining_native_decision_ms(short_deadline).expect("non-zero short deadline");
+    assert!(short_native_ms <= 3_000);
+}

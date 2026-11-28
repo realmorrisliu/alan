@@ -19,6 +19,19 @@ use crate::{
     SharedLlmProvider, StreamChunk,
 };
 
+/// Safe, bounded diagnostic category attached to [`MalformedDecisionResponse`] errors
+/// from structured-generation fallback decoding. Never embeds raw model text or secrets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SafeMalformedDecisionDetail(pub String);
+
+impl std::fmt::Display for SafeMalformedDecisionDetail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SafeMalformedDecisionDetail {}
+
 const FALLBACK_SYSTEM_PROMPT: &str = "\
 You are a strict typed decision evaluator. \
 Evaluate each question in `questions` solely against `untrusted_state`. \
@@ -256,7 +269,7 @@ pub fn build_fallback_generation_request(request: &DecisionRequest) -> Result<Ge
         "untrusted_state": &request.state,
         "questions": &request.questions,
     }))?;
-    let max_tokens = (256_i32 + 128_i32 * request.questions.len() as i32).clamp(512, 4096);
+    let max_tokens = (2048_i32 + 384_i32 * request.questions.len() as i32).clamp(2048, 8192);
 
     Ok(GenerationRequest::new()
         .with_system_prompt(system_prompt)
@@ -274,18 +287,17 @@ pub fn decode_fallback_generation_response(
     request: &DecisionRequest,
     generation: GenerationResponse,
 ) -> Result<DecisionResponse> {
-    if !generation.tool_calls.is_empty()
-        || generation.finish_reason.as_deref() == Some("tool_calls")
-    {
-        return Err(
-            anyhow::anyhow!("fallback decision response unexpectedly emitted tool calls")
-                .context(MalformedDecisionResponse),
-        );
+    let finish_reason = generation.finish_reason.as_deref();
+    if !generation.tool_calls.is_empty() || finish_reason == Some("tool_calls") {
+        let detail = format_malformed_detail("unexpected tool calls", finish_reason);
+        return Err(anyhow::Error::new(SafeMalformedDecisionDetail(detail))
+            .context(MalformedDecisionResponse));
     }
 
     let trimmed = generation.content.trim();
     if trimmed.is_empty() {
-        return Err(anyhow::anyhow!("fallback decision response was empty")
+        let detail = format_malformed_detail("empty response", finish_reason);
+        return Err(anyhow::Error::new(SafeMalformedDecisionDetail(detail))
             .context(MalformedDecisionResponse));
     }
 
@@ -294,14 +306,17 @@ pub fn decode_fallback_generation_response(
         questions: &request.questions,
     }
     .deserialize(&mut deserializer)
-    .map_err(|err| anyhow::anyhow!("invalid fallback decision JSON: {err}"))
+    .map_err(|err| SafeMalformedDecisionDetail(safe_json_decode_detail(&err, finish_reason)))
     .and_then(|answers| {
-        deserializer.end().map_err(|err| {
-            anyhow::anyhow!("trailing content after fallback decision JSON: {err}")
+        deserializer.end().map_err(|_| {
+            SafeMalformedDecisionDetail(format_malformed_detail(
+                "trailing content after JSON",
+                finish_reason,
+            ))
         })?;
         Ok(answers)
     })
-    .map_err(|err| err.context(MalformedDecisionResponse))?;
+    .map_err(|detail| anyhow::Error::new(detail).context(MalformedDecisionResponse))?;
 
     let effective_model = if model.trim().is_empty() {
         provider_name.to_string()
@@ -317,11 +332,63 @@ pub fn decode_fallback_generation_response(
         usage: generation.usage,
     };
 
-    request
-        .validate_response(&response)
-        .map_err(|err| err.context(MalformedDecisionResponse))?;
+    request.validate_response(&response).map_err(|err| {
+        let detail = safe_validation_detail(&err, finish_reason);
+        anyhow::Error::new(SafeMalformedDecisionDetail(detail)).context(MalformedDecisionResponse)
+    })?;
 
     Ok(response)
+}
+
+fn format_malformed_detail(category: &str, finish_reason: Option<&str>) -> String {
+    match finish_reason.map(crate::safe_finish_reason) {
+        Some(reason) => format!("{category}, finish_reason={reason}"),
+        None => category.to_string(),
+    }
+}
+
+fn safe_json_decode_detail(err: &serde_json::Error, finish_reason: Option<&str>) -> String {
+    let category = if err.is_eof() {
+        "truncated JSON (unexpected EOF)"
+    } else if err.is_syntax() {
+        "invalid JSON syntax"
+    } else if err.is_data() {
+        "JSON does not match decision schema"
+    } else {
+        "JSON decode failed"
+    };
+    let located = format!("{category} at line {} column {}", err.line(), err.column());
+    format_malformed_detail(&located, finish_reason)
+}
+
+fn safe_validation_detail(err: &anyhow::Error, finish_reason: Option<&str>) -> String {
+    let msg = err.to_string();
+    let category = if msg.contains("answer count") {
+        "answer count mismatch"
+    } else if msg.contains("missing answer") {
+        "missing required answer"
+    } else if msg.contains("outside the submitted options") {
+        "choice option outside submitted set"
+    } else if msg.contains("disagrees with probability distribution") {
+        "choice disagrees with probabilities"
+    } else if msg.contains("missing from probability distribution") {
+        "choice missing from probabilities"
+    } else if msg.contains("must match submitted option IDs")
+        || msg.contains("must match submitted level IDs")
+    {
+        "probability keys do not match submitted IDs"
+    } else if msg.contains("must sum to 1.0") {
+        "probability distribution does not sum to 1.0"
+    } else if msg.contains("must be finite and in [0.0, 1.0]") {
+        "probability or confidence out of [0.0, 1.0]"
+    } else if msg.contains("expected_score") {
+        "invalid score expected_score"
+    } else if msg.contains("variant mismatch") {
+        "answer variant mismatch"
+    } else {
+        "response failed decision invariants"
+    };
+    format_malformed_detail(category, finish_reason)
 }
 
 #[derive(Deserialize)]

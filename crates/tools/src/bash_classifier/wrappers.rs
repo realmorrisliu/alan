@@ -10,7 +10,92 @@ pub(super) fn contains_unsupported_shell_form(tokens: &[&str]) -> bool {
         return true;
     }
 
-    is_unsupported_shell_wrapper(command_basename(command_word))
+    let command = command_basename(command_word);
+    if command == "env" {
+        let args = &tokens[command_index + 1..];
+        if env_split_string_flag(args).is_some() {
+            return true;
+        }
+        let Some(cmd_offset) = env_command_offset(args) else {
+            return false;
+        };
+        if !env_flags_are_safe_unset_hygiene(&args[..cmd_offset]) {
+            return true;
+        }
+        return contains_unsupported_shell_form(&args[cmd_offset..]);
+    }
+
+    is_unsupported_shell_wrapper(command)
+}
+
+fn env_flags_are_safe_unset_hygiene(flags: &[&str]) -> bool {
+    let mut index = 0;
+    while let Some(flag) = flags.get(index).copied() {
+        if flag == "--" {
+            // `--` is only permitted immediately before the wrapped executable,
+            // never before env assignments inside `flags`.
+            return index + 1 == flags.len();
+        }
+        if flag == "-u" || flag == "--unset" {
+            let Some(name) = flags.get(index + 1).copied() else {
+                return false;
+            };
+            if !is_safe_env_unset_var(name) {
+                return false;
+            }
+            index += 2;
+            continue;
+        }
+        if let Some(name) = flag
+            .strip_prefix("-u")
+            .or_else(|| flag.strip_prefix("--unset="))
+            && is_safe_env_unset_var(name)
+        {
+            index += 1;
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+fn is_safe_env_unset_var(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '_')
+        || !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return false;
+    }
+    !is_protected_env_unset_var(name)
+}
+
+fn is_protected_env_unset_var(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "path"
+            | "home"
+            | "user"
+            | "shell"
+            | "tmpdir"
+            | "cargo_home"
+            | "rustup_home"
+            | "rustup_toolchain"
+            | "rustc"
+            | "rustc_wrapper"
+            | "rustc_workspace_wrapper"
+            | "rustdoc"
+            | "rustfmt"
+            | "cargo_build_rustc"
+            | "cargo_build_rustc_wrapper"
+            | "cargo_build_rustc_workspace_wrapper"
+            | "cargo_build_rustdoc"
+    ) || lower.starts_with("ld_")
+        || lower.starts_with("dyld_")
+        || lower.starts_with("cargo_alias_")
 }
 
 pub(super) fn contains_nested_eval_wrapper(tokens: &[&str]) -> bool {
@@ -94,6 +179,10 @@ fn next_command_offset(tokens: &[&str]) -> Option<usize> {
 fn env_command_offset(args: &[&str]) -> Option<usize> {
     let mut index = 0;
     while let Some(arg) = args.get(index).copied() {
+        if let Some(skip) = redirection_token_span(arg) {
+            index += skip;
+            continue;
+        }
         if arg == "--" {
             index += 1;
             break;
@@ -120,8 +209,36 @@ fn env_command_offset(args: &[&str]) -> Option<usize> {
         break;
     }
 
+    while let Some(arg) = args.get(index).copied() {
+        if let Some(skip) = redirection_token_span(arg) {
+            index += skip;
+            continue;
+        }
+        if is_env_assignment(arg) {
+            index += 1;
+            continue;
+        }
+        break;
+    }
     args.get(index)?;
     Some(index)
+}
+
+fn redirection_token_span(token: &str) -> Option<usize> {
+    let rest = token
+        .trim_start_matches(|ch: char| ch.is_ascii_digit())
+        .strip_prefix('&')
+        .unwrap_or_else(|| token.trim_start_matches(|ch: char| ch.is_ascii_digit()));
+    if matches!(
+        rest,
+        ">" | ">>" | ">|" | "<>" | "<" | "<<" | "<<<" | "<&" | ">&"
+    ) {
+        Some(2)
+    } else if rest.starts_with('>') || rest.starts_with('<') {
+        Some(1)
+    } else {
+        None
+    }
 }
 
 fn transparent_wrapper_offset(command: &str, args: &[&str]) -> Option<usize> {

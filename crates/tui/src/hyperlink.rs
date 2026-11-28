@@ -294,6 +294,7 @@ pub struct HyperlinkBackend<W: Write> {
     inner: CrosstermBackend<W>,
     pending_links: Arc<Mutex<CellLinkMap>>,
     pending_image: Arc<Mutex<Option<String>>>,
+    last_cursor_pos: Option<Position>,
 }
 
 impl<W: Write> HyperlinkBackend<W> {
@@ -302,6 +303,7 @@ impl<W: Write> HyperlinkBackend<W> {
             inner: CrosstermBackend::new(writer),
             pending_links: Arc::new(Mutex::new(CellLinkMap::default())),
             pending_image: Arc::new(Mutex::new(None)),
+            last_cursor_pos: None,
         }
     }
 
@@ -311,6 +313,10 @@ impl<W: Write> HyperlinkBackend<W> {
 
     pub(crate) fn image_sink(&self) -> Arc<Mutex<Option<String>>> {
         self.pending_image.clone()
+    }
+
+    pub(crate) fn last_cursor_pos(&self) -> Option<Position> {
+        self.last_cursor_pos
     }
 }
 
@@ -356,7 +362,16 @@ impl<W: Write> Backend for HyperlinkBackend<W> {
             .map(|mut guard| std::mem::take(&mut *guard))
             .unwrap_or_default();
         if links.is_empty() {
-            return self.inner.draw(content);
+            let mut last_pos = None;
+            let result = self.inner.draw(content.inspect(|&(x, y, _)| {
+                last_pos = Some(Position::new(x, y));
+            }));
+            if result.is_ok()
+                && let Some(pos) = last_pos
+            {
+                self.last_cursor_pos = Some(pos);
+            }
+            return result;
         }
 
         let mut batch: Vec<(u16, u16, &'a Cell)> = Vec::new();
@@ -364,6 +379,7 @@ impl<W: Write> Backend for HyperlinkBackend<W> {
         let mut last_row: Option<u16> = None;
         let mut expected_next_x: u16 = 0;
         let mut to_skip: usize = 0;
+        let mut last_drawn_pos = None;
 
         let flush_batch = |inner: &mut CrosstermBackend<W>,
                            batch: &mut Vec<(u16, u16, &'a Cell)>,
@@ -384,6 +400,7 @@ impl<W: Write> Backend for HyperlinkBackend<W> {
         };
 
         for (x, y, cell) in content {
+            last_drawn_pos = Some(Position::new(x, y));
             if to_skip > 0 {
                 to_skip -= 1;
                 batch.push((x, y, cell));
@@ -407,6 +424,9 @@ impl<W: Write> Backend for HyperlinkBackend<W> {
         }
 
         flush_batch(&mut self.inner, &mut batch, &mut batch_uri)?;
+        if let Some(pos) = last_drawn_pos {
+            self.last_cursor_pos = Some(pos);
+        }
         Ok(())
     }
 
@@ -427,7 +447,12 @@ impl<W: Write> Backend for HyperlinkBackend<W> {
     }
 
     fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
-        self.inner.set_cursor_position(position)
+        let pos = position.into();
+        let res = self.inner.set_cursor_position(pos);
+        if res.is_ok() {
+            self.last_cursor_pos = Some(pos);
+        }
+        res
     }
 
     fn clear(&mut self) -> Result<(), Self::Error> {

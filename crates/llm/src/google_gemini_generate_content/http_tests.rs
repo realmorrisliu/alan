@@ -854,3 +854,93 @@ async fn sse_streaming_refreshes_adc_token_once_on_401() {
     );
     handle.abort();
 }
+
+#[tokio::test]
+async fn http_gemini_4_neon_tier2_fallback_sends_response_json_schema_and_bounded_thinking() {
+    let (base_url, recorded, handle) = spawn_mock_server(|idx, _, _, _| {
+        if idx == 0 {
+            Json(json!({
+                "candidates": [{
+                    "index": 0,
+                    "content": {
+                        "role": "model",
+                        "parts": [{
+                            "text": serde_json::json!({
+                                "answers": {
+                                    "safe": { "yes_probability": 0.96, "confidence": 0.94 }
+                                }
+                            }).to_string()
+                        }]
+                    },
+                    "finishReason": "STOP"
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 80,
+                    "candidatesTokenCount": 20,
+                    "thoughtsTokenCount": 40,
+                    "totalTokenCount": 140
+                }
+            }))
+            .into_response()
+        } else {
+            Json(json!({
+                "candidates": [{
+                    "index": 0,
+                    "content": {
+                        "role": "model",
+                        "parts": [{"text": "internal thought", "thought": true}]
+                    },
+                    "finishReason": "MAX_TOKENS"
+                }]
+            }))
+            .into_response()
+        }
+    })
+    .await;
+
+    let mut client = GoogleGeminiGenerateContentClient::from_vertex_config_with_token_source(
+        VertexClientConfig {
+            project_id: Some("proj".to_string()),
+            location: "global".to_string(),
+            model: "gemini-4-neon".to_string(),
+            auth: VertexAuth::Adc,
+            base_url: Some(base_url),
+        },
+        Arc::new(SequenceTokenSource::new()),
+    )
+    .unwrap();
+
+    let mut questions = std::collections::BTreeMap::new();
+    questions.insert(
+        "safe".to_string(),
+        crate::DecisionQuestion::Predicate {
+            prompt: "Is this safe?".to_string(),
+        },
+    );
+    let req = crate::DecisionRequest::new(json!({"cmd": "env | grep CARGO"}), questions);
+
+    let ok_resp = crate::decide_via_generation(&mut client, "gemini-4-neon", req.clone())
+        .await
+        .unwrap();
+    assert_eq!(ok_resp.calibration, crate::CalibrationKind::Uncalibrated);
+
+    {
+        let bodies = recorded.bodies.lock().unwrap();
+        let gen_cfg = &bodies[0]["generationConfig"];
+        assert_eq!(gen_cfg["responseMimeType"], "application/json");
+        assert!(gen_cfg.get("responseJsonSchema").is_some());
+        assert!(gen_cfg.get("responseSchema").is_none());
+        assert_eq!(gen_cfg["thinkingConfig"]["thinkingLevel"], "low");
+        assert!(gen_cfg["maxOutputTokens"].as_i64().unwrap() >= 2048);
+    }
+
+    let err = crate::decide_via_generation(&mut client, "gemini-4-neon", req)
+        .await
+        .unwrap_err();
+    assert!(err.is::<crate::MalformedDecisionResponse>());
+    let detail = err
+        .downcast_ref::<crate::SafeMalformedDecisionDetail>()
+        .unwrap();
+    assert_eq!(detail.0, "empty response, finish_reason=MAX_TOKENS");
+    handle.abort();
+}

@@ -189,8 +189,9 @@ pub struct GenerationConfig {
     /// Output MIME type (for example `application/json`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_mime_type: Option<String>,
-    /// JSON Schema constraining structured generation output.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Full JSON Schema constraining structured generation output, distinct from
+    /// Vertex's restricted OpenAPI `responseSchema` field.
+    #[serde(rename = "responseJsonSchema", skip_serializing_if = "Option::is_none")]
     pub response_schema: Option<serde_json::Value>,
 }
 
