@@ -19,7 +19,7 @@ pub(super) fn contains_unsupported_shell_form(tokens: &[&str]) -> bool {
         let Some(cmd_offset) = env_command_offset(args) else {
             return false;
         };
-        if !env_flags_are_safe_unset_hygiene(&args[..cmd_offset]) {
+        if !env_flags_are_safe_hygiene(&args[..cmd_offset]) {
             return true;
         }
         return contains_unsupported_shell_form(&args[cmd_offset..]);
@@ -28,9 +28,37 @@ pub(super) fn contains_unsupported_shell_form(tokens: &[&str]) -> bool {
     is_unsupported_shell_wrapper(command)
 }
 
-fn env_flags_are_safe_unset_hygiene(flags: &[&str]) -> bool {
+/// Validates the tokens between `env` and the wrapped executable.
+///
+/// Permitted, in this order:
+/// - zero or more safe `-u NAME` / `--unset NAME` / `-uNAME` / `--unset=NAME`
+///   flags (see [`is_safe_env_unset_var`]),
+/// - zero or more allowlisted diagnostic/build-hygiene `KEY=VALUE`
+///   assignments (see [`is_safe_env_assignment`]),
+/// - an optional trailing `--` that is immediately before the executable.
+///
+/// Fails closed: unknown flags, protected or unlisted variable names, unsafe
+/// assignment values, a `--` that is not immediately before the executable, and
+/// any flag that follows an assignment all reject the wrapper. This keeps
+/// `env` from becoming an opaque escape hatch for injecting loader, toolchain,
+/// shell-startup or PATH overrides into the wrapped command.
+fn env_flags_are_safe_hygiene(flags: &[&str]) -> bool {
     let mut index = 0;
+    let mut saw_assignment = false;
     while let Some(flag) = flags.get(index).copied() {
+        if is_env_assignment(flag) {
+            if !is_safe_env_assignment(flag) {
+                return false;
+            }
+            saw_assignment = true;
+            index += 1;
+            continue;
+        }
+        if saw_assignment {
+            // Once an assignment is seen, only further safe assignments may
+            // precede the wrapped executable.
+            return false;
+        }
         if flag == "--" {
             // `--` is only permitted immediately before the wrapped executable,
             // never before env assignments inside `flags`.
@@ -57,6 +85,83 @@ fn env_flags_are_safe_unset_hygiene(flags: &[&str]) -> bool {
         return false;
     }
     true
+}
+
+/// Variable names that may be assigned through the `env` wrapper.
+///
+/// The list is a strict, case-insensitive allowlist of diagnostics, build
+/// hygiene, terminal/locale and non-code-executing runtime knobs. Anything not
+/// listed here fails closed, so loader (`LD_*`, `DYLD_*`), toolchain
+/// (`RUSTFLAGS`, `RUSTC*`, `CARGO_TARGET_DIR`, `CARGO_HOME`), shell-startup
+/// (`BASH_ENV`, `ENV`) and path (`PATH`) overrides are rejected.
+const SAFE_ENV_ASSIGNMENT_NAMES: &[&str] = &[
+    // Cargo/Rust build and diagnostic hygiene.
+    "cargo_net_offline",
+    "cargo_term_color",
+    "cargo_term_quiet",
+    "cargo_term_verbose",
+    "cargo_term_progress_when",
+    "cargo_incremental",
+    "rust_backtrace",
+    "rust_log",
+    "rust_log_style",
+    "rust_test_threads",
+    "rust_test_nocapture",
+    // Terminal/locale/CI hygiene.
+    "ci",
+    "no_color",
+    "clicolor",
+    "clicolor_force",
+    "force_color",
+    "colorterm",
+    "term",
+    "columns",
+    "lines",
+    "lang",
+    "lc_all",
+    "lc_ctype",
+    "lc_collate",
+    "lc_messages",
+    "lc_numeric",
+    "lc_time",
+    "tz",
+    // Non-code-executing runtime hygiene.
+    "node_env",
+    "pythondontwritebytecode",
+    "pythonunbuffered",
+    "pythonutf8",
+    "pythonioencoding",
+];
+
+/// Characters permitted in a safe assignment value after stripping at most one
+/// matching pair of outer quotes.
+const SAFE_ENV_ASSIGNMENT_VALUE_CHARS: &[char] = &['_', '-', '.', ':', ',', '=', '/', '+'];
+
+fn is_safe_env_assignment(assignment: &str) -> bool {
+    let Some((name, value)) = assignment.split_once('=') else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    SAFE_ENV_ASSIGNMENT_NAMES.contains(&lower.as_str()) && is_safe_env_assignment_value(value)
+}
+
+fn is_safe_env_assignment_value(value: &str) -> bool {
+    strip_matching_outer_quotes(value)
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || SAFE_ENV_ASSIGNMENT_VALUE_CHARS.contains(&ch))
+}
+
+/// Strips at most one matching pair of outer single or double quotes.
+///
+/// Unmatched quotes are left in place and then rejected by the value character
+/// check, so `FOO="bar` or `FOO="a'b"` never pass.
+fn strip_matching_outer_quotes(value: &str) -> &str {
+    for quote in ['\'', '"'] {
+        if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
+            return &value[1..value.len() - 1];
+        }
+    }
+    value
 }
 
 fn is_safe_env_unset_var(name: &str) -> bool {
