@@ -1,21 +1,23 @@
-//! Service supervision and service-handle lifecycle ownership.
+//! Event-driven service supervision and service-handle lifecycle ownership.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use alan_agent_engine::ToolRegistry;
 use alan_ap::{FileServer, InProcessTransport};
-use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid, Status};
+use alan_kernel::{Credentials, ExitReason, LiveNamespace, Pid, Status};
 use anyhow::{Context, Result, ensure};
 
+use super::boot_setup::{
+    SystemServiceHandles, open_proc_wait, publish_unit_handles, read_opened_wait_record,
+    wait_unit_ready,
+};
 use crate::{
     BootManifest, BootUnit, ConnectionService, HostMountService, LocalEntryService, ManagerState,
-    PackageService, RestartDecision, SupervisedHandle,
+    PackageService, RestartDecision, SupervisedHandle, SupervisionStrategy,
     agent_runtime::{AgentRuntimeService, RootAgentProcess, RootAgentTemplate},
     process_spawn::spawn_unit_process,
-    quartermaster::QUARTERMASTER_EXECUTABLE,
 };
 
 pub(super) const SERVICE_MANAGER_SRV_HANDLE: &str = "service-manager";
@@ -43,6 +45,26 @@ pub(super) fn create_supervised_handles(
 pub(super) struct ActiveUnit {
     pub(super) pid: Pid,
     pub(super) started_at: Instant,
+}
+
+struct UnitExitEvent {
+    unit_name: String,
+    pid: Pid,
+    exit_code: i32,
+    reason: ExitReason,
+}
+
+struct UnitWatcher {
+    cancel: Option<tokio::sync::oneshot::Sender<()>>,
+    _task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for UnitWatcher {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.cancel.take() {
+            let _ = cancel.send(());
+        }
+    }
 }
 
 pub(super) struct SupervisorEnvironment {
@@ -76,6 +98,10 @@ pub(super) struct SupervisorRuntime {
     manager_pid: Pid,
     active: BTreeMap<String, ActiveUnit>,
     pending: BTreeMap<String, Instant>,
+    watchers: BTreeMap<String, UnitWatcher>,
+    cascade_restarts: BTreeMap<String, Vec<String>>,
+    exit_tx: tokio::sync::mpsc::UnboundedSender<UnitExitEvent>,
+    exit_rx: Option<tokio::sync::mpsc::UnboundedReceiver<UnitExitEvent>>,
     agent_runtime: Arc<AgentRuntimeService>,
     agent_root: Arc<alan_agentfs::AgentRootFs>,
     llmfs: Arc<alan_llmfs::LlmFs>,
@@ -110,13 +136,70 @@ pub(super) enum SupervisorCommand {
     },
 }
 
+async fn next_pending_sleep(pending: &BTreeMap<String, Instant>) {
+    match pending.values().copied().min() {
+        Some(deadline) => {
+            tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+        }
+        None => std::future::pending::<()>().await,
+    }
+}
+
+async fn watch_unit_exit(
+    procfs: alan_kernel::ProcFs,
+    unit_name: String,
+    pid: Pid,
+    exit_tx: tokio::sync::mpsc::UnboundedSender<UnitExitEvent>,
+    mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
+) {
+    let (view, fid) = match open_proc_wait(&procfs, pid).await {
+        Ok(opened) => opened,
+        Err(error) => {
+            tracing::warn!(
+                unit = %unit_name,
+                pid = pid.0,
+                error = %error,
+                "failed to open /proc/<pid>/wait for supervised unit"
+            );
+            return;
+        }
+    };
+    tokio::select! {
+        _ = &mut cancel_rx => {}
+        result = read_opened_wait_record(&view, fid, pid) => {
+            match result {
+                Ok(record) => {
+                    let _ = exit_tx.send(UnitExitEvent {
+                        unit_name,
+                        pid,
+                        exit_code: record.exit_code,
+                        reason: record.reason,
+                    });
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        unit = %unit_name,
+                        pid = pid.0,
+                        error = %error,
+                        "supervised unit /proc/<pid>/wait stream failed"
+                    );
+                }
+            }
+        }
+    }
+    let _ = view.clunk(fid).await;
+}
+
 async fn run_supervisor(
     mut runtime: SupervisorRuntime,
     mut shutdown: tokio::sync::oneshot::Receiver<()>,
     mut commands: tokio::sync::mpsc::UnboundedReceiver<SupervisorCommand>,
+    mut exits: tokio::sync::mpsc::UnboundedReceiver<UnitExitEvent>,
 ) -> Result<()> {
-    let mut interval = tokio::time::interval(Duration::from_millis(25));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let retry_notify = runtime.state.lock().await.retry_notifier();
+    runtime.watch_all_active_units();
+    runtime.drain_retry_requests().await;
+    runtime.launch_due_units().await?;
     loop {
         tokio::select! {
             _ = &mut shutdown => break,
@@ -125,7 +208,16 @@ async fn run_supervisor(
                     runtime.handle_command(cmd).await;
                 }
             }
-            _ = interval.tick() => runtime.tick().await?,
+            Some(exit) = exits.recv() => {
+                runtime.handle_unit_exit_event(exit).await?;
+            }
+            _ = retry_notify.notified() => {
+                runtime.drain_retry_requests().await;
+                runtime.launch_due_units().await?;
+            }
+            _ = next_pending_sleep(&runtime.pending) => {
+                runtime.launch_due_units().await?;
+            }
         }
     }
     runtime.stop().await
@@ -136,6 +228,7 @@ impl SupervisorRuntime {
         assembled: SupervisorEnvironment,
         root_pid: Arc<AtomicU64>,
     ) -> Self {
+        let (exit_tx, exit_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             manifest: assembled.manifest,
             state: assembled.state,
@@ -145,6 +238,10 @@ impl SupervisorRuntime {
             manager_pid: assembled.manager_pid,
             active: assembled.active_units,
             pending: BTreeMap::new(),
+            watchers: BTreeMap::new(),
+            cascade_restarts: BTreeMap::new(),
+            exit_tx,
+            exit_rx: Some(exit_rx),
             agent_runtime: assembled.agent_runtime,
             agent_root: assembled.agent_root,
             llmfs: assembled.llmfs,
@@ -183,7 +280,8 @@ impl SupervisorRuntime {
                     .copied()
                     .context("Root Agent launch was not tracked")?;
                 self.procfs.record_exit(active.pid, 1).await;
-                self.handle_exit("root-agent", active, 1).await?;
+                self.handle_exit("root-agent", active, 1, ExitReason::Failed)
+                    .await?;
                 self.state
                     .lock()
                     .await
@@ -213,7 +311,7 @@ impl SupervisorRuntime {
     }
 
     pub(super) fn start(
-        self,
+        mut self,
     ) -> (
         tokio::sync::oneshot::Sender<()>,
         tokio::sync::mpsc::UnboundedSender<SupervisorCommand>,
@@ -221,8 +319,52 @@ impl SupervisorRuntime {
     ) {
         let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
         let (commands_tx, commands_rx) = tokio::sync::mpsc::unbounded_channel();
-        let task = tokio::spawn(run_supervisor(self, shutdown_rx, commands_rx));
+        let exits = self
+            .exit_rx
+            .take()
+            .expect("SupervisorRuntime started more than once");
+        let task = tokio::spawn(run_supervisor(self, shutdown_rx, commands_rx, exits));
         (shutdown, commands_tx, task)
+    }
+
+    fn watch_all_active_units(&mut self) {
+        let units = self
+            .active
+            .iter()
+            .map(|(name, active)| (name.clone(), active.pid))
+            .collect::<Vec<_>>();
+        for (name, pid) in units {
+            if !self.watchers.contains_key(&name) {
+                self.watch_unit(&name, pid);
+            }
+        }
+    }
+
+    fn watch_unit(&mut self, name: &str, pid: Pid) {
+        self.watchers.remove(name);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(watch_unit_exit(
+            self.procfs.clone(),
+            name.to_string(),
+            pid,
+            self.exit_tx.clone(),
+            cancel_rx,
+        ));
+        self.watchers.insert(
+            name.to_string(),
+            UnitWatcher {
+                cancel: Some(cancel_tx),
+                _task: task,
+            },
+        );
+    }
+
+    async fn drain_retry_requests(&mut self) {
+        for name in self.state.lock().await.take_retry_requests() {
+            if !self.active.contains_key(&name) {
+                self.pending.insert(name, Instant::now());
+            }
+        }
     }
 
     async fn handle_command(&mut self, cmd: SupervisorCommand) {
@@ -305,6 +447,7 @@ impl SupervisorRuntime {
         &mut self,
         options: crate::agent_runtime::sessions::SessionLaunchOptions,
     ) -> Result<Pid> {
+        self.watchers.remove("root-agent");
         self.active.remove("root-agent");
         self.pending.remove("root-agent");
         self.root_pid.store(0, Ordering::Release);
@@ -321,44 +464,64 @@ impl SupervisorRuntime {
         Ok(Pid(self.root_pid.load(Ordering::Acquire)))
     }
 
-    async fn tick(&mut self) -> Result<()> {
-        for name in self.state.lock().await.take_retry_requests() {
-            if !self.active.contains_key(&name) {
-                self.pending.insert(name, Instant::now());
-            }
+    async fn handle_unit_exit_event(&mut self, exit: UnitExitEvent) -> Result<()> {
+        let Some(active) = self.active.get(&exit.unit_name).copied() else {
+            return Ok(());
+        };
+        if active.pid != exit.pid {
+            return Ok(());
         }
+        self.handle_exit(&exit.unit_name, active, exit.exit_code, exit.reason)
+            .await
+    }
 
-        let active = self
-            .active
-            .iter()
-            .map(|(name, active)| (name.clone(), *active))
-            .collect::<Vec<_>>();
-        for (name, active) in active {
-            if let Some((Status::Exited, exit_code)) =
-                self.procfs.try_observe_process_lifecycle(active.pid)
-            {
-                self.handle_exit(&name, active, exit_code.unwrap_or(1))
-                    .await?;
-            }
-        }
-
+    async fn launch_due_units(&mut self) -> Result<()> {
         let now = Instant::now();
         let due = self
-            .pending
-            .iter()
-            .filter(|(_, deadline)| **deadline <= now)
-            .map(|(name, _)| name.clone())
+            .manifest
+            .ordered()
+            .filter(|unit| {
+                self.pending
+                    .get(&unit.name)
+                    .is_some_and(|deadline| *deadline <= now)
+            })
+            .map(|unit| unit.name.clone())
             .collect::<Vec<_>>();
         for name in due {
             self.pending.remove(&name);
-            if let Err(error) = self.launch(&name).await {
-                self.handle_launch_failure(&name, error).await?;
+            match self.launch(&name).await {
+                Ok(()) => {
+                    if let Some(dependents) = self.cascade_restarts.remove(&name) {
+                        self.restart_cascade_dependents(dependents).await?;
+                    }
+                }
+                Err(error) => self.handle_launch_failure(&name, error).await?,
             }
         }
         Ok(())
     }
 
-    async fn handle_exit(&mut self, name: &str, active: ActiveUnit, exit_code: i32) -> Result<()> {
+    async fn restart_cascade_dependents(&mut self, dependents: Vec<String>) -> Result<()> {
+        for dep in dependents {
+            if self.active.contains_key(&dep) {
+                continue;
+            }
+            self.pending.remove(&dep);
+            if let Err(error) = self.launch(&dep).await {
+                self.handle_launch_failure(&dep, error).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_exit(
+        &mut self,
+        name: &str,
+        active: ActiveUnit,
+        exit_code: i32,
+        reason: ExitReason,
+    ) -> Result<()> {
+        self.watchers.remove(name);
         self.active.remove(name);
         self.invalidate_handles(name).await;
         if name == "root-agent" {
@@ -376,13 +539,13 @@ impl SupervisorRuntime {
             .state
             .lock()
             .await
-            .record_exit(name, exit_code, stable_for_ms)
+            .record_exit_with_reason(name, exit_code, reason, stable_for_ms)
             .map_err(|error| anyhow::anyhow!("record `{name}` exit: {error:?}"))?;
-        self.apply_restart_decision(name, decision);
-        Ok(())
+        self.apply_restart_decision(name, decision).await
     }
 
     async fn handle_launch_failure(&mut self, name: &str, error: anyhow::Error) -> Result<()> {
+        self.watchers.remove(name);
         let pid = self.state.lock().await.unit(name).and_then(|unit| unit.pid);
         if let Some(pid) = pid {
             self.procfs.record_exit(Pid(pid), 1).await;
@@ -400,23 +563,64 @@ impl SupervisorRuntime {
                 .map_err(|code| anyhow::anyhow!("track `{name}` launch failure: {code:?}"))?;
         }
         let decision = state
-            .record_exit(name, 1, 0)
+            .record_exit_with_reason(name, 1, ExitReason::Failed, 0)
             .map_err(|code| anyhow::anyhow!("record `{name}` launch failure: {code:?}"))?;
         state
             .note_error(name, format!("{error:#}"))
             .map_err(|code| anyhow::anyhow!("record `{name}` launch error: {code:?}"))?;
         drop(state);
-        self.apply_restart_decision(name, decision);
-        Ok(())
+        self.apply_restart_decision(name, decision).await
     }
 
-    fn apply_restart_decision(&mut self, name: &str, decision: RestartDecision) {
+    async fn apply_restart_decision(
+        &mut self,
+        name: &str,
+        decision: RestartDecision,
+    ) -> Result<()> {
         if let RestartDecision::RestartAfterMs(delay) = decision {
+            if self.manifest.get(name).map(|unit| unit.supervision)
+                == Some(SupervisionStrategy::RestForOne)
+                && !self.cascade_restarts.contains_key(name)
+            {
+                self.prepare_rest_for_one_cascade(name).await?;
+            }
             self.pending.insert(
                 name.to_string(),
                 Instant::now() + Duration::from_millis(delay),
             );
         }
+        Ok(())
+    }
+
+    async fn prepare_rest_for_one_cascade(&mut self, trigger_unit: &str) -> Result<()> {
+        let dependents = self.manifest.downstream_dependents(trigger_unit);
+        if dependents.is_empty() {
+            return Ok(());
+        }
+        for dep in dependents.iter().rev() {
+            self.watchers.remove(dep);
+            self.pending.remove(dep);
+            let active = self.active.remove(dep);
+            if dep == "root-agent" {
+                self.root_pid.store(0, Ordering::Release);
+                if let Some(root) = self.root.take() {
+                    self.agent_runtime.shutdown_root(root).await?;
+                } else if let Some(active) = active {
+                    self.procfs.record_exit(active.pid, 0).await;
+                }
+            } else if let Some(active) = active {
+                self.procfs.record_exit(active.pid, 0).await;
+            }
+            self.invalidate_handles(dep).await;
+            self.state
+                .lock()
+                .await
+                .record_cascade_stop(dep, trigger_unit)
+                .map_err(|error| anyhow::anyhow!("record `{dep}` cascade stop: {error:?}"))?;
+        }
+        self.cascade_restarts
+            .insert(trigger_unit.to_string(), dependents);
+        Ok(())
     }
 
     async fn launch(&mut self, name: &str) -> Result<()> {
@@ -477,6 +681,7 @@ impl SupervisorRuntime {
                 started_at: Instant::now(),
             },
         );
+        self.watch_unit(name, pid);
         Ok(())
     }
 
@@ -514,6 +719,7 @@ impl SupervisorRuntime {
         );
         self.root_pid.store(pid.0, Ordering::Release);
         self.root = Some(root);
+        self.watch_unit(&unit.name, pid);
         Ok(())
     }
 
@@ -528,267 +734,50 @@ impl SupervisorRuntime {
         }
     }
 
-    async fn stop(mut self) -> Result<()> {
-        let sessions_result = self.agent_runtime.shutdown_sessions().await;
-        if let Some(root) = self.root.take() {
-            self.agent_runtime.shutdown_root(root).await?;
-        }
-        sessions_result?;
-        for (name, active) in self.active {
+    async fn stop_unit_for_shutdown(&mut self, name: &str) -> Result<()> {
+        self.watchers.remove(name);
+        let active = self.active.remove(name);
+        let was_running = active.is_some() || (name == "root-agent" && self.root.is_some());
+        if name == "root-agent" {
+            self.root_pid.store(0, Ordering::Release);
+            if let Some(root) = self.root.take() {
+                self.agent_runtime.shutdown_root(root).await?;
+            } else if let Some(active) = active {
+                self.procfs.record_exit(active.pid, 0).await;
+            }
+        } else if let Some(active) = active {
             self.procfs.record_exit(active.pid, 0).await;
-            if let Some(unit) = self.manifest.get(&name) {
-                for handle in &unit.published_handles {
-                    if let Some(supervised) = self.supervised_handles.get(handle) {
-                        supervised.deactivate();
-                    }
-                    self.srvfs.unpost(handle).await;
-                }
+        }
+        self.invalidate_handles(name).await;
+        let _ = self.state.lock().await.record_stopped(name, was_running);
+        Ok(())
+    }
+
+    async fn stop(mut self) -> Result<()> {
+        self.watchers.clear();
+        self.pending.clear();
+        self.cascade_restarts.clear();
+
+        let mut first_error = self.agent_runtime.shutdown_sessions().await.err();
+        let stop_order = self
+            .manifest
+            .reverse_ordered()
+            .map(|unit| unit.name.clone())
+            .collect::<Vec<_>>();
+        for name in stop_order {
+            if let Err(err) = self.stop_unit_for_shutdown(&name).await
+                && first_error.is_none()
+            {
+                first_error = Some(err);
             }
         }
         for (name, handle) in &self.supervised_handles {
             handle.deactivate();
             self.srvfs.unpost(name).await;
         }
+        if let Some(err) = first_error {
+            return Err(err);
+        }
         Ok(())
     }
-}
-
-pub(super) struct SystemServiceHandles<'a> {
-    pub(super) srvfs: &'a Arc<alan_kernel::SrvFs>,
-    pub(super) agent_root: &'a Arc<alan_agentfs::AgentRootFs>,
-    pub(super) llmfs: &'a Arc<alan_llmfs::LlmFs>,
-    pub(super) routefs: &'a Arc<alan_routefs::RouteFs>,
-    pub(super) host_mount: &'a Arc<HostMountService>,
-    pub(super) connection: &'a Arc<ConnectionService>,
-    pub(super) package: &'a Arc<PackageService>,
-    pub(super) supervised_handles: &'a BTreeMap<String, Arc<SupervisedHandle>>,
-    pub(super) local_entry: Option<&'a Arc<LocalEntryService>>,
-}
-
-pub(super) async fn publish_unit_handles(
-    unit: &BootUnit,
-    services: &SystemServiceHandles<'_>,
-) -> Result<()> {
-    for handle in &unit.published_handles {
-        let server: Arc<dyn FileServer> = match handle.as_str() {
-            "route" => services.routefs.clone(),
-            "llm" => services.llmfs.clone(),
-            "agent-runtime" => services.agent_root.clone(),
-            "connection" => services.connection.file_server(),
-            "package" => services.package.file_server(),
-            "host-mount" => services.host_mount.file_server(),
-            "local-entry" => services
-                .local_entry
-                .context("Local Entry Service has no Process")?
-                .clone(),
-            other => anyhow::bail!(
-                "Boot Unit `{}` publishes unknown handle `{other}`",
-                unit.name
-            ),
-        };
-        let supervised = services.supervised_handles.get(handle).with_context(|| {
-            format!(
-                "Boot Unit `{}` handle `{handle}` has no SupervisedHandle",
-                unit.name
-            )
-        })?;
-        supervised.bind(server);
-        services
-            .srvfs
-            .post(
-                handle,
-                InProcessTransport::new(supervised.clone()),
-                Access::ReadWrite,
-            )
-            .await;
-    }
-    Ok(())
-}
-
-pub(super) async fn mount_service_handles(
-    namespace: &LiveNamespace,
-    srvfs: &Arc<alan_kernel::SrvFs>,
-) -> Result<()> {
-    let (llm_tree, llm_access) = srvfs.lookup("llm").await.context("lookup /srv/llm")?;
-    namespace.replace_mount("/mnt/llm", llm_tree, llm_access);
-    let (route_tree, route_access) = srvfs
-        .lookup(alan_routefs::SRV_HANDLE)
-        .await
-        .context("lookup /srv/route")?;
-    namespace.replace_mount(alan_routefs::MOUNT_PATH, route_tree, route_access);
-    let (connection_tree, connection_access) = srvfs
-        .lookup("connection")
-        .await
-        .context("lookup /srv/connection")?;
-    namespace.replace_mount("/mnt/connections", connection_tree, connection_access);
-    let (manager_tree, manager_access) = srvfs
-        .lookup("service-manager")
-        .await
-        .context("lookup /srv/service-manager")?;
-    namespace.replace_mount("/mnt/service-manager", manager_tree, manager_access);
-    let (host_mount_tree, host_mount_access) = srvfs
-        .lookup("host-mount")
-        .await
-        .context("lookup /srv/host-mount")?;
-    namespace.replace_mount("/mnt/host-mount", host_mount_tree, host_mount_access);
-    let (package_tree, package_access) = srvfs
-        .lookup("package")
-        .await
-        .context("lookup /srv/package")?;
-    namespace.replace_mount("/mnt/package", package_tree, package_access);
-    Ok(())
-}
-
-pub(super) async fn wait_unit_ready(
-    unit: &BootUnit,
-    pid: Pid,
-    procfs: &alan_kernel::ProcFs,
-    srvfs: &Arc<alan_kernel::SrvFs>,
-) -> Result<()> {
-    tokio::time::timeout(std::time::Duration::from_millis(unit.timeout_ms), async {
-        loop {
-            match procfs.try_observe_process_lifecycle(pid) {
-                Some((Status::Exited, exit_code)) => anyhow::bail!(
-                    "unit `{}` exited before readiness with {:?}",
-                    unit.name,
-                    exit_code
-                ),
-                Some((Status::Running, _)) => {
-                    let mut ready = true;
-                    for handle in &unit.published_handles {
-                        ready &= srvfs.lookup(handle).await.is_some();
-                    }
-                    if ready {
-                        return Ok::<_, anyhow::Error>(());
-                    }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-                _ => tokio::time::sleep(Duration::from_millis(10)).await,
-            }
-        }
-    })
-    .await
-    .with_context(|| format!("unit `{}` publication timed out", unit.name))??;
-    Ok(())
-}
-
-pub(super) fn mount_standard_namespace_roots(namespace: &mut Namespace) {
-    for path in ["/bin", "/lib", "/mnt"] {
-        namespace.mount(
-            path,
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-            Access::ReadOnly,
-        );
-    }
-    namespace.mount(
-        "/man",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_tree(
-            crate::manpages::tree_entries(),
-        ))),
-        Access::ReadOnly,
-    );
-}
-
-pub(super) fn mount_boot_units(namespace: &mut Namespace) {
-    namespace.mount(
-        "/lib/boot",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_files(
-            BootManifest::documents()
-                .into_iter()
-                .map(|(name, document)| (name.to_string(), document.as_bytes().to_vec())),
-        ))),
-        Access::ReadOnly,
-    );
-}
-
-pub(super) fn mount_system_executables(namespace: &mut Namespace, manifest: &BootManifest) {
-    for executable in manifest
-        .ordered()
-        .map(|unit| unit.executable.as_str())
-        .chain([
-            super::SERVICE_MANAGER_EXECUTABLE,
-            "/bin/alan-shell",
-            QUARTERMASTER_EXECUTABLE,
-            crate::agent_work::EXECUTABLE,
-        ])
-    {
-        namespace.mount(
-            executable,
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-            Access::ReadOnly,
-        );
-    }
-}
-
-pub(super) fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistry) -> Result<()> {
-    namespace.mount(
-        "/lib/exec/agent_work",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-            "manifest",
-            crate::agent_work::manifest(),
-        ))),
-        Access::ReadOnly,
-    );
-    for name in tools.list_tools() {
-        namespace.mount(
-            &format!("/bin/{name}"),
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-            Access::ReadOnly,
-        );
-        namespace.mount(
-            &format!("/lib/exec/{name}"),
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-                "manifest",
-                tools.package_manifest_bytes(name)?,
-            ))),
-            Access::ReadOnly,
-        );
-    }
-    Ok(())
-}
-
-pub(super) async fn verify_readiness(
-    root: &InProcessTransport,
-    boot_id: uuid::Uuid,
-    state: &Arc<tokio::sync::Mutex<ManagerState>>,
-) -> Result<()> {
-    let shell = alan_shell::Shell::new(root.clone());
-    let root_entries = shell.ls("/").await.context("read Standard Namespace")?;
-    for required in ["proc", "agent", "srv", "bin", "lib", "man", "mnt"] {
-        ensure!(
-            root_entries.iter().any(|entry| entry == required),
-            "Standard Namespace is missing /{required}"
-        );
-    }
-    shell.ls("/agent/root").await.context("read /agent/root")?;
-    let published_boot_id = String::from_utf8(shell.cat(super::BOOT_ID_PATH).await?)?;
-    ensure!(
-        published_boot_id.trim() == boot_id.to_string(),
-        "boot ID mismatch"
-    );
-    ensure!(
-        shell.cat(super::BOOT_STATE_PATH).await? == b"ready\n",
-        "Host readiness file is not ready"
-    );
-    let service_handles = shell.ls("/srv").await.context("read /srv")?;
-    for required in [
-        "service-manager",
-        "agent-runtime",
-        "connection",
-        "package",
-        "host-mount",
-        "local-entry",
-        "llm",
-        alan_routefs::SRV_HANDLE,
-    ] {
-        ensure!(
-            service_handles.iter().any(|entry| entry == required),
-            "required service /srv/{required} is absent"
-        );
-    }
-    ensure!(
-        state.lock().await.status() == crate::SystemStatus::Ready,
-        "Service Manager did not reach ready"
-    );
-    Ok(())
 }

@@ -8,9 +8,9 @@
 ## 2. `SupervisedHandle`, Reverse Shutdown & Event-Driven `ServiceManager` (`crates/service-manager`)
 - [x] 2.1 Generalize `SwitchableFileServer` into `SupervisedHandle` with monotonic `generation: u64` tracking across all `/srv/*` service handles so stale pre-restart fids fail cleanly with `ErrorCode::Io`.
 - [x] 2.2 Add `SupervisionStrategy::{OneForOne, RestForOne}` (default `OneForOne`) to `BootUnit` TOML schema and validation (`crates/service-manager/src/boot_unit.rs`).
-- [ ] 2.3 Refactor `SupervisorRuntime` (`crates/service-manager/src/runtime/supervisor.rs`) to drive unit supervision and readiness from `/proc/<pid>/wait` instead of `25ms` ticks and `10ms` `wait_unit_ready` polling; implement strict reverse-topological `stop()` and opt-in `RestForOne` cascade restarts.
-- [ ] 2.4 Expose `generation`, `restarts`, `backoff_until`, and `last_exit_reason` under `/mnt/service-manager/units/<name>/`.
-- [ ] 2.5 Add `crates/service-manager` tests for reverse-order shutdown, `OneForOne` leaf self-healing without dropping `root-agent`, opt-in `RestForOne` cascade, and stale-generation fid rejection.
+- [x] 2.3 Refactor `SupervisorRuntime` (`crates/service-manager/src/runtime/supervisor.rs`) to drive unit supervision and readiness from `/proc/<pid>/wait` instead of `25ms` ticks and `10ms` `wait_unit_ready` polling; implement strict reverse-topological `stop()` and opt-in `RestForOne` cascade restarts.
+- [x] 2.4 Expose `generation`, `restarts`, `backoff_until`, and `last_exit_reason` under `/mnt/service-manager/units/<name>/`.
+- [x] 2.5 Add `crates/service-manager` tests for reverse-order shutdown, `OneForOne` leaf self-healing without dropping `root-agent`, opt-in `RestForOne` cascade, and stale-generation fid rejection.
 
 ## 3. Event-Driven Child & Workstream Supervision (`crates/agent-engine`)
 - [ ] 3.1 Replace `DelegatedChildRunSupervisor`'s `10–250ms` polling loop (`crates/agent-engine/src/runtime/delegated_child_run/supervisor.rs`) with blocking waits over `/proc/<pid>/wait` and `/agent/<pid>/events` (preserving pause/timeout/cancellation semantics).

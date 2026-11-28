@@ -99,19 +99,20 @@ pub(super) async fn wait_for_process_exit(
     pid: Pid,
     timeout: Duration,
 ) -> Result<()> {
-    tokio::time::timeout(timeout, async {
-        loop {
-            if procfs
-                .try_observe_process_lifecycle(pid)
-                .is_some_and(|(status, _)| status == alan_kernel::Status::Exited)
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+    let (view, fid) = match crate::runtime::boot_setup::open_proc_wait(procfs, pid).await {
+        Ok(opened) => opened,
+        Err(_) => {
+            // If the process is no longer present or already gone, treat as exited.
+            return Ok(());
         }
-    })
-    .await
-    .context("timed out waiting for Agent Process exit")?;
+    };
+    let result = tokio::time::timeout(
+        timeout,
+        crate::runtime::boot_setup::read_opened_wait_record(&view, fid, pid),
+    )
+    .await;
+    let _ = alan_ap::FileServer::clunk(&view, fid).await;
+    result.context("timed out waiting for Agent Process exit")??;
     Ok(())
 }
 

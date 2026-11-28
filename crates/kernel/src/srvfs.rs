@@ -21,7 +21,7 @@ use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat,
 };
 use async_trait::async_trait;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 
 use crate::Access;
 
@@ -53,6 +53,7 @@ enum Node {
 /// per-view.
 pub struct SrvFs {
     registry: Arc<Mutex<Registry>>,
+    changes: Arc<watch::Sender<u64>>,
     denied: HashSet<String>,
     fids: Mutex<HashMap<Fid, Node>>,
 }
@@ -65,14 +66,21 @@ impl Default for SrvFs {
 
 impl SrvFs {
     pub fn new() -> Self {
+        let (changes, _rx) = watch::channel(0u64);
         Self {
             registry: Arc::new(Mutex::new(Registry {
                 handles: Vec::new(),
                 next_qid: 1,
             })),
+            changes: Arc::new(changes),
             denied: HashSet::new(),
             fids: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Subscribe to handle post/unpost notifications on this `/srv` registry.
+    pub fn subscribe(&self) -> watch::Receiver<u64> {
+        self.changes.subscribe()
     }
 
     fn visible(&self, name: &str) -> bool {
@@ -93,6 +101,7 @@ impl SrvFs {
             access,
             qid_path,
         });
+        self.changes.send_modify(|rev| *rev = rev.saturating_add(1));
     }
 
     /// Invalidate a published handle. Existing resolved fids may drain, while
@@ -101,7 +110,11 @@ impl SrvFs {
         let mut registry = self.registry.lock().await;
         let before = registry.handles.len();
         registry.handles.retain(|handle| handle.name != name);
-        registry.handles.len() != before
+        let removed = registry.handles.len() != before;
+        if removed {
+            self.changes.send_modify(|rev| *rev = rev.saturating_add(1));
+        }
+        removed
     }
 
     /// Every posted handle name visible through this view, in post order.
@@ -138,6 +151,7 @@ impl SrvFs {
         combined.extend(denied.iter().cloned());
         SrvFs {
             registry: Arc::clone(&self.registry),
+            changes: Arc::clone(&self.changes),
             denied: combined,
             fids: Mutex::new(HashMap::new()),
         }

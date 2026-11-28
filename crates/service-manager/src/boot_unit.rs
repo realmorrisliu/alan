@@ -230,6 +230,52 @@ impl BootManifest {
         self.order.iter().map(|name| &self.units[name])
     }
 
+    /// Units in strict reverse topological order (downstream dependents before
+    /// their `after` prerequisites), used during graceful shutdown.
+    pub fn reverse_ordered(&self) -> impl Iterator<Item = &BootUnit> {
+        self.order.iter().rev().map(|name| &self.units[name])
+    }
+
+    /// Return all transitive downstream dependents of `unit_name` in forward
+    /// topological order (excluding `unit_name` itself).
+    pub fn downstream_dependents(&self, unit_name: &str) -> Vec<String> {
+        if !self.units.contains_key(unit_name) {
+            return Vec::new();
+        }
+        let mut affected = BTreeSet::new();
+        affected.insert(unit_name);
+        let mut dependents = Vec::new();
+        for name in &self.order {
+            if name == unit_name {
+                continue;
+            }
+            let unit = &self.units[name];
+            if unit
+                .after
+                .iter()
+                .any(|dependency| affected.contains(dependency.as_str()))
+            {
+                affected.insert(name.as_str());
+                dependents.push(name.clone());
+            }
+        }
+        dependents
+    }
+
+    /// Return a copy of this manifest with `name`'s supervision strategy updated and revalidated.
+    pub fn with_unit_supervision(
+        mut self,
+        name: &str,
+        supervision: SupervisionStrategy,
+    ) -> Result<Self> {
+        let Some(unit) = self.units.get_mut(name) else {
+            bail!("unknown Boot Unit `{name}`");
+        };
+        unit.supervision = supervision;
+        unit.validate()?;
+        Ok(self)
+    }
+
     pub fn get(&self, name: &str) -> Option<&BootUnit> {
         self.units.get(name)
     }
@@ -381,6 +427,47 @@ published_handles = []
                     path: "/memory".to_string(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn reverse_ordered_and_downstream_dependents_match_after_graph() {
+        let manifest = BootManifest::system().unwrap();
+        let reverse: Vec<&str> = manifest
+            .reverse_ordered()
+            .map(|unit| unit.name.as_str())
+            .collect();
+        for unit in manifest.ordered() {
+            let pos = reverse.iter().position(|n| *n == unit.name).unwrap();
+            for dep in &unit.after {
+                let dep_pos = reverse.iter().position(|n| n == dep).unwrap();
+                assert!(
+                    pos < dep_pos,
+                    "`{}` must stop before prerequisite `{dep}` in {reverse:?}",
+                    unit.name
+                );
+            }
+        }
+        assert_eq!(
+            manifest.downstream_dependents("agent-runtime"),
+            vec!["local-entry".to_string(), "root-agent".to_string()]
+        );
+        assert_eq!(
+            manifest.downstream_dependents("package"),
+            vec![
+                "agent-runtime".to_string(),
+                "local-entry".to_string(),
+                "root-agent".to_string(),
+            ]
+        );
+        assert!(manifest.downstream_dependents("root-agent").is_empty());
+
+        let updated = manifest
+            .with_unit_supervision("agent-runtime", SupervisionStrategy::RestForOne)
+            .unwrap();
+        assert_eq!(
+            updated.get("agent-runtime").unwrap().supervision,
+            SupervisionStrategy::RestForOne
         );
     }
 }
