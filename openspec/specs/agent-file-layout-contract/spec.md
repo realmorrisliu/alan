@@ -5,7 +5,9 @@ Defines the generic Process layout and the `/agent` overlay convention,
 including namespace-derived capabilities, file-backed IO with explicit input
 routing, machine state, request/action trees, stream authority, access rights,
 and durability ownership.
+
 ## Requirements
+
 ### Requirement: An agent is a conforming process, not a kernel type
 alan9 SHALL treat an agent as a `Process` whose `/agent/<pid>` overlay conforms
 to the agent file-layout convention. Agent-ness SHALL be discoverable by
@@ -434,14 +436,10 @@ writer permission; the existing protocol-layer lease prerequisites still apply.
 - **AND** on resume the engine continues from the amended state
 
 ### Requirement: Write authority carries an actor dimension; extension is by interpose
-alan9 SHALL make write authority to an agent's files a function of the acting
-actor (the agent's own engine, a parent, a human operator, an interposing file
-server) and that actor's mounted capabilities — not a static property of the node
-alone. The unit of behavior extension SHALL be interposing a file server on the
-namespace, governed by who-may-{read, write, mount, interpose}, never a private
-out-of-band API (the iron law). Until the kernel's amplification check
-(ADR-0024 R1) lands, this boundary is convention-enforced, not claimed as hard
-isolation.
+alan9 SHALL enforce mount-time actor-scoped write authority over `/agent` via
+`AgentActorView` (`Engine`, `Client`, `Child`) rather than a static global node
+table or extra `aP` wire-identity fields. Extensions SHALL interpose via
+mounts governed by who-may-{read, write, mount, interpose}.
 
 #### Scenario: An extension changes agent behavior
 - **WHEN** an extension must alter how an agent reads or writes a file
@@ -454,15 +452,21 @@ isolation.
 - **THEN** the write decision depends on the actor and its capabilities
 - **AND** node-writability is not a single global property independent of actor
 
+#### Scenario: Client mounts reject writes to engine-owned surfaces
+- **WHEN** a caller attached via `LocalEntryService::namespace_for_local_client`, `namespace.ap.sock`, or `EmbeddedAlan` calls `open` with write intent on `io/output`, `machine/tape`, `machine/ui/*`, `actions/*`, or `requests/clone`
+- **THEN** `open` fails at dial time with `ErrorCode::NoAccess` and `stat.writable` reports `false`
+- **AND** writes to `io/input`, `machine/ctl`, and `requests/<id>/response` remain permitted
+
+#### Scenario: Child agents cannot mutate parent or sibling /agent state
+- **WHEN** a child Agent Process attempts a write-intent `open` under `/agent/<parent_pid>` or a sibling `/agent/<other_pid>`
+- **THEN** `open` fails at dial time with `ErrorCode::NoAccess` while own `<self_pid>` engine surfaces remain governed by its child view
+
 ### Requirement: External writers require a protocol-layer tape lease
-alan9 SHALL NOT permit any actor other than the agent's own engine (a human
-amending `machine/tape`/`context/`, or an interposing file server) to write the
-agent namespace until the `machine/tape` exclusive-write lease is enforced at the
-aP protocol layer rather than solely as a check inside the agent file server.
-Because an interposing server bypasses the agent file server's own `write` path, an
-agent-file-server-internal check MUST NOT remain the sole enforcement of the lease
-once a second writer can exist; the protocol-layer guarantee is a prerequisite that
-gates enabling any external-writer surface.
+alan9 SHALL enforce `OpenMode::WriteExclusive` at the `aP`/kernel layer for
+`machine/tape`, `io/output`, and `machine/ui/events` before permitting any
+external-writer or interposing file server surface. Because `AgentActorView`
+blocks non-Engine opens on those files, unprivileged clients cannot hold
+leases across idle or yielded windows to starve the Engine.
 
 #### Scenario: The lease is still only an internal check
 - **WHEN** the `machine/tape` lease is enforced solely inside the agent file server
@@ -475,6 +479,14 @@ gates enabling any external-writer surface.
 - **THEN** a write attempted while the engine holds the lease is refused regardless
   of which file server receives it
 - **AND** the interposer cannot grant a write the aP layer forbids
+
+#### Scenario: Concurrent unframed writes to io/output or ui/events are rejected
+- **WHEN** the Agent Engine holds `OpenMode::WriteExclusive` on `io/output` or `machine/ui/events`
+- **THEN** any second write open against that surface fails at dial time with `ErrorCode::NoAccess` regardless of interposing mounts
+
+#### Scenario: Unprivileged client cannot starve Engine tape lease during yield
+- **WHEN** an Agent Engine yields and releases its `machine/tape` fid
+- **THEN** a `Client` or non-owning `Child` mount attempting `open(..., Write | WriteExclusive | ReadWrite)` on `machine/tape` fails with `ErrorCode::NoAccess`
 
 ### Requirement: The agent namespace is self-describing
 alan9 SHALL let an agent's files describe their own byte contract in-band, so the
@@ -703,4 +715,3 @@ and retention rules SHALL apply to all evidence reads.
 #### Scenario: User refers to the prior command
 - **WHEN** the user asks about the preceding direct command result
 - **THEN** Agent reasoning can use its correlated command and evidence without asking the user to paste it
-
