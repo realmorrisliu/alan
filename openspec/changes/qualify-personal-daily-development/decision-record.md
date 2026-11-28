@@ -56,6 +56,7 @@ continue to describe the current contract until reviewed implementation and sync
   dirty work. Use a separately frozen worktree; do not switch, stash or clean the
   user's checkout. It uses Astro/TypeScript/React/pnpm; main pushes deploy the
   website, so initial qualification excludes publication/deployment.
+  - **Q11 Amendment (2026-11-28)**: Because `realmorrisliu.com` currently has no active overhaul need, the 15 non-Rust TypeScript/`pnpm` web slots are broadened to active TS/`pnpm` web repositories (`thinksmart.systems`, `alan/website`, and optionally `realmorrisliu.com`), keeping isolated worktrees and zero unauthorized deployment so all samples measure real ongoing work across both Rust and TypeScript/`pnpm` toolchains.
 - Q12: Each task requires configurable elapsed-time, Tool-call and model-call
   budgets. Exhaustion pauses, never silently resets. Freeze numeric limits after
   a bounded pilot and before formal qualification. Report monetary cost only
