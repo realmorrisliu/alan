@@ -39,6 +39,10 @@ These are accepted plans, not claims of shipped trust modes or daily-use qualifi
 - [Project workstreams, read-only ledger auto-load, routefs handoff and stateful cron streams (proposed)](./adr/0062-project-workstreams-ledger-and-stateful-cron-streams.md)
 - [Project workstreams OpenSpec change (`add-project-workstreams`, proposed/unimplemented)](../openspec/changes/add-project-workstreams/proposal.md)
 
+## Proposed Future Direction (Post-Qualification)
+
+- [File-tree-native Alan GUI direction (Calm HITE Workbench on nsh) (proposed)](./adr/0064-file-tree-native-alan-gui-direction.md)
+
 ## Current Behavior And Guides
 
 These are the best entry points for understanding what the repository
