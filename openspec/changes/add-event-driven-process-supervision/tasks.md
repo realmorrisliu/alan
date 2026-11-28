@@ -18,5 +18,5 @@
 - [x] 3.3 Replace `async_workstreams` `10ms` quiescence polling (`crates/agent-engine/src/runtime/async_workstreams.rs`) with stream-driven completion signaling.
 
 ## 4. Verification & Quality Gate
-- [ ] 4.1 Run end-to-end tests (`workstream_pty_test`, lifecycle/chaos suites, and PTY E2E tests touching `/mnt/service-manager/units/*`).
-- [ ] 4.2 Run `just quality` and strict OpenSpec validation (`openspec validate --strict add-event-driven-process-supervision`).
+- [x] 4.1 Run end-to-end tests (`workstream_pty_test`, lifecycle/chaos suites, and PTY E2E tests touching `/mnt/service-manager/units/*`).
+- [x] 4.2 Run `just quality` and strict OpenSpec validation (`openspec validate --strict add-event-driven-process-supervision`).
