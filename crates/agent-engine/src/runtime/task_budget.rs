@@ -691,7 +691,7 @@ mod ui_budget_tests {
         let limits = crate::TaskBudgetLimits {
             execution_seconds: NonZeroU64::new(1800).unwrap(),
             tool_calls: NonZeroU64::new(256).unwrap(),
-            model_calls: NonZeroU64::new(64).unwrap(),
+            model_calls: NonZeroU64::new(128).unwrap(),
         };
         let default_snap = default_ui_snapshot(&limits, false);
         assert!(default_snap.is_valid());
@@ -699,7 +699,7 @@ mod ui_budget_tests {
         assert_eq!(default_snap.elapsed_secs, 0);
         assert_eq!(default_snap.max_secs, 1800);
         assert_eq!(default_snap.max_tool_calls, 256);
-        assert_eq!(default_snap.max_model_calls, 64);
+        assert_eq!(default_snap.max_model_calls, 128);
         assert_eq!(default_snap.auto_extensions_used, None);
         assert_eq!(default_snap.max_auto_extensions, None);
 
@@ -730,7 +730,7 @@ mod ui_budget_tests {
         assert_eq!(ui.model_calls, 43);
         assert_eq!(ui.max_secs, 1800);
         assert_eq!(ui.max_tool_calls, 256);
-        assert_eq!(ui.max_model_calls, 64);
+        assert_eq!(ui.max_model_calls, 128);
         assert_eq!(ui.auto_extensions_used, None);
         assert_eq!(ui.max_auto_extensions, None);
 
