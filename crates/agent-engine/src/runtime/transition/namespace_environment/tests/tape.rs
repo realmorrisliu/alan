@@ -79,5 +79,146 @@ async fn failed_turn_runtime_closes_writer_before_returning() {
     );
     assert!(runtime.run_next_turn().await.is_err());
     // No yield: an asynchronously scheduled Drop clunk would still hold the lease.
-    shell.write("/agent/1/machine/tape", b"").await.unwrap();
+    shell
+        .write_exclusive("/agent/1/machine/tape", b"")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn engine_writers_use_write_exclusive_and_reject_non_exclusive_or_contending_opens() {
+    use alan_agent_protocol::{UiActivitySnapshot, UiEvent};
+    use alan_ap::{ErrorCode, Fid, OpenMode, Request};
+
+    let agentfs = Arc::new(AgentFs::new());
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/agent/1",
+        InProcessTransport::new(agentfs),
+        Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+    let shell = Shell::new(root.clone());
+    let environment = NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default");
+    let agent_files = environment.agent_files();
+
+    // Non-exclusive Write and ReadWrite opens are rejected on all three single-producer streams.
+    for path in [
+        "/agent/1/machine/tape",
+        "/agent/1/io/output",
+        "/agent/1/machine/ui/events",
+    ] {
+        assert_eq!(
+            shell.write(path, b"nope\n").await,
+            Err(ErrorCode::NoAccess),
+            "{path} must reject non-exclusive Write"
+        );
+        let fid = Fid(700);
+        let names: Vec<String> = path
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_string)
+            .collect();
+        root.call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: fid,
+            names,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            root.call(Request::Open {
+                fid,
+                mode: OpenMode::ReadWrite,
+            })
+            .await,
+            Err(ErrorCode::NoAccess),
+            "{path} must reject ReadWrite"
+        );
+        root.call(Request::Clunk { fid }).await.unwrap();
+    }
+
+    // Legitimate engine writers succeed via WriteExclusive on all three surfaces.
+    let writer = agent_files.begin_tape_generation().await.unwrap();
+    writer
+        .append_record("assistant", "exclusive tape", None, &[])
+        .await
+        .unwrap();
+    writer.finish().await.unwrap();
+
+    agent_files
+        .write_assistant_output("exclusive output")
+        .await
+        .unwrap();
+    agent_files
+        .append_ui_event(&UiEvent::Activity {
+            snapshot: UiActivitySnapshot::idle(),
+        })
+        .await
+        .unwrap();
+
+    // Holding an exclusive lease on io/output or machine/ui/events blocks the engine emitter
+    // until clunk releases it cleanly.
+    for (path, is_output) in [
+        ("/agent/1/io/output", true),
+        ("/agent/1/machine/ui/events", false),
+    ] {
+        let holder = Fid(710);
+        let names: Vec<String> = path
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_string)
+            .collect();
+        root.call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: holder,
+            names,
+        })
+        .await
+        .unwrap();
+        root.call(Request::Open {
+            fid: holder,
+            mode: OpenMode::WriteExclusive,
+        })
+        .await
+        .unwrap();
+
+        let contended = if is_output {
+            agent_files.write_assistant_output("contended").await
+        } else {
+            agent_files
+                .append_ui_event(&UiEvent::Activity {
+                    snapshot: UiActivitySnapshot::idle(),
+                })
+                .await
+        };
+        assert!(
+            contended.is_err(),
+            "{path} must reject a second WriteExclusive while leased"
+        );
+
+        root.call(Request::Clunk { fid: holder }).await.unwrap();
+
+        if is_output {
+            agent_files
+                .write_assistant_output(" after-clunk")
+                .await
+                .unwrap();
+        } else {
+            agent_files
+                .append_ui_event(&UiEvent::Activity {
+                    snapshot: UiActivitySnapshot::idle(),
+                })
+                .await
+                .unwrap();
+        }
+    }
+
+    assert_eq!(
+        String::from_utf8(shell.cat("/agent/1/io/output").await.unwrap()).unwrap(),
+        "exclusive output after-clunk"
+    );
+    let ui_events =
+        String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+    assert_eq!(ui_events.lines().count(), 2);
 }

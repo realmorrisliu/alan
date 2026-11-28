@@ -491,7 +491,6 @@ fn build_child_namespace_plan(
     let mut selected = BTreeMap::<String, ProcessNamespaceAccess>::new();
     for path in [
         "/proc",
-        "/agent",
         "/srv",
         AGENT_EXECUTABLE,
         "/mnt/llm",
@@ -501,6 +500,10 @@ fn build_child_namespace_plan(
     ] {
         retain_exact_mount(parent_mounts, &mut selected, path)?;
     }
+    // Children never inherit the parent's read-write `/agent` view; Agent
+    // Runtime Service mounts `AgentActorView::Child { self_pid }` when the
+    // child Process starts, keeping parent and sibling `/agent` trees read-only.
+    retain_exact_mount_read_only(parent_mounts, &mut selected, "/agent")?;
     if let Some(target_path) = target_path {
         retain_resolving_mount(parent_mounts, &mut selected, target_path)?;
     }
@@ -936,6 +939,27 @@ mod tests {
         assert_eq!(
             inherited_req.recovery_rollout.as_deref(),
             Some("/tmp/inherited.jsonl")
+        );
+    }
+
+    #[test]
+    fn child_namespace_mounts_agent_read_only_until_runtime_child_view() {
+        let plan = plan(&spec()).unwrap();
+        let process_agent = plan
+            .process_mounts
+            .iter()
+            .find(|mount| mount.path == "/agent")
+            .expect("child plan must include /agent mount");
+        assert_eq!(
+            process_agent.access,
+            ProcessNamespaceAccess::ReadOnly,
+            "child plan must not inherit parent read_write /agent mount"
+        );
+        let summary = plan.namespace_summary();
+        assert!(
+            !summary.writable_mounts.iter().any(|path| path == "/agent"),
+            "child summary must not expose /agent as writable: {:?}",
+            summary.writable_mounts
         );
     }
 }

@@ -64,7 +64,7 @@ async fn public_root_watch_refresh(copies: usize) {
         // it during refresh; it must not resurrect the already committed prefix.
         let q_record = serde_json::json!({"version":1,"kind":"message","role":"user","content":body,"submission_id":"q"});
         shell
-            .write(
+            .write_exclusive(
                 &format!("{old_owner}/machine/tape"),
                 format!("{q_record}\n").repeat(copies).as_bytes(),
             )
@@ -237,7 +237,7 @@ async fn public_root_watch_refresh(copies: usize) {
         );
         let fresh_record = serde_json::json!({"version":1,"kind":"message","role":"user","content":"fresh task","submission_id":"fresh"});
         shell
-            .write(
+            .write_exclusive(
                 &format!("{new_owner}/machine/tape"),
                 format!("{fresh_record}\n{fresh_record}\n").as_bytes(),
             )
@@ -338,7 +338,7 @@ async fn submitted_equal_body_receipts_share_projected_coordinates() {
         let expected = app.transcript.clone();
         assert_eq!(expected.len(), 4);
         shell
-            .write(&format!("{owner}/machine/tape"), tape.as_bytes())
+            .write_exclusive(&format!("{owner}/machine/tape"), tape.as_bytes())
             .await
             .unwrap();
         shell

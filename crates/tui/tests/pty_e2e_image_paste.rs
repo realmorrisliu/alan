@@ -155,7 +155,7 @@ async fn run_child() -> Result<()> {
                     .unwrap_or_default();
                     ev.push(b'\n');
                     let _ = input_shell
-                        .write(&format!("{input_owner}/machine/ui/events"), &ev)
+                        .write_exclusive(&format!("{input_owner}/machine/ui/events"), &ev)
                         .await;
                     let tape = format!(
                         "{}\n",
@@ -167,7 +167,7 @@ async fn run_child() -> Result<()> {
                         })
                     );
                     let _ = input_shell
-                        .write(&format!("{input_owner}/machine/tape"), tape.as_bytes())
+                        .write_exclusive(&format!("{input_owner}/machine/tape"), tape.as_bytes())
                         .await;
                 }
             }

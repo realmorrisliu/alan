@@ -227,7 +227,7 @@ async fn run_status_bar_child(dumb: bool) -> Result<()> {
     })
     .to_string();
     shell
-        .write(
+        .write_exclusive(
             &format!("{owner}/machine/tape"),
             format!("{tape_line}\n").as_bytes(),
         )

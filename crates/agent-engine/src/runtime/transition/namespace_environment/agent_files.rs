@@ -987,5 +987,5 @@ async fn append_json_line<T: Serialize>(
 ) -> Result<()> {
     let mut bytes = serde_json::to_vec(value).context("serialize ui event")?;
     bytes.push(b'\n');
-    client.write_document(path, &bytes).await
+    client.write_exclusive_document(path, &bytes).await
 }

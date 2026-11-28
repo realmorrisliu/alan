@@ -9,3 +9,4 @@ include!("mountfs/base_contract.inc.rs");
 include!("mountfs/stream_and_union_contract.inc.rs");
 
 include!("mountfs/walk_cancellation.inc.rs");
+include!("mountfs/exclusive_lease_contract.inc.rs");

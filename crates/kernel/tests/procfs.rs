@@ -8,3 +8,4 @@
 include!("procfs/lifecycle_and_io_contract.inc.rs");
 include!("procfs/observation_and_namespace_contract.inc.rs");
 include!("procfs/namespace_generation_contract.inc.rs");
+include!("procfs/ordering_and_access_contract.inc.rs");

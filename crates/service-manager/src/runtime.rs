@@ -751,7 +751,11 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
                     .map_err(|error| anyhow::anyhow!("track {} start: {error:?}", unit.name))?;
                 if unit.name == "local-entry" {
                     let service = local_entry.get_or_insert_with(|| {
-                        LocalEntryService::new(procfs.clone(), unit_namespace)
+                        LocalEntryService::new_with_agent_root(
+                            procfs.clone(),
+                            unit_namespace,
+                            agent_root.clone(),
+                        )
                     });
                     service
                         .set_service_pid(pid)

@@ -67,7 +67,10 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
             String::from_utf8(shell.cat("/agent/1/machine/ui/notice").await.unwrap())
         );
         assert!(
-            shell.write("/agent/1/machine/tape", b"").await.is_err(),
+            shell
+                .write_exclusive("/agent/1/machine/tape", b"")
+                .await
+                .is_err(),
             "a second writer must be excluded while the provider is generating"
         );
         let tape = shell.cat("/agent/1/machine/tape").await.unwrap();
@@ -274,7 +277,7 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
             }
         }
         shell
-            .write("/agent/1/machine/tape", b"")
+            .write_exclusive("/agent/1/machine/tape", b"")
             .await
             .expect("settled or interrupted generation releases the tape lease");
         assert_eq!(order, expected);

@@ -177,6 +177,10 @@ struct State {
     inputs: HashMap<Pid, Stream>,
     outputs: HashMap<Pid, Stream>,
     io_events: HashMap<Pid, Stream>,
+    /// Per-PID serializer ensuring `io/{input,output}`, `io/events`, and bridged
+    /// process events commit in identical order without blocking unrelated PIDs
+    /// or stream readers.
+    io_locks: HashMap<Pid, Arc<Mutex<()>>>,
     event_history: HashMap<Pid, Vec<ProcessEvent>>,
     event_observers: HashMap<Pid, Vec<Arc<OrderedProcessEventObserver>>>,
     io_observers: HashMap<Pid, Vec<Arc<OrderedProcessIoEventObserver>>>,
@@ -300,6 +304,7 @@ impl ProcFs {
                 inputs: HashMap::new(),
                 outputs: HashMap::new(),
                 io_events: HashMap::new(),
+                io_locks: HashMap::new(),
                 event_history: HashMap::new(),
                 event_observers: HashMap::new(),
                 io_observers: HashMap::new(),
@@ -521,7 +526,54 @@ impl ProcFs {
         }
     }
 
+    async fn pid_io_lock(&self, pid: Pid) -> Arc<Mutex<()>> {
+        let mut state = self.state.lock().await;
+        state
+            .io_locks
+            .entry(pid)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    async fn commit_io_input(
+        &self,
+        pid: Pid,
+        io_lock: Arc<Mutex<()>>,
+        stream: Stream,
+        events: Stream,
+        framed: &[u8],
+        count: u32,
+    ) {
+        let _commit_guard = io_lock.lock().await;
+        stream.append_sync(framed);
+        append_io_event_sync(&events, "input", count);
+        self.publish_process_event_serialized(pid, ProcessEvent::Input { count })
+            .await;
+    }
+
+    async fn commit_io_output(
+        &self,
+        pid: Pid,
+        io_lock: Arc<Mutex<()>>,
+        stream: Stream,
+        events: Stream,
+        data: &[u8],
+        count: u32,
+    ) {
+        let _commit_guard = io_lock.lock().await;
+        stream.append_sync(data);
+        append_io_event_sync(&events, "output", count);
+        self.publish_process_event_serialized(pid, ProcessEvent::Output { count })
+            .await;
+    }
+
     async fn publish_process_event(&self, pid: Pid, event: ProcessEvent) {
+        let io_lock = self.pid_io_lock(pid).await;
+        let _commit_guard = io_lock.lock().await;
+        self.publish_process_event_serialized(pid, event).await;
+    }
+
+    async fn publish_process_event_serialized(&self, pid: Pid, event: ProcessEvent) {
         let (event_observers, io_observers, input_observers, output_observers) = {
             let mut state = self.state.lock().await;
             state
@@ -733,4 +785,9 @@ fn next_view_id() -> u64 {
 
 fn parse_pid(name: &str) -> Option<Pid> {
     name.parse::<u64>().ok().map(Pid)
+}
+
+fn append_io_event_sync(events: &Stream, kind: &str, count: u32) {
+    let record = format!("{kind}:{count}\n");
+    events.append_sync(record.as_bytes());
 }

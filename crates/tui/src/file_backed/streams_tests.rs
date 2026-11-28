@@ -379,14 +379,14 @@ async fn focus_and_root_switch_over_agent_pids_preserves_coherent_scrollback_wit
     let root_agent = format!("/agent/{root_pid}");
     let child_agent = format!("/agent/{child_pid}");
     shell
-        .write(
+        .write_exclusive(
             &format!("{root_agent}/machine/tape"),
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"root-initial-q\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"root-initial-a\"}\n",
         )
         .await
         .unwrap();
     shell
-        .write(
+        .write_exclusive(
             &format!("{child_agent}/machine/tape"),
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"worker-initial-q\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"worker-initial-a\"}\n",
         )
@@ -424,7 +424,7 @@ async fn focus_and_root_switch_over_agent_pids_preserves_coherent_scrollback_wit
 
     // Simulate a new turn on Root while focused on child.
     shell
-        .write(
+        .write_exclusive(
             &format!("{root_agent}/machine/tape"),
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"root-later-a\"}\n",
         )

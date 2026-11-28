@@ -455,7 +455,7 @@ async fn run_child_m2_tui(project_dir: PathBuf) -> Result<()> {
         )
         .await?;
     shell
-        .write(
+        .write_exclusive(
             &format!("{owner}/machine/tape"),
             br#"{"version":1,"kind":"message","role":"assistant","content":"| Col | Val |\n| --- | --- |\n| one | two |\n"}"#,
         )
@@ -673,7 +673,7 @@ async fn run_child_m2_tui(project_dir: PathBuf) -> Result<()> {
                     .unwrap_or_default();
                     ev.push(b'\n');
                     let _ = control_shell
-                        .write(&format!("{control_owner}/machine/ui/events"), &ev)
+                        .write_exclusive(&format!("{control_owner}/machine/ui/events"), &ev)
                         .await;
                 }
             }

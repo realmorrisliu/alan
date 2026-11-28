@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use alan_agentfs::{AgentActorView, AgentRootFs};
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
 use alan_kernel::{Access, Credentials, LiveNamespace, MountFs, Pid, ProcFs};
 use async_trait::async_trait;
@@ -51,6 +52,7 @@ struct FidState {
 /// Creates ordinary Shell Processes from the fixed Login Namespace Template.
 pub struct LocalEntryService {
     procfs: ProcFs,
+    agent_root: Option<Arc<AgentRootFs>>,
     login_namespace: LiveNamespace,
     state: Mutex<State>,
     fids: Mutex<HashMap<Fid, FidState>>,
@@ -60,7 +62,34 @@ impl LocalEntryService {
     pub fn new(procfs: ProcFs, system_namespace: LiveNamespace) -> Arc<Self> {
         Arc::new(Self {
             procfs,
+            agent_root: None,
             login_namespace: LiveNamespace::new(system_namespace.snapshot().child()),
+            state: Mutex::new(State {
+                service_pid: None,
+                next_id: 1,
+                entries: BTreeMap::new(),
+            }),
+            fids: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Build a Local Entry Service whose local clients and Shell Processes
+    /// mount `/agent` through [`AgentActorView::Client`].
+    pub fn new_with_agent_root(
+        procfs: ProcFs,
+        system_namespace: LiveNamespace,
+        agent_root: Arc<AgentRootFs>,
+    ) -> Arc<Self> {
+        let login_namespace = LiveNamespace::new(system_namespace.snapshot().child());
+        login_namespace.replace_mount(
+            "/agent",
+            alan_ap::InProcessTransport::new(agent_root.actor_view(AgentActorView::Client)),
+            Access::ReadWrite,
+        );
+        Arc::new(Self {
+            procfs,
+            agent_root: Some(agent_root),
+            login_namespace,
             state: Mutex::new(State {
                 service_pid: None,
                 next_id: 1,
@@ -88,9 +117,17 @@ impl LocalEntryService {
     }
 
     /// Returns a local-client namespace without allocating a Shell Process.
-    /// `/proc` is read-only because this client has no Process parent for clones.
+    /// `/proc` is read-only because this client has no Process parent for clones,
+    /// and `/agent` is projected through [`AgentActorView::Client`].
     pub fn namespace_for_local_client(&self) -> Arc<MountFs> {
         let namespace = LiveNamespace::new(self.login_namespace.snapshot().child());
+        if let Some(agent_root) = &self.agent_root {
+            namespace.replace_mount(
+                "/agent",
+                alan_ap::InProcessTransport::new(agent_root.actor_view(AgentActorView::Client)),
+                Access::ReadWrite,
+            );
+        }
         namespace.replace_mount(
             "/proc",
             alan_ap::InProcessTransport::new(Arc::new(self.procfs.for_live_spawner(
@@ -133,6 +170,13 @@ impl LocalEntryService {
             (service_pid, id)
         };
         let namespace = LiveNamespace::new(self.login_namespace.snapshot().child());
+        if let Some(agent_root) = &self.agent_root {
+            namespace.replace_mount(
+                "/agent",
+                alan_ap::InProcessTransport::new(agent_root.actor_view(AgentActorView::Client)),
+                Access::ReadWrite,
+            );
+        }
         let pid = spawn_process(
             &self.procfs,
             Some(service_pid),
@@ -521,5 +565,137 @@ mod tests {
             procfs.try_observe_process_lifecycle(Pid(agent_pid)),
             Some((Status::Running, None))
         );
+    }
+
+    #[tokio::test]
+    async fn local_client_and_shell_entry_enforce_client_actor_view_on_agent_root() {
+        let procfs = ProcFs::new();
+        let agent_root = Arc::new(AgentRootFs::new_with_process_events(
+            Arc::new(procfs.clone()),
+            Arc::new(procfs.clone()),
+        ));
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/proc",
+            InProcessTransport::new(Arc::new(procfs.for_spawner(
+                None,
+                Namespace::new(),
+                Credentials::system(),
+            ))),
+            Access::ReadWrite,
+        );
+        namespace.mount(
+            "/agent",
+            InProcessTransport::new(agent_root.clone()),
+            Access::ReadWrite,
+        );
+        for executable in [
+            "/bin/local-entry-service",
+            SHELL_EXECUTABLE,
+            "/bin/alan-agent",
+        ] {
+            namespace.mount(
+                executable,
+                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+                Access::ReadOnly,
+            );
+        }
+        let system = LiveNamespace::new(namespace);
+        let service_pid = spawn_process(
+            &procfs,
+            None,
+            system.clone(),
+            Credentials::system(),
+            "/bin/local-entry-service",
+        )
+        .await
+        .unwrap();
+        let root_agent_pid = spawn_process(
+            &procfs,
+            None,
+            system.clone(),
+            Credentials::system(),
+            "/bin/alan-agent",
+        )
+        .await
+        .unwrap();
+        agent_root
+            .bind_process(
+                root_agent_pid.0.to_string(),
+                Arc::new(alan_agentfs::AgentFs::new()),
+            )
+            .await;
+        agent_root
+            .set_root_process(root_agent_pid.0.to_string())
+            .await;
+
+        let service = LocalEntryService::new_with_agent_root(procfs.clone(), system, agent_root);
+        service.set_service_pid(service_pid).await.unwrap();
+
+        let client_ns = InProcessTransport::new(service.namespace_for_local_client());
+        let (_, _, shell_ns) = service.create_and_handoff().await.unwrap();
+        let shell_ns = InProcessTransport::new(shell_ns);
+
+        for (label, transport) in [("local_client", client_ns), ("shell_entry", shell_ns)] {
+            let shell = Shell::new(transport.clone());
+            // Engine-owned surfaces fail at dial time with NoAccess and stat.writable == false.
+            for (idx, path) in [
+                "/agent/root/io/output",
+                "/agent/root/machine/tape",
+                "/agent/root/machine/ui/activity",
+                "/agent/root/machine/ui/events",
+                "/agent/root/requests/clone",
+                "/agent/root/actions/clone",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let fid = Fid(200 + idx as u64);
+                let names: Vec<String> = path
+                    .split('/')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                transport
+                    .call(Request::Walk {
+                        fid: Fid::ROOT,
+                        newfid: fid,
+                        names,
+                    })
+                    .await
+                    .unwrap();
+                let Response::Stat { stat } = transport.call(Request::Stat { fid }).await.unwrap()
+                else {
+                    panic!("expected Stat");
+                };
+                assert!(
+                    !stat.writable,
+                    "{label}: {path} must report stat.writable == false"
+                );
+                for mode in [
+                    OpenMode::Write,
+                    OpenMode::WriteExclusive,
+                    OpenMode::ReadWrite,
+                ] {
+                    assert_eq!(
+                        transport.call(Request::Open { fid, mode }).await,
+                        Err(ErrorCode::NoAccess),
+                        "{label}: {path} open({mode:?}) must return NoAccess"
+                    );
+                }
+                transport.call(Request::Clunk { fid }).await.unwrap();
+            }
+
+            // Reading io/output and writing io/input and machine/ctl remain allowed.
+            assert!(shell.cat("/agent/root/io/output").await.is_ok());
+            shell
+                .write("/agent/root/io/input", b"client-input")
+                .await
+                .unwrap();
+            shell
+                .write("/agent/root/machine/ctl", b"interrupt")
+                .await
+                .unwrap();
+        }
     }
 }

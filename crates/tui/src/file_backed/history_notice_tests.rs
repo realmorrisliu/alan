@@ -73,7 +73,7 @@ async fn hydrated_runtime_error_keeps_history_without_a_duplicate_footer() {
     ];
     for event in events {
         shell
-            .write(
+            .write_exclusive(
                 "/agent/root/machine/ui/events",
                 format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes(),
             )

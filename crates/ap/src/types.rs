@@ -65,6 +65,11 @@ pub struct Qid {
 pub enum OpenMode {
     Read,
     Write,
+    /// Exclusive single-writer intent, bound to fid open/clunk and connection
+    /// lifetime. Enforced at the kernel mount/namespace boundary so interposing
+    /// file servers cannot grant conflicting writes while the lease is held.
+    #[serde(rename = "write_exclusive")]
+    WriteExclusive,
     ReadWrite,
 }
 

@@ -88,6 +88,22 @@ async fn read_only_mount_enforces_access_on_calls() {
         Err(ErrorCode::NoAccess)
     );
     assert_eq!(
+        ro.call(Request::Open {
+            fid: Fid(2),
+            mode: OpenMode::WriteExclusive
+        })
+        .await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        ro.call(Request::Open {
+            fid: Fid(2),
+            mode: OpenMode::ReadWrite
+        })
+        .await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
         ro.call(Request::Write {
             fid: Fid(1),
             offset: 0,
@@ -354,7 +370,9 @@ fn read_only_mount_cannot_be_escalated_to_write() {
     assert_eq!(resolved.access, Access::ReadOnly);
     assert!(resolved.access.allows(OpenMode::Read));
     assert!(!resolved.access.allows(OpenMode::Write));
+    assert!(!resolved.access.allows(OpenMode::WriteExclusive));
     assert!(!resolved.access.allows(OpenMode::ReadWrite));
+    assert!(Access::ReadWrite.allows(OpenMode::WriteExclusive));
 }
 
 #[test]

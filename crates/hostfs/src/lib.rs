@@ -264,14 +264,21 @@ impl FileServer for HostDirFs {
     }
 
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
-        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !self.access.writable() {
+        if matches!(
+            mode,
+            OpenMode::Write | OpenMode::WriteExclusive | OpenMode::ReadWrite
+        ) && !self.access.writable()
+        {
             return Err(ErrorCode::NoAccess);
         }
         let mut state = self.live_state()?;
         let fids = &mut state.fids;
         let rel = Self::rel_for_fid(fids, fid)?;
         self.policy.check_read(&rel)?;
-        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+        if matches!(
+            mode,
+            OpenMode::Write | OpenMode::WriteExclusive | OpenMode::ReadWrite
+        ) {
             self.policy.check_write(&rel)?;
         }
         let mut write_seed = None;
@@ -281,7 +288,7 @@ impl FileServer for HostDirFs {
                 let handle = self.existing_handle(&rel)?;
                 self.qid_for_metadata(&handle.metadata)?
             }
-            OpenMode::Write => match self.entry_kind_for_rel(&rel)? {
+            OpenMode::Write | OpenMode::WriteExclusive => match self.entry_kind_for_rel(&rel)? {
                 HostEntryKind::Dir => return Err(ErrorCode::IsDirectory),
                 HostEntryKind::Symlink => return Err(ErrorCode::NoAccess),
                 HostEntryKind::File => {
@@ -352,7 +359,10 @@ impl FileServer for HostDirFs {
         let mut state = self.live_state()?;
         let fids = &mut state.fids;
         let fid_state = fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
-        if !matches!(fid_state.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
+        if !matches!(
+            fid_state.mode,
+            Some(OpenMode::Write | OpenMode::WriteExclusive | OpenMode::ReadWrite)
+        ) {
             return Err(ErrorCode::NoAccess);
         }
         if self.policy.check_write(&fid_state.rel).is_err() {

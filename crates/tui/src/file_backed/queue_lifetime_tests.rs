@@ -99,7 +99,7 @@ async fn lifetime_real_clear_late_tape_and_reattach() {
             app.apply_tape_record(tape("q"));
             assert!(app.transcript.is_empty());
         }
-        shell.write(&format!("{owner}/machine/tape"), format!("{}\n", serde_json::json!({"version":1,"kind":"message","role":"user","content":"first line\nsecond line\nthird line","submission_id":"q"})).as_bytes()).await.unwrap();
+        shell.write_exclusive(&format!("{owner}/machine/tape"), format!("{}\n", serde_json::json!({"version":1,"kind":"message","role":"user","content":"first line\nsecond line\nthird line","submission_id":"q"})).as_bytes()).await.unwrap();
         for _ in 0..2 {
             let (tails, _) = reattach_to_current_agent(&shell, "/agent/root", &mut app, &[])
                 .await

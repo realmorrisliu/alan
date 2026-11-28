@@ -149,6 +149,11 @@ impl AgentSessionHandle {
         &self.client
     }
 
+    #[cfg(test)]
+    pub(super) fn transport(&self) -> alan_ap::InProcessTransport {
+        self.session.namespace.clone()
+    }
+
     /// Consume this handle and return its scoped [`RootAgentClient`].
     pub fn into_client(self) -> RootAgentClient {
         self.client

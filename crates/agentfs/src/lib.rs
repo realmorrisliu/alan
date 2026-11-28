@@ -31,11 +31,13 @@
 //! servers: it derives visible pids from `/proc` and forwards `/agent/<pid>` or
 //! `/agent/root` to the corresponding [`AgentFs`] backing tree.
 
+mod actor_view;
 mod conformance;
 mod machine_projection;
 mod request_control;
 mod root;
 mod surface_state;
+use actor_view::is_write_intent;
 use surface_state::node_identity;
 
 use std::collections::{BTreeMap, HashMap};
@@ -49,6 +51,7 @@ use alan_knowledge::{ContentHash, KnowledgeError, KnowledgeStore, RetentionPolic
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
+pub use actor_view::{AgentActorView, AgentFsView, AgentRootView};
 pub use conformance::{AgentConformanceChecker, ConformanceIssue, ConformanceReport};
 pub use root::AgentRootFs;
 
@@ -151,9 +154,11 @@ struct State {
     ui_system1: String,
     next_request: u64,
     next_action: u64,
-    /// The fid currently holding the exclusive-write lease on `machine/tape`, if
-    /// any; a second write-open of the tape is refused while this is set.
+    /// Fids holding exclusive-write (`OpenMode::WriteExclusive`) leases on the
+    /// single-producer streams (`machine/tape`, `io/output`, `machine/ui/events`).
     tape_writer: Option<Fid>,
+    output_writer: Option<Fid>,
+    ui_events_writer: Option<Fid>,
     /// Per-node qid versions, keyed by the node's qid path; bumped when a
     /// directory listing or flat file's content changes (streams are versioned
     /// by read offset, not qid version, so they are not tracked here).
@@ -288,6 +293,8 @@ impl AgentFs {
                 next_request: 0,
                 next_action: 0,
                 tape_writer: None,
+                output_writer: None,
+                ui_events_writer: None,
                 versions: VersionTable::new(),
                 fids: HashMap::new(),
             }),
@@ -410,7 +417,7 @@ impl FileServer for AgentFs {
         if fid == Fid::ROOT {
             // The root is a read-only directory: a write-intent open is denied
             // here rather than slipping through the fast-path.
-            if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+            if is_write_intent(mode) {
                 return Err(ErrorCode::NoAccess);
             }
             return Ok(qid_v0(&Node::Root));
@@ -422,23 +429,14 @@ impl FileServer for AgentFs {
         let node = state.node_of(fid)?;
         // Dial-time access check: a write-intent open on a read-only node fails at
         // open, not later as Unsupported on write.
-        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite)
-            && !surface_state::is_writable(&node)
-        {
+        if is_write_intent(mode) && !surface_state::is_writable(&node) {
             return Err(ErrorCode::NoAccess);
         }
-        // Exclusive-write lease on machine/tape (agent-file-layout-contract): while
-        // one fid holds the tape open for write, a second write-open is refused so
-        // no second writer can interleave records into the source-of-truth tape.
-        // Readers are not excluded; the lease releases when the holder clunks. This
-        // is the M2 in-server form of the GENERATING lease (the generator is the
-        // single tape writer); promotion to an aP-layer mode is owned by the future
-        // external-writers work, for writers that bypass this server.
-        let is_tape_write =
-            matches!(node, Node::Tape) && matches!(mode, OpenMode::Write | OpenMode::ReadWrite);
-        if is_tape_write && state.tape_writer.is_some() {
-            return Err(ErrorCode::NoAccess);
-        }
+        // Single-producer engine streams (`machine/tape`, `io/output`,
+        // `machine/ui/events`) require `OpenMode::WriteExclusive`; non-exclusive
+        // `Write`/`ReadWrite` and concurrent exclusive writers fail with `NoAccess`,
+        // while concurrent `Read` readers remain permitted.
+        state.validate_exclusive_writer(&node, mode)?;
         // Clone-via-open allocates state *and* the caller must read the fid back
         // to learn the allocated id, so it requires ReadWrite: a read-only
         // observer can't allocate, and a write-only open can't strand an entry
@@ -522,9 +520,7 @@ impl FileServer for AgentFs {
         if let Some(bytes) = read_write_base {
             f.write_buf = bytes;
         }
-        if is_tape_write {
-            state.tape_writer = Some(fid);
-        }
+        state.claim_exclusive_writer(&node, fid, mode);
         Ok(state.qid(&node))
     }
 
@@ -595,10 +591,13 @@ impl FileServer for AgentFs {
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
         let mut state = self.state.lock().await;
         let node = state.node_of(fid)?;
-        let has_write = state
-            .fids
-            .get(&fid)
-            .is_some_and(|f| matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)));
+        let has_write = state.fids.get(&fid).is_some_and(|f| {
+            if surface_state::requires_write_exclusive(&node) {
+                f.mode == Some(OpenMode::WriteExclusive)
+            } else {
+                f.mode.is_some_and(is_write_intent)
+            }
+        });
         if !has_write {
             return Err(ErrorCode::NoAccess);
         }
@@ -736,10 +735,8 @@ impl FileServer for AgentFs {
         let Some(f) = state.fids.remove(&fid) else {
             return Err(ErrorCode::NotFound);
         };
-        // Releasing the tape's write fid releases its exclusive-write lease.
-        if state.tape_writer == Some(fid) {
-            state.tape_writer = None;
-        }
+        // Releasing an exclusive writer fid releases its stream lease.
+        state.release_exclusive_writer(fid);
         // Commit a buffered write on clunk.
         if matches!(f.node, Node::Input) && f.wrote {
             // Each committed message is length-framed in io/input so consecutive

@@ -16,7 +16,7 @@ async fn cancelled_reconnect_completion_uses_shared_non_error_presentation() {
         error: None,
     };
     shell
-        .write(
+        .write_exclusive(
             &format!("/agent/{pid}/machine/ui/events"),
             format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes(),
         )
@@ -299,7 +299,7 @@ async fn renderer_hydration_retries_all_streams_after_root_pid_changes() {
         .await;
 
     shell
-        .write(
+        .write_exclusive(
             &format!("/agent/{new_pid}/machine/tape"),
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"new task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"new answer\"}\n",
         )
@@ -428,14 +428,14 @@ async fn renderer_hydration_waits_for_a_stale_published_root_pid_to_change() {
 async fn hydration_does_not_append_a_historical_error_after_later_tape_turns() {
     let (shell, _agent_root, _namespace, _pid) = live_root_agent().await;
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/tape",
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"first task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"first answer\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"later task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"later answer\"}\n",
         )
         .await
         .unwrap();
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/ui/events",
             b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":1}}\n{\"type\":\"error\",\"message\":\"earlier failure\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":2}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
         )

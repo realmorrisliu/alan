@@ -157,7 +157,7 @@ async fn agent_root_alias_forwards_to_the_root_agent_surface() {
     agent_root.set_root_process(pid.clone()).await;
 
     shell
-        .write("/agent/root/io/output", b"hello root")
+        .write_exclusive("/agent/root/io/output", b"hello root")
         .await
         .unwrap();
 
@@ -196,7 +196,10 @@ async fn agent_io_output_writes_to_the_proc_output_stream() {
         .walk(io_fid, output_fid, &["output".to_string()])
         .await
         .unwrap();
-    agent_root.open(output_fid, OpenMode::Write).await.unwrap();
+    agent_root
+        .open(output_fid, OpenMode::WriteExclusive)
+        .await
+        .unwrap();
     agent_root
         .write(output_fid, 0, b"shared output")
         .await
@@ -571,7 +574,7 @@ async fn agent_children_are_derived_from_proc_parentage() {
     );
 
     shell
-        .write(
+        .write_exclusive(
             &format!("/agent/{parent}/children/{child}/io/output"),
             b"hello child",
         )

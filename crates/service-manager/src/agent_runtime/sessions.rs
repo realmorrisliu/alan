@@ -226,11 +226,11 @@ impl AgentRuntimeService {
             return Err(error);
         }
         let session_ns = InProcessTransport::new(Arc::new(
-            alan_kernel::MountFs::from_live_namespace(live_namespace),
+            alan_kernel::MountFs::from_live_namespace(live_namespace.clone()),
         ));
         let mut handle = RootAgentProcess {
             pid,
-            namespace: session_ns.clone(),
+            namespace: session_ns,
             ready: Some(ready_rx),
             stop: Some(stop_tx),
         };
@@ -246,7 +246,19 @@ impl AgentRuntimeService {
                 .expect("session stops mutex poisoned")
                 .insert(pid.0, stop);
         }
-        Ok((pid, session_ns))
+        let client_namespace = LiveNamespace::new(live_namespace.snapshot().child());
+        client_namespace.replace_mount(
+            "/agent",
+            InProcessTransport::new(
+                self.agent_root
+                    .actor_view(alan_agentfs::AgentActorView::Client),
+            ),
+            alan_kernel::Access::ReadWrite,
+        );
+        let client_ns = InProcessTransport::new(Arc::new(
+            alan_kernel::MountFs::from_live_namespace(client_namespace),
+        ));
+        Ok((pid, client_ns))
     }
 
     pub(crate) async fn close_session(&self, pid: Pid) -> Result<()> {

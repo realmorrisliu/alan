@@ -12,7 +12,11 @@
 //! and may only *restrict* its own view; changes never affect another
 //! namespace. Mount state is ephemeral kernel runtime state (D7).
 
+use std::sync::Arc;
+
 use alan_ap::{ErrorCode, InProcessTransport, OpenMode, Request, Response};
+
+use crate::lease::ExclusiveLeaseTable;
 
 /// Whether a mount grants only awareness or also authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +34,10 @@ impl Access {
         match (self, mode) {
             (Access::ReadWrite, _) => true,
             (Access::ReadOnly, OpenMode::Read) => true,
-            (Access::ReadOnly, OpenMode::Write | OpenMode::ReadWrite) => false,
+            (
+                Access::ReadOnly,
+                OpenMode::Write | OpenMode::WriteExclusive | OpenMode::ReadWrite,
+            ) => false,
         }
     }
 }
@@ -42,11 +49,47 @@ impl Access {
 #[derive(Clone)]
 pub struct Resolved {
     tree: InProcessTransport,
+    canonical_prefix: Vec<String>,
     pub rel: Vec<String>,
     pub access: Access,
 }
 
 impl Resolved {
+    /// Canonical absolute path of this resolved target in the shared kernel
+    /// lease domain, preserving the underlying mount identity across `bind` /
+    /// `project_mounts` aliases and normalizing empty/`.`/`..` segments.
+    pub(crate) fn canonical_target_path(&self) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        for segment in self
+            .canonical_prefix
+            .iter()
+            .chain(self.rel.iter())
+            .flat_map(|segment| segment.split('/'))
+        {
+            match segment {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                other => parts.push(other),
+            }
+        }
+        if parts.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", parts.join("/"))
+        }
+    }
+
+    /// Derive the resolved target for a direct child created beneath this
+    /// directory entry so subsequent `open` calls target the child's canonical
+    /// path rather than the parent directory.
+    pub(crate) fn with_child(&self, name: &str) -> Self {
+        let mut child = self.clone();
+        child.rel.extend(split_path(name));
+        child
+    }
+
     /// Carry one operation to the resolved tree, enforcing the mount's access
     /// rights: a read-only mount rejects any mutating request (open-for-write,
     /// write, create, remove) with [`ErrorCode::NoAccess`], so awareness never
@@ -79,7 +122,7 @@ fn is_mutating(request: &Request) -> bool {
             | Request::Create { .. }
             | Request::Remove { .. }
             | Request::Open {
-                mode: OpenMode::Write | OpenMode::ReadWrite,
+                mode: OpenMode::Write | OpenMode::WriteExclusive | OpenMode::ReadWrite,
                 ..
             }
     )
@@ -95,6 +138,9 @@ struct Mount {
     /// Absolute path components this tree is mounted at (`/mnt/llm` → `["mnt",
     /// "llm"]`; `/` → `[]`).
     prefix: Vec<String>,
+    /// Canonical mount prefix shared across `bind`, `project_mounts`, and
+    /// stacked interposing mounts so exclusive leases share one lock domain.
+    canonical_prefix: Vec<String>,
     tree: InProcessTransport,
     access: Access,
 }
@@ -103,6 +149,7 @@ struct Mount {
 #[derive(Clone)]
 pub struct Namespace {
     mounts: Vec<Mount>,
+    leases: Arc<ExclusiveLeaseTable>,
 }
 
 impl Default for Namespace {
@@ -113,15 +160,31 @@ impl Default for Namespace {
 
 impl Namespace {
     pub fn new() -> Self {
-        Self { mounts: Vec::new() }
+        Self {
+            mounts: Vec::new(),
+            leases: ExclusiveLeaseTable::new(),
+        }
+    }
+
+    pub(crate) fn leases(&self) -> Arc<ExclusiveLeaseTable> {
+        Arc::clone(&self.leases)
     }
 
     /// Mount `tree` at absolute path `at` with the given access. A later mount at
     /// the same prefix shadows an earlier one (last wins), which is how a
     /// namespace is re-assembled.
     pub fn mount(&mut self, at: &str, tree: InProcessTransport, access: Access) {
+        let prefix = split_path(at);
+        let canonical_prefix = self
+            .mounts
+            .iter()
+            .rev()
+            .find(|mount| mount.prefix == prefix)
+            .map(|mount| mount.canonical_prefix.clone())
+            .unwrap_or_else(|| prefix.clone());
         self.mounts.push(Mount {
-            prefix: split_path(at),
+            prefix,
+            canonical_prefix,
             tree,
             access,
         });
@@ -141,6 +204,7 @@ impl Namespace {
             .filter(|m| m.prefix == existing_prefix)
             .map(|m| Mount {
                 prefix: new_prefix.clone(),
+                canonical_prefix: m.canonical_prefix.clone(),
                 tree: m.tree.clone(),
                 access: m.access,
             })
@@ -165,6 +229,7 @@ impl Namespace {
             .filter(|m| m.prefix == prefix)
             .map(|m| Resolved {
                 tree: m.tree.clone(),
+                canonical_prefix: m.canonical_prefix.clone(),
                 rel: Vec::new(),
                 access: m.access,
             })
@@ -179,11 +244,15 @@ impl Namespace {
             .iter()
             .map(|m| Mount {
                 prefix: m.prefix.clone(),
+                canonical_prefix: m.canonical_prefix.clone(),
                 tree: m.tree.clone(),
                 access: m.access,
             })
             .collect();
-        Namespace { mounts }
+        Namespace {
+            mounts,
+            leases: Arc::clone(&self.leases),
+        }
     }
 
     /// Build a capability-preserving namespace from explicit mount projections.
@@ -220,6 +289,7 @@ impl Namespace {
                 prefix.extend_from_slice(&mount.prefix[source_prefix.len()..]);
                 projected.push(Mount {
                     prefix,
+                    canonical_prefix: mount.canonical_prefix.clone(),
                     tree: mount.tree.clone(),
                     access: match requested_access {
                         Access::ReadOnly => Access::ReadOnly,
@@ -228,7 +298,10 @@ impl Namespace {
                 });
             }
         }
-        Ok(Namespace { mounts: projected })
+        Ok(Namespace {
+            mounts: projected,
+            leases: Arc::clone(&self.leases),
+        })
     }
 
     pub(crate) fn child_with_path_substitution(&self, token: &str, replacement: &str) -> Namespace {
@@ -241,11 +314,19 @@ impl Namespace {
                     .iter()
                     .map(|component| component.replace(token, replacement))
                     .collect(),
+                canonical_prefix: m
+                    .canonical_prefix
+                    .iter()
+                    .map(|component| component.replace(token, replacement))
+                    .collect(),
                 tree: m.tree.clone(),
                 access: m.access,
             })
             .collect();
-        Namespace { mounts }
+        Namespace {
+            mounts,
+            leases: Arc::clone(&self.leases),
+        }
     }
 
     /// Resolve an absolute path to its backing tree and the components to walk
@@ -268,6 +349,7 @@ impl Namespace {
         let mount = best.ok_or(Unreachable)?;
         Ok(Resolved {
             tree: mount.tree.clone(),
+            canonical_prefix: mount.canonical_prefix.clone(),
             rel: components[mount.prefix.len()..].to_vec(),
             access: mount.access,
         })
@@ -310,7 +392,10 @@ impl Namespace {
             restricted.access = requested_access;
             mounts.push(restricted);
         }
-        Some(Namespace { mounts })
+        Some(Namespace {
+            mounts,
+            leases: Arc::clone(&self.leases),
+        })
     }
 
     /// The union contributors at the **longest** matching prefix for `path`,
@@ -339,6 +424,7 @@ impl Namespace {
             .rev()
             .map(|(_, m)| Resolved {
                 tree: m.tree.clone(),
+                canonical_prefix: m.canonical_prefix.clone(),
                 rel: components[m.prefix.len()..].to_vec(),
                 access: m.access,
             })

@@ -1,11 +1,11 @@
 //! State-owned traversal and file materialization for the AgentFS surface.
 
-use alan_ap::{ErrorCode, Fid, FileKind, Qid, Stream};
+use alan_ap::{ErrorCode, Fid, FileKind, OpenMode, Qid, Stream};
 use alan_knowledge::{ContentHash, RootAccess};
 
 use super::{
     ACTIONS_HELP, MACHINE_CTL_HELP, Node, State, TAPE_ROOT_NAME, action_output_root_name,
-    map_knowledge_error,
+    is_write_intent, map_knowledge_error,
 };
 
 impl State {
@@ -260,6 +260,57 @@ impl State {
             .map_err(map_knowledge_error)?;
         Ok(root)
     }
+
+    pub(super) fn validate_exclusive_writer(
+        &self,
+        node: &Node,
+        mode: OpenMode,
+    ) -> Result<(), ErrorCode> {
+        if !requires_write_exclusive(node) || !is_write_intent(mode) {
+            return Ok(());
+        }
+        if mode != OpenMode::WriteExclusive {
+            return Err(ErrorCode::NoAccess);
+        }
+        let active = match node {
+            Node::Tape => self.tape_writer,
+            Node::Output => self.output_writer,
+            Node::UiEvents => self.ui_events_writer,
+            _ => None,
+        };
+        if active.is_some() {
+            return Err(ErrorCode::NoAccess);
+        }
+        Ok(())
+    }
+
+    pub(super) fn claim_exclusive_writer(&mut self, node: &Node, fid: Fid, mode: OpenMode) {
+        if mode != OpenMode::WriteExclusive {
+            return;
+        }
+        match node {
+            Node::Tape => self.tape_writer = Some(fid),
+            Node::Output => self.output_writer = Some(fid),
+            Node::UiEvents => self.ui_events_writer = Some(fid),
+            _ => {}
+        }
+    }
+
+    pub(super) fn release_exclusive_writer(&mut self, fid: Fid) {
+        if self.tape_writer == Some(fid) {
+            self.tape_writer = None;
+        }
+        if self.output_writer == Some(fid) {
+            self.output_writer = None;
+        }
+        if self.ui_events_writer == Some(fid) {
+            self.ui_events_writer = None;
+        }
+    }
+}
+
+pub(super) fn requires_write_exclusive(node: &Node) -> bool {
+    matches!(node, Node::Tape | Node::Output | Node::UiEvents)
 }
 
 // Wire shape only; canonical Skill authority belongs to Engine.

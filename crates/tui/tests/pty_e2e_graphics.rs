@@ -396,7 +396,7 @@ async fn run_file_backed_graphics_child() -> Result<()> {
                     })
                 );
                 let _ = io_shell
-                    .write(&format!("{io_owner}/machine/tape"), user_tape.as_bytes())
+                    .write_exclusive(&format!("{io_owner}/machine/tape"), user_tape.as_bytes())
                     .await;
 
                 if let Ok(act_id) =
@@ -444,7 +444,7 @@ async fn run_file_backed_graphics_child() -> Result<()> {
                     })
                 );
                 let _ = io_shell
-                    .write(
+                    .write_exclusive(
                         &format!("{io_owner}/machine/tape"),
                         assistant_tape.as_bytes(),
                     )
@@ -458,7 +458,7 @@ async fn run_file_backed_graphics_child() -> Result<()> {
                 .unwrap_or_default();
                 ev.push(b'\n');
                 let _ = io_shell
-                    .write(&format!("{io_owner}/machine/ui/events"), &ev)
+                    .write_exclusive(&format!("{io_owner}/machine/ui/events"), &ev)
                     .await;
             }
         }

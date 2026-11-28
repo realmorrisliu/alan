@@ -66,7 +66,7 @@ async fn retained_plan_navigation_after_drain_keeps_old_snapshot_and_draft() {
             .await
             .unwrap();
         shell
-            .write(
+            .write_exclusive(
                 &format!("{owner}/machine/ui/events"),
                 format!(
                     "{}\n",
@@ -214,7 +214,7 @@ async fn long_ui_history_keeps_small_plans_and_distinguishes_display_bound() {
     };
     for _ in 0..10 {
         shell
-            .write(
+            .write_exclusive(
                 &path,
                 format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes(),
             )
@@ -230,7 +230,7 @@ async fn long_ui_history_keeps_small_plans_and_distinguishes_display_bound() {
         snapshot: snapshot.clone(),
     };
     shell
-        .write(
+        .write_exclusive(
             &path,
             format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes(),
         )
@@ -243,7 +243,7 @@ async fn long_ui_history_keeps_small_plans_and_distinguishes_display_bound() {
         snapshot: plan("large", &"x".repeat(270000), PlanItemStatus::InProgress),
     };
     shell
-        .write(
+        .write_exclusive(
             &path,
             format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes(),
         )
@@ -268,7 +268,7 @@ async fn incomplete_current_event_preserves_earlier_plan_and_explicit_gap() {
     };
     let path = format!("{owner}/machine/ui/events");
     shell
-        .write(
+        .write_exclusive(
             &path,
             format!("{}\n{{\"type\":", serde_json::to_string(&event).unwrap()).as_bytes(),
         )
@@ -308,7 +308,7 @@ async fn snapshot_without_old_events_never_substitutes_new_stream_plan_one() {
     let mut app = FileBackedApp::new(owner.clone());
     app.apply_ui_plan_snapshot(old.clone());
     shell
-        .write(
+        .write_exclusive(
             &format!("{owner}/machine/ui/events"),
             format!(
                 "{}\n",
@@ -360,7 +360,7 @@ async fn bounded_retained_plan_history_merges_captured_tail_once_in_order() {
     let mut app = FileBackedApp::new(owner.clone());
     for snapshot in &snapshots {
         shell
-            .write(
+            .write_exclusive(
                 &format!("{owner}/machine/ui/events"),
                 format!(
                     "{}\n",

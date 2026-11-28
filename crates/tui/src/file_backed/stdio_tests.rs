@@ -359,7 +359,7 @@ async fn full_watcher_queue_does_not_block_shutdown() {
 async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript() {
     let (shell, agent_root, live_namespace, _old_pid) = live_root_agent().await;
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/tape",
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"previous task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n",
         )
@@ -389,7 +389,7 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
         ))),
         Access::ReadOnly,
     );
-    shell.write(
+    shell.write_exclusive(
         "/agent/root/machine/tape",
         b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\",\"submission_id\":\"other-client\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"other client answer\",\"submission_id\":\"other-client\"}\n",
     ).await.unwrap();
@@ -400,11 +400,11 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
         b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"queued task\",\"submission_id\":\"second-input\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"queued answer\",\"submission_id\":\"second-input\"}\n",
     );
     shell
-        .write("/agent/root/machine/tape", &tape)
+        .write_exclusive("/agent/root/machine/tape", &tape)
         .await
         .unwrap();
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/ui/events",
             b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":10}}\n{\"type\":\"error\",\"message\":\"old provider failure\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":30}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
         )
@@ -412,14 +412,14 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
         .unwrap();
 
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/ui/events",
             &completion(alan_agent_protocol::UiInputStatus::Completed, None),
         )
         .await
         .unwrap();
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/ui/events",
             &serde_json::to_vec(&UiEvent::InputCompleted {
                 submission_ids: vec!["second-input".into()],
@@ -516,7 +516,7 @@ async fn failed_root_reattach_preserves_state_and_retries_the_new_pid() {
         Access::ReadOnly,
     );
     shell
-        .write("/agent/root/machine/ui/events", b"not valid json\n")
+        .write_exclusive("/agent/root/machine/ui/events", b"not valid json\n")
         .await
         .unwrap();
 
@@ -581,7 +581,7 @@ async fn failed_root_reattach_preserves_state_and_retries_the_new_pid() {
 async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
     let (shell, agent_root, live_namespace, _old_pid) = live_root_agent().await;
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/tape",
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"same task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\"}\n",
         )
@@ -613,14 +613,14 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
         Access::ReadOnly,
     );
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/tape",
             b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"same task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\"}\n",
         )
         .await
         .unwrap();
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/ui/events",
             b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":30}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
         )
@@ -689,7 +689,7 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
         Access::ReadOnly,
     );
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/ui/events",
             b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":30}}\n{\"type\":\"error\",\"message\":\"provider unavailable\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
         )
@@ -697,7 +697,7 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
         .unwrap();
 
     shell
-        .write(
+        .write_exclusive(
             "/agent/root/machine/ui/events",
             &completion(
                 alan_agent_protocol::UiInputStatus::Failed,
@@ -888,7 +888,7 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
         }
 
         shell
-            .write(
+            .write_exclusive(
                 "/agent/root/machine/ui/events",
                 &completion(
                     alan_agent_protocol::UiInputStatus::Failed,
