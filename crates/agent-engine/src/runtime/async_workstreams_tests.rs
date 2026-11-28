@@ -305,13 +305,9 @@ async fn registry_tracks_active_rejects_duplicate_stream_and_cancels() {
     assert!(duplicate.is_err());
 
     assert!(registry.cancel_stream("docs-check"));
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while registry.active_count() > 0 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("cancelled stream did not terminate");
+    tokio::time::timeout(Duration::from_secs(2), registry.wait_until_idle())
+        .await
+        .expect("cancelled stream did not terminate");
 
     let listed = registry.list();
     assert_eq!(listed.len(), 1);
@@ -510,11 +506,10 @@ async fn async_persistent_workstream_returns_immediately_and_transitions_on_comp
 
     // Release background worker and wait for ledger transition to Idle + checkpoint ref.
     gate.notify_one();
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while harness.async_workstreams.active_count() > 0 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        harness.async_workstreams.wait_until_idle(),
+    )
     .await
     .expect("background workstream did not settle");
 
@@ -601,11 +596,10 @@ async fn async_one_off_archives_and_shutdown_quiesce_flushes_running_persistent_
         .await
         .unwrap();
     }
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while harness.async_workstreams.active_count() > 0 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        harness.async_workstreams.wait_until_idle(),
+    )
     .await
     .expect("one_off async workstream did not archive");
     let oneoff_record = load_workstream_record(&projects_root, &binding.project_key, "quick-lint")
@@ -695,4 +689,213 @@ async fn async_one_off_archives_and_shutdown_quiesce_flushes_running_persistent_
         flushed_record.last_checkpoint_ref.as_deref(),
         Some(persistent_ckpt.to_string_lossy().as_ref())
     );
+}
+
+#[tokio::test]
+async fn stream_driven_quiescence_handles_paused_child_and_wakes_on_proc_wait() {
+    use alan_agent_protocol::UiActivitySnapshot;
+    use alan_kernel::{Credentials, ExecNamespaceManifest, ExecSpec, Pid, ProcFs};
+
+    let procfs = ProcFs::new();
+    let child_agentfs = Arc::new(AgentFs::new());
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/proc",
+        InProcessTransport::new(Arc::new(procfs.clone())),
+        Access::ReadWrite,
+    );
+    ns.mount(
+        "/agent/1",
+        InProcessTransport::new(child_agentfs),
+        Access::ReadWrite,
+    );
+    let bootstrap = procfs.for_spawner(None, ns.clone(), Credentials::user("child-agent"));
+    let exec = ExecSpec {
+        executable: "/bin/alan-agent".to_string(),
+        args: Vec::new(),
+        namespace: ExecNamespaceManifest::from_namespace(&ns),
+        descriptors: Default::default(),
+        link_parent: false,
+    };
+    let fid = alan_ap::Fid(808);
+    alan_ap::FileServer::walk(&bootstrap, alan_ap::Fid::ROOT, fid, &["clone".to_string()])
+        .await
+        .unwrap();
+    alan_ap::FileServer::open(&bootstrap, fid, alan_ap::OpenMode::ReadWrite)
+        .await
+        .unwrap();
+    alan_ap::FileServer::write(&bootstrap, fid, 0, &serde_json::to_vec(&exec).unwrap())
+        .await
+        .unwrap();
+    alan_ap::FileServer::clunk(&bootstrap, fid).await.unwrap();
+
+    let child_root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+    let child_env =
+        crate::runtime::NamespaceRuntimeEnvironment::new(child_root.clone(), "/agent/1", "default");
+    let child_agent_files = child_env.agent_files();
+    let child_process_files = child_env.process_files();
+    child_agent_files
+        .write_ui_activity_snapshot(&UiActivitySnapshot::running(1))
+        .await
+        .unwrap();
+
+    let harness = build_harness(None);
+    let registry = harness.async_workstreams.clone();
+    let child_cancel = CancellationToken::new();
+    let child_cancel_for_completion = child_cancel.clone();
+    let process_files_for_completion = child_process_files.clone();
+    let completion_ran_gracefully = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let graceful_flag = completion_ran_gracefully.clone();
+
+    let kind = PreparedChildKind::AdHocSubagent {
+        request: SubagentSpawnRequest {
+            role: "worker".to_string(),
+            task: "Long stream-watched work".to_string(),
+            model: None,
+            read_only: false,
+            cwd: None,
+            host_mounts: Vec::new(),
+            timeout_secs: None,
+            stream_name: Some("stream-quiesce".to_string()),
+            persistence: Some(WorkstreamPersistence::Persistent),
+            scope: Some("stream quiescence".to_string()),
+            background: true,
+            write_mode: None,
+            long_running: false,
+            read_memory: false,
+        },
+        persisted_arguments: json!({"role": "worker"}),
+        workstream: None,
+        write_isolation: None,
+    };
+    registry
+        .register_and_spawn(AsyncWorkstreamRegistration {
+            stream_name: Some("stream-quiesce".to_string()),
+            role: "worker".to_string(),
+            scope: Some("stream quiescence".to_string()),
+            persistence: WorkstreamPersistence::Persistent,
+            action_id: None,
+            kind,
+            label: "worker".to_string(),
+            tracked: None,
+            rollouts_dir: None,
+            parent_agent_files: harness.agent_files.clone(),
+            child_run_registry: ChildRunRegistry::default(),
+            child_cancel: child_cancel.clone(),
+            write_guard: None,
+            launched: LaunchedAsyncChild {
+                child_pid: "1".to_string(),
+                child_run_id: "run-stream-quiesce".to_string(),
+                process_path: "/proc/1".to_string(),
+                agent_path: "/agent/1".to_string(),
+                child_agent_files: child_agent_files.clone(),
+                child_process_files: child_process_files.clone(),
+                completion: Box::pin(async move {
+                    tokio::select! {
+                        res = process_files_for_completion.wait_for_process_exit("1") => {
+                            let _ = res;
+                            graceful_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                            Ok(ChildRuntimeResult {
+                                status: ChildRuntimeStatus::Completed,
+                                process_path: "/proc/1".to_string(),
+                                child_run_id: Some("run-stream-quiesce".to_string()),
+                                rollout_path: None,
+                                output_text: "gracefully flushed".to_string(),
+                                turn_summary: Some("gracefully flushed".to_string()),
+                                structured_output: None,
+                                warnings: Vec::new(),
+                                error_message: None,
+                                pause: None,
+                                child_run: None,
+                            })
+                        }
+                        _ = child_cancel_for_completion.cancelled() => {
+                            Ok(ChildRuntimeResult::cancelled_before_launch())
+                        }
+                    }
+                }),
+            },
+        })
+        .unwrap();
+
+    // Simulate the child runtime reading /agent/1/events:
+    // 1) Upon receiving `ctl:interrupt`, transition to Paused so graceful_stop_child
+    //    must wake from /agent/1/events and send `queue-v1 discard`.
+    // 2) Upon receiving `ctl:queue-v1 discard`, exit `/proc/1` so `/proc/1/wait`
+    //    signals completion immediately without polling.
+    let child_driver = tokio::spawn({
+        let procfs = procfs.clone();
+        let child_agent_files = child_agent_files.clone();
+        async move {
+            let mut saw_interrupt = false;
+            let mut offset = 0_u64;
+            let events_fid = alan_ap::Fid(909);
+            child_root
+                .call(alan_ap::Request::Walk {
+                    fid: alan_ap::Fid::ROOT,
+                    newfid: events_fid,
+                    names: vec!["agent".into(), "1".into(), "events".into()],
+                })
+                .await
+                .unwrap();
+            child_root
+                .call(alan_ap::Request::Open {
+                    fid: events_fid,
+                    mode: alan_ap::OpenMode::Read,
+                })
+                .await
+                .unwrap();
+            loop {
+                let alan_ap::Response::Read { data } = child_root
+                    .call(alan_ap::Request::Read {
+                        fid: events_fid,
+                        offset,
+                        count: 4096,
+                    })
+                    .await
+                    .unwrap()
+                else {
+                    panic!("unexpected read response");
+                };
+                if data.is_empty() {
+                    break;
+                }
+                offset += data.len() as u64;
+                let text = String::from_utf8_lossy(&data);
+                if !saw_interrupt && text.contains("ctl:interrupt\n") {
+                    saw_interrupt = true;
+                    child_agent_files
+                        .write_ui_activity_snapshot(&UiActivitySnapshot::paused(Some(1)))
+                        .await
+                        .unwrap();
+                }
+                if text.contains("ctl:queue-v1 discard\n") {
+                    procfs.record_exit(Pid(1), 0).await;
+                    break;
+                }
+            }
+            let _ = child_root
+                .call(alan_ap::Request::Clunk { fid: events_fid })
+                .await;
+        }
+    });
+
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        registry.quiesce_for_reset(Duration::from_secs(2)),
+    )
+    .await
+    .expect("quiesce_for_reset must complete promptly via streams")
+    .unwrap();
+    child_driver.await.unwrap();
+
+    assert!(
+        completion_ran_gracefully.load(std::sync::atomic::Ordering::SeqCst),
+        "child should complete gracefully via /proc/<pid>/wait without force cancel"
+    );
+    assert!(!child_cancel.is_cancelled());
+    assert_eq!(registry.active_count(), 0);
+    let listed = registry.list();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].state, AsyncWorkstreamStatus::Completed);
 }

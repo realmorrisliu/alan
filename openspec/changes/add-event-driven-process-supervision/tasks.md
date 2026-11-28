@@ -13,9 +13,9 @@
 - [x] 2.5 Add `crates/service-manager` tests for reverse-order shutdown, `OneForOne` leaf self-healing without dropping `root-agent`, opt-in `RestForOne` cascade, and stale-generation fid rejection.
 
 ## 3. Event-Driven Child & Workstream Supervision (`crates/agent-engine`)
-- [ ] 3.1 Replace `DelegatedChildRunSupervisor`'s `10–250ms` polling loop (`crates/agent-engine/src/runtime/delegated_child_run/supervisor.rs`) with blocking waits over `/proc/<pid>/wait` and `/agent/<pid>/events` (preserving pause/timeout/cancellation semantics).
-- [ ] 3.2 Set `link_parent: true` on parent-owned child agent launches while keeping independent/detached launches `false`.
-- [ ] 3.3 Replace `async_workstreams` `10ms` quiescence polling (`crates/agent-engine/src/runtime/async_workstreams.rs`) with stream-driven completion signaling.
+- [x] 3.1 Replace `DelegatedChildRunSupervisor`'s `10–250ms` polling loop (`crates/agent-engine/src/runtime/delegated_child_run/supervisor.rs`) with blocking waits over `/proc/<pid>/wait` and `/agent/<pid>/events` (preserving pause/timeout/cancellation semantics).
+- [x] 3.2 Set `link_parent: true` on parent-owned child agent launches while keeping independent/detached launches `false`.
+- [x] 3.3 Replace `async_workstreams` `10ms` quiescence polling (`crates/agent-engine/src/runtime/async_workstreams.rs`) with stream-driven completion signaling.
 
 ## 4. Verification & Quality Gate
 - [ ] 4.1 Run end-to-end tests (`workstream_pty_test`, lifecycle/chaos suites, and PTY E2E tests touching `/mnt/service-manager/units/*`).

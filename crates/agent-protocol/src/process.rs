@@ -20,6 +20,10 @@ pub struct ProcessExecSpec {
     pub namespace: ProcessNamespaceManifest,
     #[serde(default)]
     pub descriptors: BTreeMap<u32, String>,
+    /// When true, exiting this process's parent for any reason deterministically
+    /// cancels this process.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub link_parent: bool,
 }
 
 /// Explicit namespace capabilities retained by a spawned Process, bound to the
@@ -254,12 +258,23 @@ mod tests {
                 AGENT_DEFINITION_DESCRIPTOR,
                 "/lib/agents/root".to_string(),
             )]),
+            link_parent: false,
         };
 
-        let value = serde_json::to_value(spec).unwrap();
+        let value = serde_json::to_value(&spec).unwrap();
         assert_eq!(value["namespace"]["mounts"][0]["access"], "rw");
         assert_eq!(value["namespace"]["generation"], 0);
         assert_eq!(value["descriptors"]["3"], "/lib/agents/root");
+        assert!(value.get("link_parent").is_none());
+
+        let linked = ProcessExecSpec {
+            link_parent: true,
+            ..spec
+        };
+        let linked_value = serde_json::to_value(&linked).unwrap();
+        assert_eq!(linked_value["link_parent"], true);
+        let round_trip: ProcessExecSpec = serde_json::from_value(linked_value).unwrap();
+        assert!(round_trip.link_parent);
         assert!(
             serde_json::from_value::<ProcessExecSpec>(serde_json::json!({
                 "executable": "/bin/alan-agent",
