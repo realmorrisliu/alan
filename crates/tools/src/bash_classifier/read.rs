@@ -61,6 +61,10 @@ pub(super) fn is_safe_read_command(tokens: &[&str]) -> bool {
         return true;
     }
 
+    if command_basename(head) == "openspec" {
+        return is_openspec_read_command(tokens);
+    }
+
     if matches!(head, "tox" | "nox") && is_tool_query_command(tokens) {
         return true;
     }
@@ -96,6 +100,43 @@ pub(super) fn is_tool_query_command(tokens: &[&str]) -> bool {
         .copied()
         .find(|token| !token.is_empty())
         .is_some_and(|arg| matches!(arg, "-h" | "--help" | "--version") || arg.starts_with("-V"))
+}
+
+/// Read-only `openspec` subcommands. Everything else (`archive`, `init`,
+/// `update`, `install`, `new`, `config`, `store`, `change`, ...) mutates
+/// project or user state and stays outside `Read`.
+const OPENSPEC_READ_SUBCOMMANDS: [&str; 11] = [
+    "validate",
+    "list",
+    "show",
+    "status",
+    "doctor",
+    "version",
+    "view",
+    "context",
+    "schemas",
+    "templates",
+    "help",
+];
+
+fn is_openspec_read_command(tokens: &[&str]) -> bool {
+    let mut index = 1;
+    while let Some(token) = tokens.get(index).copied() {
+        if token.is_empty() {
+            index += 1;
+            continue;
+        }
+        if matches!(token, "-h" | "--help" | "-v" | "--version") {
+            return true;
+        }
+        // An unknown leading flag could switch to a mutating mode; do not guess.
+        if token.starts_with('-') {
+            return false;
+        }
+        return OPENSPEC_READ_SUBCOMMANDS.contains(&token);
+    }
+
+    false
 }
 
 fn is_sed_safe_read_command(tokens: &[&str]) -> bool {

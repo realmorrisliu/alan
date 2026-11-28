@@ -36,7 +36,7 @@ impl Default for TaskBudgetLimits {
         Self {
             execution_seconds: NonZeroU64::new(1800).expect("positive default"),
             tool_calls: NonZeroU64::new(256).expect("positive default"),
-            model_calls: NonZeroU64::new(64).expect("positive default"),
+            model_calls: NonZeroU64::new(128).expect("positive default"),
         }
     }
 }

@@ -184,9 +184,9 @@ fn budget_checkpoint_requires_the_same_program_and_preserves_its_unfinished_read
         options: vec!["reject".into(), "approve".into()],
         details: serde_json::json!({
             "budget":{"version":1,"task_id":start.work_id,"limits":crate::TaskBudgetLimits::default(),
-                "tool_calls":0,"model_calls":64,"elapsed_millis":0,"phase":"paused",
+                "tool_calls":0,"model_calls":128,"elapsed_millis":0,"phase":"paused",
                 "foreground_complete":false,"recovered_time_upper_bound":false},
-            "additional":{"model_calls":64},"generation_binding":null,"owner_work":paused,
+            "additional":{"model_calls":128},"generation_binding":null,"owner_work":paused,
         }),
     };
     let wait = super::super::task_budget::waiting::Wait {
